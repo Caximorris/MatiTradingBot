@@ -1,0 +1,39 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Secretos — NUNCA en git
+.env
+
+# Base de datos local
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.ruff_cache/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribución
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Informes generados
+reports/

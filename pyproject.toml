@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "okx-trader"
+version = "0.1.0"
+description = "Automated trading system for OKX exchange"
+requires-python = ">=3.12"
+dependencies = [
+    "python-okx>=0.3.9",
+    "websockets>=12.0",
+    "SQLAlchemy>=2.0.0",
+    "APScheduler>=3.10.0",
+    "pandas-ta>=0.3.14b",
+    "pandas>=2.0.0",
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "python-dotenv>=1.0.0",
+    "aiohttp>=3.9.0",
+    "python-telegram-bot>=21.0",
+    "openpyxl>=3.1.0",
+    "tenacity>=8.2.0",
+    "loguru>=0.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+okx-trader = "okx_trader.main:app"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["."]
