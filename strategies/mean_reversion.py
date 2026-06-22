@@ -31,11 +31,12 @@ if TYPE_CHECKING:
     from core.risk_manager import RiskManager
 
 try:
-    import pandas_ta as ta  # type: ignore[import]
+    import pandas as _pd
+    import numpy as _np
     _TA_AVAILABLE = True
 except ImportError:
     _TA_AVAILABLE = False
-    logger.warning("pandas-ta no instalado — MeanReversionBot no operará")
+    logger.warning("pandas/numpy no instalados — MeanReversionBot no operará")
 
 
 @dataclass
@@ -166,31 +167,38 @@ class MeanReversionBot(BaseStrategy):
             return False
 
         try:
-            bb = df.ta.bbands(length=cfg.bb_period, std=float(cfg.bb_std), append=False)
-            rsi_series = df.ta.rsi(length=cfg.rsi_period, append=False)
+            close = df["close"].astype(float)
+            volume = df["volume"].astype(float)
+
+            # Bollinger Bands (SMA ± std * rolling_std)
+            sma = close.rolling(cfg.bb_period).mean()
+            rolling_std = close.rolling(cfg.bb_period).std(ddof=0)
+            bb_upper = sma + float(cfg.bb_std) * rolling_std
+            bb_lower = sma - float(cfg.bb_std) * rolling_std
+
+            # RSI via Wilder's smoothing (EMA con alpha=1/period)
+            delta = close.diff()
+            gain = delta.clip(lower=0)
+            loss = (-delta).clip(lower=0)
+            alpha = 1.0 / cfg.rsi_period
+            avg_gain = gain.ewm(alpha=alpha, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=alpha, adjust=False).mean()
+            rs = avg_gain / avg_loss.replace(0, _np.nan)
+            rsi_series = 100 - (100 / (1 + rs))
         except Exception as exc:
             logger.warning("[{}] Error calculando indicadores: {}", self.name, exc)
             return False
 
-        if bb is None or rsi_series is None:
-            return False
-
         last = df.iloc[-1]
-        bb_last = bb.iloc[-1]
-
-        lower_col = f"BBL_{cfg.bb_period}_{float(cfg.bb_std)}"
-        upper_col = f"BBU_{cfg.bb_period}_{float(cfg.bb_std)}"
-        std_col   = f"BBB_{cfg.bb_period}_{float(cfg.bb_std)}"
-
-        volume_mean = df["volume"].iloc[-(cfg.bb_period):].mean()
+        volume_mean = volume.iloc[-cfg.bb_period:].mean()
 
         self._last_indicators = {
             "close": Decimal(str(last["close"])),
             "volume": float(last["volume"]),
             "volume_mean": float(volume_mean),
-            "bb_lower": Decimal(str(bb_last.get(lower_col, 0))),
-            "bb_upper": Decimal(str(bb_last.get(upper_col, 0))),
-            "bb_std_val": float(bb_last.get(std_col, 0)),
+            "bb_lower": Decimal(str(bb_lower.iloc[-1])),
+            "bb_upper": Decimal(str(bb_upper.iloc[-1])),
+            "bb_std_val": float(rolling_std.iloc[-1]),
             "rsi": float(rsi_series.iloc[-1]),
         }
         return True

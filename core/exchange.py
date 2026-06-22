@@ -224,6 +224,10 @@ class OKXClient:
     def _utcnow() -> datetime:
         return datetime.now(timezone.utc)
 
+    def current_time(self) -> datetime:
+        """Tiempo actual — en backtest devuelve el timestamp de la barra, en live el reloj real."""
+        return datetime.now(timezone.utc)
+
     # -----------------------------------------------------------------------
     # Métodos de lectura — funcionan en paper Y live
     # -----------------------------------------------------------------------

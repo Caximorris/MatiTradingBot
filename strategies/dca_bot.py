@@ -145,7 +145,7 @@ class DCABot(BaseStrategy):
             return True
         last_order = datetime.fromisoformat(last_str)
         interval = timedelta(hours=float(self._dca_config.interval_hours))
-        return datetime.now(timezone.utc) - last_order >= interval
+        return self._client.current_time() - last_order >= interval
 
     def should_exit(self) -> bool:
         """True si el precio alcanzó el take profit desde el precio medio."""
@@ -204,7 +204,7 @@ class DCABot(BaseStrategy):
             self.log_trade(result)
             self._update_avg_entry(result.filled_qty, result.filled_price)
             self._state["is_in_position"] = True
-            self._state["last_base_order_at"] = datetime.now(timezone.utc).isoformat()
+            self._state["last_base_order_at"] = self._client.current_time().isoformat()
             self._save_state()
             logger.info("[{}] Orden base ejecutada: {} @ {}", self.name, size, result.filled_price)
 

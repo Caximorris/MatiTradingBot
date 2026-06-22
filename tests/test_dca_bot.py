@@ -55,6 +55,7 @@ def _make_client(ticker_price=Decimal("65000")):
     client = MagicMock(spec=OKXClient)
     client.is_paper = True
     client.get_ticker.return_value = ticker_price
+    client.current_time.return_value = datetime.now(timezone.utc)
     return client
 
 

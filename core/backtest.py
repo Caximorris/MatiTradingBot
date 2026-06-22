@@ -135,9 +135,25 @@ class BacktestClient:
     def get_ticker(self, symbol: str) -> Decimal:
         return self.current_bar.close
 
-    def get_ohlcv(self, symbol: str, bar: str = "1H", limit: int = 100) -> list[OHLCVBar]:
+    def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100, bar: str = "1H"):
+        """Devuelve un DataFrame OHLCV igual que OKXClient.get_ohlcv para compatibilidad."""
+        try:
+            import pandas as pd
+        except ImportError:
+            return None
         start = max(0, self._idx - limit + 1)
-        return self._bars[start : self._idx + 1]
+        bars = self._bars[start : self._idx + 1]
+        return pd.DataFrame([
+            {
+                "timestamp": b.timestamp,
+                "open": float(b.open),
+                "high": float(b.high),
+                "low": float(b.low),
+                "close": float(b.close),
+                "volume": float(b.volume),
+            }
+            for b in bars
+        ])
 
     def get_balance(self) -> dict[str, Decimal]:
         result = dict(self._balance)
@@ -241,6 +257,9 @@ class BacktestClient:
 
     def current_bar_ts(self) -> datetime:
         return datetime.fromtimestamp(self.current_bar.timestamp / 1000, tz=timezone.utc)
+
+    def current_time(self) -> datetime:
+        return self.current_bar_ts()
 
     def _fill_market(
         self, order_id: str, symbol: str, side: str, size: Decimal, strategy: str

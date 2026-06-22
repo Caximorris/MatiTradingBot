@@ -620,17 +620,37 @@ def backtest(
     from rich.panel import Panel
 
     # 1 — Descargar datos históricos
-    console.print(f"[bold cyan]Backtest:[/bold cyan] {strategy.upper()} / {symbol} / {timeframe}")
-    console.print(f"Descargando datos {from_dt.date()} → {to_dt.date()}…")
+    # La estrategia adaptive_trend necesita 210 días de historia para la EMA200 diaria.
+    # Siempre descargamos ese prefijo de calentamiento para que los indicadores funcionen
+    # desde el primer bar del período solicitado.
+    from datetime import timedelta
+    WARMUP_DAYS = 220   # 200 días EMA + margen
+    warmup_start = from_dt - timedelta(days=WARMUP_DAYS)
 
-    bars = fetch_historical_bars(symbol=symbol, bar=timeframe, from_dt=from_dt, to_dt=to_dt)
-    if not bars:
+    console.print(f"[bold cyan]Backtest:[/bold cyan] {strategy.upper()} / {symbol} / {timeframe}")
+    console.print(f"Descargando datos {from_dt.date()} → {to_dt.date()} (+ {WARMUP_DAYS}d calentamiento)…")
+
+    all_bars = fetch_historical_bars(symbol=symbol, bar=timeframe, from_dt=warmup_start, to_dt=to_dt)
+    if not all_bars:
         console.print("[red]No se pudieron descargar datos. Verifica conexión y parámetros.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green]✓[/green] {len(bars)} velas descargadas.")
+    # Separar prefijo de calentamiento de barras de trading activo
+    from_ts = int(from_dt.timestamp() * 1000)
+    warmup_bars_list = [b for b in all_bars if b.timestamp < from_ts]
+    trading_bars = [b for b in all_bars if b.timestamp >= from_ts]
+    bars = all_bars  # el BacktestClient recibe todo; el motor empieza en las barras de trading
+
+    console.print(
+        f"[green]✓[/green] {len(all_bars)} velas descargadas "
+        f"({len(warmup_bars_list)} calentamiento + {len(trading_bars)} trading)."
+    )
 
     # 2 — Preparar cliente y estrategia
+    # El BacktestEngine usa warmup_bars para saltar el prefijo de calentamiento.
+    # Así los indicadores tienen historia suficiente desde el primer bar de trading.
+    engine_warmup = max(len(warmup_bars_list), 20)
+
     bt_client = BacktestClient(
         symbol=symbol,
         bars=bars,
@@ -677,13 +697,21 @@ def backtest(
             return MeanReversionBot(client=client,
                                     config=MeanReversionConfig.from_dict(defaults),
                                     session=session)
+        elif strat_type in ("adaptive", "adaptive_trend", "trend"):
+            from strategies.adaptive_trend import AdaptiveTrendBot, AdaptiveTrendConfig
+            defaults = {"symbol": symbol.upper()}
+            defaults.update(config)
+            return AdaptiveTrendBot(client=client,
+                                    config=AdaptiveTrendConfig.from_dict(defaults),
+                                    session=session)
         else:
             console.print(f"[red]Estrategia '{strategy}' no soportada en backtest.[/red]")
             raise typer.Exit(1)
 
     # 3 — Ejecutar simulación
     console.print("Simulando…")
-    engine = BacktestEngine(bt_client=bt_client, strategy_factory=_strategy_factory)
+    engine = BacktestEngine(bt_client=bt_client, strategy_factory=_strategy_factory,
+                            warmup_bars=engine_warmup)
     try:
         result = engine.run()
     except ValueError as exc:
