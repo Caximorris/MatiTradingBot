@@ -643,10 +643,11 @@ def backtest(
     def _strategy_factory(client, session):
         if strat_type == "grid":
             from strategies.grid_bot import GridBot, GridConfig
+            first_price = bars[20].close  # precio real al inicio del backtest (post-warmup)
             defaults = {
                 "symbol": symbol.upper(),
-                "upper_price": str(bars[-1].close * Decimal("1.1")),
-                "lower_price": str(bars[-1].close * Decimal("0.9")),
+                "upper_price": str((first_price * Decimal("1.1")).quantize(Decimal("0.01"))),
+                "lower_price": str((first_price * Decimal("0.9")).quantize(Decimal("0.01"))),
                 "num_grids": 10,
                 "total_investment": str(Decimal(str(balance)) * Decimal("0.8")),
                 "auto_adjust": True,

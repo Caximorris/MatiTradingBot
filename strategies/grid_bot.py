@@ -212,9 +212,10 @@ class GridBot(BaseStrategy):
     def run(self) -> None:
         """
         Tick del grid:
-        1. Verifica si el precio salió del rango (auto_adjust o warning)
-        2. En paper mode activa los fills pendientes
-        3. Por cada fill coloca la orden contraria
+        1. Detecta si el precio salió del rango (para saber si habrá reinicio)
+        2. Procesa fills: si hay reinicio, solo los registra; si no, coloca contraórdenes
+        3. Si hay reinicio: recentra el grid y lo reinicia
+        4. Si no hay órdenes activas: inicializa el grid
         """
         cfg = self._grid_config
         current_price = self._client.get_ticker(cfg.symbol)
@@ -222,11 +223,22 @@ class GridBot(BaseStrategy):
             logger.warning("[{}] run() abortado: exchange no disponible", self.name)
             return
 
-        # Precio fuera de rango
         out_of_range = current_price < cfg.lower_price or current_price > cfg.upper_price
+
+        if self._client.is_paper:
+            filled = self._client.fill_paper_limit_orders(cfg.symbol, current_price)
+            for order in filled:
+                # Si el grid va a reiniciarse, registrar el trade pero no colocar
+                # contraórdenes que serían canceladas inmediatamente después
+                self._on_order_filled(order, place_counter=not out_of_range)
+
         if out_of_range:
             if cfg.auto_adjust:
-                logger.info("[{}] Precio {} fuera de rango — reiniciando grid", self.name, current_price)
+                half_range = (cfg.upper_price - cfg.lower_price) / 2
+                cfg.lower_price = (current_price - half_range).quantize(Decimal("0.01"))
+                cfg.upper_price = (current_price + half_range).quantize(Decimal("0.01"))
+                logger.info("[{}] Precio {} fuera de rango — recentrando grid [{}, {}]",
+                            self.name, current_price, cfg.lower_price, cfg.upper_price)
                 self._cancel_all_orders()
                 self.setup_grid()
             else:
@@ -234,14 +246,11 @@ class GridBot(BaseStrategy):
                                self.name, current_price, cfg.lower_price, cfg.upper_price)
             return
 
-        # Verificar fills en paper mode
-        if self._client.is_paper:
-            filled = self._client.fill_paper_limit_orders(cfg.symbol, current_price)
-            for order in filled:
-                self._on_order_filled(order)
+        if not self._state.get("active_orders"):
+            self.setup_grid()
 
-    def _on_order_filled(self, filled: OrderResult) -> None:
-        """Procesa un fill: registra el trade y coloca la orden contraria."""
+    def _on_order_filled(self, filled: OrderResult, place_counter: bool = True) -> None:
+        """Procesa un fill: registra el trade y, si place_counter, coloca la orden contraria."""
         self.log_trade(filled)
         levels = [Decimal(lv) for lv in self._state.get("levels", [])]
         if not levels or filled.limit_price is None:
@@ -249,16 +258,15 @@ class GridBot(BaseStrategy):
 
         filled_level = min(levels, key=lambda lv: abs(lv - filled.limit_price))
         idx = levels.index(filled_level)
-        order_size = Decimal(self._state.get("order_size_base", "0"))
-
-        if filled.side == "buy" and idx + 1 < len(levels):
-            next_level = levels[idx + 1]
-            self._place_counter_order("sell", next_level, order_size, idx + 1)
-        elif filled.side == "sell" and idx - 1 >= 0:
-            prev_level = levels[idx - 1]
-            self._place_counter_order("buy", prev_level, order_size, idx - 1)
-
         self._state["active_orders"].pop(str(filled_level), None)
+
+        if place_counter:
+            order_size = Decimal(self._state.get("order_size_base", "0"))
+            if filled.side == "buy" and idx + 1 < len(levels):
+                self._place_counter_order("sell", levels[idx + 1], order_size, idx + 1)
+            elif filled.side == "sell" and idx - 1 >= 0:
+                self._place_counter_order("buy", levels[idx - 1], order_size, idx - 1)
+
         self._save_state()
 
     def _place_counter_order(

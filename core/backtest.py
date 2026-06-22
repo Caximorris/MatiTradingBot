@@ -107,6 +107,9 @@ class BacktestClient:
         self._idx = 0
         self._balance: dict[str, Decimal] = {"USDT": initial_balance}
         self._paper_orders: dict[str, dict] = {}
+        self._reserved_usdt: dict[str, Decimal] = {}   # order_id → USDT reservado
+        self._reserved_base: dict[str, Decimal] = {}   # order_id → base reservado
+        self._pending_fills: list[OrderResult] = []
         self._executed: list[BacktestTrade] = []
         self.initial_balance = initial_balance
 
@@ -116,10 +119,12 @@ class BacktestClient:
         """
         Mueve el cursor a la barra idx.
         Chequea qué órdenes límite se habrían ejecutado con el high/low de esa barra.
-        Retorna los OrderResult de las órdenes llenadas.
+        Los fills se almacenan en _pending_fills para que la estrategia los recoja
+        via fill_paper_limit_orders() en el mismo tick.
         """
         self._idx = idx
-        return self._check_limit_fills()
+        self._pending_fills = self._check_limit_fills()
+        return self._pending_fills
 
     @property
     def current_bar(self) -> OHLCVBar:
@@ -135,7 +140,16 @@ class BacktestClient:
         return self._bars[start : self._idx + 1]
 
     def get_balance(self) -> dict[str, Decimal]:
-        return dict(self._balance)
+        result = dict(self._balance)
+        # Incluir también el saldo en órdenes pendientes
+        reserved_usdt = sum(self._reserved_usdt.values(), Decimal("0"))
+        if reserved_usdt:
+            result["USDT"] = result.get("USDT", Decimal("0")) + reserved_usdt
+        for order_id, qty in self._reserved_base.items():
+            order = self._paper_orders.get(order_id, {})
+            base = order.get("symbol", "BTC-USDT").split("-")[0]
+            result[base] = result.get(base, Decimal("0")) + qty
+        return result
 
     def get_open_orders(self, symbol: str | None = None) -> list:
         orders = list(self._paper_orders.values())
@@ -161,19 +175,36 @@ class BacktestClient:
         if order_type == "market":
             return self._fill_market(order_id, symbol, side, size, strategy)
 
-        # Limit order → queda pendiente
+        lp = price or self.current_bar.close
+        base = symbol.split("-")[0]
+
+        # Reservar saldo para órdenes límite (igual que hace OKXClient paper)
+        if side == "buy":
+            cost = size * lp
+            available = self._balance.get("USDT", Decimal("0"))
+            if available < cost:
+                return self._rejected(order_id, symbol, side, size, strategy, self.current_bar_ts())
+            self._balance["USDT"] = available - cost
+            self._reserved_usdt[order_id] = cost
+        else:  # sell
+            available_base = self._balance.get(base, Decimal("0"))
+            if available_base < size:
+                return self._rejected(order_id, symbol, side, size, strategy, self.current_bar_ts())
+            self._balance[base] = available_base - size
+            self._reserved_base[order_id] = size
+
         self._paper_orders[order_id] = {
             "order_id": order_id,
             "symbol": symbol,
             "side": side,
             "size": size,
-            "price": price or self.current_bar.close,
+            "price": lp,
             "strategy": strategy,
         }
         return OrderResult(
             order_id=order_id, symbol=symbol, side=side,
             order_type=order_type, size=size,
-            limit_price=price, filled_price=None, filled_qty=Decimal("0"),
+            limit_price=lp, filled_price=None, filled_qty=Decimal("0"),
             fee=Decimal("0"), fee_currency="USDT",
             status="open", is_paper=True,
             strategy=strategy, timestamp=self.current_bar_ts(),
@@ -181,16 +212,30 @@ class BacktestClient:
 
     def cancel_order(self, symbol: str, order_id: str) -> bool:
         order = self._paper_orders.pop(order_id, None)
-        if order and order["side"] == "buy":
-            cost = order["size"] * order["price"]
-            self._balance["USDT"] = self._balance.get("USDT", Decimal("0")) + cost
+        if order is None:
+            return False
+        base = order["symbol"].split("-")[0]
+        if order["side"] == "buy":
+            reserved = self._reserved_usdt.pop(order_id, Decimal("0"))
+            self._balance["USDT"] = self._balance.get("USDT", Decimal("0")) + reserved
+        else:
+            reserved = self._reserved_base.pop(order_id, Decimal("0"))
+            self._balance[base] = self._balance.get(base, Decimal("0")) + reserved
         return True
 
     def fill_paper_limit_orders(
-        self, symbol: str, current_price: Decimal
+        self, symbol: str | None = None, current_price: Decimal | None = None
     ) -> list[OrderResult]:
-        """Llamado por estrategias para comprobar fills. En backtest, ya se llama internamente en advance()."""
-        return []
+        """
+        Devuelve los fills generados en el último advance() para que la estrategia
+        pueda procesar contra-órdenes (e.g. el GridBot coloca sell tras cada buy fill).
+        Se vacía tras la primera lectura del mismo tick.
+        """
+        fills = self._pending_fills
+        self._pending_fills = []
+        if symbol:
+            fills = [f for f in fills if f.symbol == symbol]
+        return fills
 
     # ---- Helpers internos ----
 
@@ -238,8 +283,8 @@ class BacktestClient:
         for order_id, order in list(self._paper_orders.items()):
             lp = order["price"]
             side = order["side"]
-            fills = (side == "buy" and bar.low <= lp) or (side == "sell" and bar.high >= lp)
-            if not fills:
+            triggers = (side == "buy" and bar.low <= lp) or (side == "sell" and bar.high >= lp)
+            if not triggers:
                 continue
 
             size = order["size"]
@@ -247,17 +292,19 @@ class BacktestClient:
             base = order["symbol"].split("-")[0]
             ts = self.current_bar_ts()
 
+            # El saldo ya fue reservado en place_order — solo aplicar el fill
             if side == "buy":
-                cost = size * lp + fee
-                if self._balance.get("USDT", Decimal("0")) < cost:
-                    continue
-                self._balance["USDT"] -= cost
+                # Teníamos reservado: size*lp USDT. Ahora recibimos size BTC y pagamos fee
+                reserved = self._reserved_usdt.pop(order_id, size * lp)
+                # Devolvemos el exceso (diferencia entre reserva y coste real + fee)
+                net_cost = size * lp + fee
+                surplus = reserved - net_cost
+                self._balance["USDT"] = self._balance.get("USDT", Decimal("0")) + surplus
                 self._balance[base] = self._balance.get(base, Decimal("0")) + size
             else:
-                if self._balance.get(base, Decimal("0")) < size:
-                    continue
+                # Teníamos reservado: size base. Recibimos size*lp - fee USDT
+                self._reserved_base.pop(order_id, None)
                 proceeds = size * lp - fee
-                self._balance[base] -= size
                 self._balance["USDT"] = self._balance.get("USDT", Decimal("0")) + proceeds
 
             self._executed.append(BacktestTrade(
@@ -490,7 +537,7 @@ def fetch_historical_bars(
 
     while True:
         try:
-            resp = api.get_candlesticks(
+            resp = api.get_history_candlesticks(
                 instId=symbol,
                 bar=bar,
                 before=after_ts,
