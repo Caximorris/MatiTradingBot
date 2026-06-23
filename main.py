@@ -1,27 +1,30 @@
-"""
+﻿"""
 OKX Trading Bot — CLI principal.
 
 Uso:
-    python main.py start                    # Arranca todos los bots activos
-    python main.py stop                     # Parada de emergencia
-    python main.py status                   # Estado actual del sistema
-    python main.py dashboard                # Dashboard en vivo
-    python main.py trades                   # Historial de trades
-    python main.py report --year 2025       # Informe fiscal IRPF
-    python main.py mode                     # Muestra el modo actual
-    python main.py bot list                 # Lista de bots configurados
-    python main.py bot enable NAME SYMBOL   # Activa un bot
-    python main.py bot disable NAME SYMBOL  # Desactiva un bot
-    python main.py backtest --strategy mean --from 2024-01-01 --to 2024-12-31
-    python main.py compare --strategies mean,adaptive --from 2018 --to 2024
+    python main.py start                         # Arranca todos los bots activos
+    python main.py stop                          # Parada de emergencia
+    python main.py status                        # Estado actual del sistema
+    python main.py dashboard                     # Dashboard en vivo
+    python main.py trades                        # Historial de trades
+    python main.py report --year 2025            # Informe fiscal IRPF
+    python main.py mode                          # Muestra el modo actual
+    python main.py bot list                      # Lista de bots configurados
+    python main.py bot enable NAME SYMBOL        # Activa un bot
+    python main.py bot disable NAME SYMBOL       # Desactiva un bot
+    python main.py backtest --strategy pro --from 2018-01-01 --to 2024-12-31
+    python main.py compare --strategies adaptive,pro --from 2018 --to 2024
+    python main.py random-backtest --strategy pro --windows 10 --months 24
 """
 from __future__ import annotations
 
 import json
+import random as _random
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Optional
@@ -31,10 +34,6 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
-
-# ---------------------------------------------------------------------------
-# App raíz y sub-app "bot"
-# ---------------------------------------------------------------------------
 
 app = typer.Typer(
     name="okx-trader",
@@ -48,7 +47,140 @@ app.add_typer(bot_app, name="bot")
 console = Console()
 
 # ---------------------------------------------------------------------------
-# Carga perezosa de settings (evita fallar al pedir --help sin .env)
+# Benchmarks de referencia (fuente: datos reales de mercado)
+# ---------------------------------------------------------------------------
+
+_BENCHMARKS: dict[str, dict[int, float]] = {
+    "S&P 500": {2018: -4.38, 2019: 31.49, 2020: 18.40, 2021: 28.71,
+                2022: -18.11, 2023: 26.29, 2024: 23.31},
+    "NASDAQ":  {2018: -3.88, 2019: 35.23, 2020: 43.64, 2021: 21.39,
+                2022: -32.97, 2023: 43.43, 2024: 28.64},
+}
+
+_STRAT_LABELS = {
+    "mean": "Mean Rev.",
+    "mean_reversion": "Mean Rev.",
+    "adaptive": "Adaptive Trend",
+    "adaptive_trend": "Adaptive Trend",
+    "pro": "Pro Trend",
+    "pro_trend": "Pro Trend",
+    "trend": "Adaptive Trend",
+}
+
+# Fecha más antigua disponible en OKX para BTC-USDT
+_OKX_EARLIEST = datetime(2018, 1, 1, tzinfo=timezone.utc)
+
+# ---------------------------------------------------------------------------
+# Helpers de formato (módulo-nivel para reutilización)
+# ---------------------------------------------------------------------------
+
+def _pct(v: float) -> str:
+    color = "green" if v > 0 else ("red" if v < 0 else "dim")
+    return f"[{color}]{v:+.1f}%[/{color}]"
+
+
+def _usd(v: float, base: float) -> str:
+    color = "green" if v >= base else "red"
+    return f"[{color}]${v:,.0f}[/{color}]"
+
+
+# ---------------------------------------------------------------------------
+# Helpers de análisis de curva de equity
+# ---------------------------------------------------------------------------
+
+def _annual_returns_from_curve(
+    equity_curve: list[tuple[datetime, Decimal]],
+    years: list[int],
+    initial_balance: Decimal,
+) -> dict[int, dict]:
+    """Extrae rentabilidad anual de un backtest continuo sin reiniciar por año."""
+    result: dict[int, dict] = {}
+    for year in years:
+        y_start = datetime(year, 1, 1, tzinfo=timezone.utc)
+        y_end   = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+
+        before   = [(dt, v) for dt, v in equity_curve if dt < y_start]
+        in_year  = [(dt, v) for dt, v in equity_curve if y_start <= dt <= y_end]
+
+        if not in_year:
+            result[year] = {"pnl_pct": 0.0, "end_val": float(initial_balance)}
+            continue
+
+        start_val = before[-1][1] if before else initial_balance
+        end_val   = in_year[-1][1]
+        pnl_pct   = float((end_val - start_val) / start_val * 100) if start_val > 0 else 0.0
+        result[year] = {"pnl_pct": pnl_pct, "end_val": float(end_val), "start_val": float(start_val)}
+
+    return result
+
+
+def _btc_year_returns(bars: list, years: list[int]) -> dict[int, float]:
+    """Calcula rentabilidad anual de BTC B&H a partir de las barras descargadas."""
+    result: dict[int, float] = {}
+    for year in years:
+        y_start_ts = int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        y_end_ts   = int(datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc).timestamp() * 1000)
+
+        start_bars = [b for b in bars if b.timestamp >= y_start_ts]
+        end_bars   = [b for b in bars if b.timestamp <= y_end_ts]
+
+        if start_bars and end_bars:
+            sp = float(start_bars[0].close)
+            ep = float(end_bars[-1].close)
+            result[year] = (ep - sp) / sp * 100 if sp > 0 else 0.0
+
+    return result
+
+
+def _quarterly_breakdown(result) -> list[tuple[str, int, int, Decimal]]:
+    """Agrupa trades cerrados por trimestre: (label, n_trades, n_wins, pnl)."""
+    quarters: dict[str, dict] = defaultdict(lambda: {"trades": 0, "wins": 0, "pnl": Decimal("0")})
+    for trade in result.trades:
+        q = (trade.timestamp.month - 1) // 3 + 1
+        key = f"{trade.timestamp.year}-Q{q}"
+        quarters[key]["trades"] += 1
+        if trade.pnl and trade.pnl > 0:
+            quarters[key]["wins"] += 1
+        if trade.pnl:
+            quarters[key]["pnl"] += trade.pnl
+
+    rows = []
+    for key in sorted(quarters.keys()):
+        d = quarters[key]
+        rows.append((key, d["trades"], d["wins"], d["pnl"]))
+    return rows
+
+
+def _print_quarterly_table(result, title: str) -> None:
+    """Imprime tabla trimestral de trades cerrados de un BacktestResult."""
+    quarters = _quarterly_breakdown(result)
+    if not quarters:
+        return
+
+    tq = Table(title=title, header_style="bold blue", show_lines=False)
+    tq.add_column("Trimestre")
+    tq.add_column("Trades", justify="right")
+    tq.add_column("Win %", justify="right")
+    tq.add_column("P&L USDT", justify="right")
+    tq.add_column("P&L Acum.", justify="right")
+
+    acc = Decimal("0")
+    for key, n_trades, n_wins, pnl in quarters:
+        acc += pnl
+        win_s = f"{n_wins / n_trades * 100:.0f}%" if n_trades > 0 else "—"
+        cp  = "green" if pnl >= 0 else "red"
+        ca  = "green" if acc  >= 0 else "red"
+        year, q = key.split("-")
+        tq.add_row(
+            f"{q} {year}", str(n_trades), win_s,
+            f"[{cp}]{float(pnl):+.2f}[/{cp}]",
+            f"[{ca}]{float(acc):+.2f}[/{ca}]",
+        )
+    console.print(tq)
+
+
+# ---------------------------------------------------------------------------
+# Carga perezosa de settings
 # ---------------------------------------------------------------------------
 
 def _load_settings():
@@ -67,11 +199,11 @@ def _make_client(settings):
 
 
 # ---------------------------------------------------------------------------
-# Fábrica de estrategias — instancia la clase correcta desde BotState
+# Fábrica de estrategias desde BotState
 # ---------------------------------------------------------------------------
 
 def _instantiate_strategy(bot_state, client, risk_manager, session):
-    name = bot_state.strategy_name
+    name   = bot_state.strategy_name
     config = bot_state.get_config()
     try:
         if name.startswith("mean_"):
@@ -84,6 +216,11 @@ def _instantiate_strategy(bot_state, client, risk_manager, session):
             return AdaptiveTrendBot(client=client,
                                     config=AdaptiveTrendConfig.from_dict(config),
                                     session=session, risk_manager=risk_manager)
+        elif name.startswith("pro_trend"):
+            from strategies.pro_trend import ProTrendBot, ProTrendConfig
+            return ProTrendBot(client=client,
+                               config=ProTrendConfig.from_dict(config),
+                               session=session, risk_manager=risk_manager)
         elif name.startswith("signal"):
             from strategies.signal_follower import SignalFollower, SignalConfig
             return SignalFollower(client=client,
@@ -98,59 +235,115 @@ def _instantiate_strategy(bot_state, client, risk_manager, session):
 
 
 # ---------------------------------------------------------------------------
-# Helper: ejecuta un backtest y devuelve el resultado
+# Backtest runner (reutilizado por backtest, compare y random-backtest)
 # ---------------------------------------------------------------------------
 
-def _run_backtest(symbol: str, timeframe: str, strat_type: str,
-                  balance: float, config: dict,
-                  from_dt: "datetime", to_dt: "datetime") -> "BacktestResult | None":
+def _run_backtest(
+    symbol: str, timeframe: str, strat_type: str,
+    balance: float, config: dict,
+    from_dt: datetime, to_dt: datetime,
+    prefetched_bars=None,
+    show_progress: bool = True,
+):
     """
-    Descarga barras, construye cliente+estrategia y ejecuta el BacktestEngine.
-    Retorna BacktestResult o None si los datos no están disponibles.
+    Descarga (o reutiliza) barras y ejecuta el BacktestEngine con barra de progreso.
+
+    prefetched_bars: lista de OHLCVBar ya descargada que incluye el warmup.
+                     Si se pasa, no se hace ninguna petición a OKX.
+    show_progress:   muestra barras Rich de descarga y simulación.
     """
-    from datetime import timedelta
-    from decimal import Decimal
+    from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, SpinnerColumn
     from core.backtest import BacktestClient, BacktestEngine, fetch_historical_bars
+    from strategies.macro_context import load_macro_context
 
-    WARMUP_DAYS = 240
+    # Carga unica de MVRV historico antes de la simulacion (usa cache si ya esta cargado)
+    load_macro_context(from_dt, to_dt)
+
+    WARMUP_DAYS = 380 if strat_type in ("pro", "pro_trend") else 240
     warmup_start = from_dt - timedelta(days=WARMUP_DAYS)
-    all_bars = fetch_historical_bars(symbol=symbol, bar=timeframe,
-                                     from_dt=warmup_start, to_dt=to_dt)
-    if not all_bars:
-        return None
+    label = _STRAT_LABELS.get(strat_type, strat_type)
 
-    from_ts = int(from_dt.timestamp() * 1000)
-    warmup_bars = [b for b in all_bars if b.timestamp < from_ts]
-    engine_warmup = max(len(warmup_bars), 20)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold cyan]{task.description}"),
+        BarColumn(bar_width=30),
+        TextColumn("[progress.percentage]{task.percentage:>5.1f}%"),
+        TextColumn("[dim]{task.fields[detail]}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
 
-    bt_client = BacktestClient(symbol=symbol, bars=all_bars,
-                                initial_balance=Decimal(str(balance)))
-
-    def factory(client, session):
-        sym = symbol.upper()
-        if strat_type in ("mean", "mean_reversion"):
-            from strategies.mean_reversion import MeanReversionBot, MeanReversionConfig
-            cfg = {"symbol": sym}
-            cfg.update(config)
-            return MeanReversionBot(client=client,
-                                    config=MeanReversionConfig.from_dict(cfg),
-                                    session=session)
-        elif strat_type in ("adaptive", "adaptive_trend", "trend"):
-            from strategies.adaptive_trend import AdaptiveTrendBot, AdaptiveTrendConfig
-            cfg = {"symbol": sym}
-            cfg.update(config)
-            return AdaptiveTrendBot(client=client,
-                                    config=AdaptiveTrendConfig.from_dict(cfg),
-                                    session=session)
+        # ── Fase 1: descarga ──────────────────────────────────────────────
+        if prefetched_bars is not None:
+            all_bars = prefetched_bars
         else:
-            raise ValueError(f"Estrategia '{strat_type}' no soportada.")
+            dl_task = progress.add_task(
+                f"Descargando {symbol}/{timeframe}", total=None, detail=""
+            )
+            def on_page(n_bars: int) -> None:
+                progress.update(dl_task, detail=f"{n_bars:,} velas")
 
-    try:
-        engine = BacktestEngine(bt_client=bt_client, strategy_factory=factory,
-                                warmup_bars=engine_warmup)
-        return engine.run()
-    except Exception:
-        return None
+            all_bars = fetch_historical_bars(
+                symbol=symbol, bar=timeframe,
+                from_dt=warmup_start, to_dt=to_dt,
+                on_page=on_page,
+            )
+            progress.update(dl_task, completed=1, total=1,
+                            detail=f"{len(all_bars):,} velas")
+
+        if not all_bars:
+            return None
+
+        # ── Fase 2: simulación ────────────────────────────────────────────
+        from_ts       = int(from_dt.timestamp() * 1000)
+        warmup_bars   = [b for b in all_bars if b.timestamp < from_ts]
+        engine_warmup = max(len(warmup_bars), 20)
+        total_ticks   = len(all_bars) - engine_warmup
+
+        sim_task = progress.add_task(
+            f"Simulando {label}", total=total_ticks, detail=""
+        )
+
+        def on_tick(done: int, total: int) -> None:
+            pct = done / total if total else 0
+            # Estima equity actual sin acceder al motor
+            progress.update(sim_task, completed=done,
+                            detail=f"{done:,}/{total:,} barras")
+
+        bt_client = BacktestClient(symbol=symbol, bars=all_bars,
+                                    initial_balance=Decimal(str(balance)))
+
+        def factory(client, session):
+            sym = symbol.upper()
+            if strat_type in ("mean", "mean_reversion"):
+                from strategies.mean_reversion import MeanReversionBot, MeanReversionConfig
+                cfg = {"symbol": sym}; cfg.update(config)
+                return MeanReversionBot(client=client,
+                                        config=MeanReversionConfig.from_dict(cfg),
+                                        session=session)
+            elif strat_type in ("adaptive", "adaptive_trend", "trend"):
+                from strategies.adaptive_trend import AdaptiveTrendBot, AdaptiveTrendConfig
+                cfg = {"symbol": sym}; cfg.update(config)
+                return AdaptiveTrendBot(client=client,
+                                        config=AdaptiveTrendConfig.from_dict(cfg),
+                                        session=session)
+            elif strat_type in ("pro", "pro_trend"):
+                from strategies.pro_trend import ProTrendBot, ProTrendConfig
+                cfg = {"symbol": sym}; cfg.update(config)
+                return ProTrendBot(client=client,
+                                   config=ProTrendConfig.from_dict(cfg),
+                                   session=session)
+            else:
+                raise ValueError(f"Estrategia '{strat_type}' no soportada.")
+
+        try:
+            engine = BacktestEngine(bt_client=bt_client, strategy_factory=factory,
+                                    warmup_bars=engine_warmup)
+            return engine.run(on_tick=on_tick)
+        except Exception as exc:
+            logger.debug("Error en backtest {}: {}", strat_type, exc)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +353,7 @@ def _run_backtest(symbol: str, timeframe: str, strat_type: str,
 @app.command()
 def start(
     tick: int = typer.Option(30, "--tick", "-t", help="Segundos entre ticks de cada bot."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Logs DEBUG."),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
     """Arranca todos los bots marcados como activos en la DB."""
     _setup_logging(verbose)
@@ -176,10 +369,9 @@ def start(
     from core.risk_manager import RiskManager
 
     init_db()
-    client = _make_client(settings)
+    client       = _make_client(settings)
     risk_manager = RiskManager(client=client, app_settings=settings)
 
-    # Carga bots activos
     with get_session() as s:
         active_bots = s.query(BotState).filter(BotState.is_active == True).all()
         bot_configs = [(b.strategy_name, b.symbol, b.get_config()) for b in active_bots]
@@ -192,18 +384,15 @@ def start(
     console.print(f"[bold cyan]Iniciando {len(bot_configs)} bot(s) en modo {mode_label}[/bold cyan]")
 
     scheduler = BackgroundScheduler(timezone="UTC")
-    _running = True
+    _running   = True
 
-    def _make_job(strategy_name: str, symbol: str, config: dict):
+    def _make_job(strategy_name, symbol, config):
         def job():
             try:
                 with get_session() as session:
-                    from core.database import BotState
-                    state = (
-                        session.query(BotState)
-                        .filter_by(strategy_name=strategy_name, symbol=symbol)
-                        .first()
-                    )
+                    state = (session.query(BotState)
+                             .filter_by(strategy_name=strategy_name, symbol=symbol)
+                             .first())
                     if not state or not state.is_active:
                         return
                     strategy = _instantiate_strategy(state, client, risk_manager, session)
@@ -215,9 +404,9 @@ def start(
         return job
 
     for name, symbol, config in bot_configs:
-        job_fn = _make_job(name, symbol, config)
-        scheduler.add_job(job_fn, "interval", seconds=tick, id=name, max_instances=1)
-        console.print(f"  [green]✓[/green] {name} ({symbol}) — tick cada {tick}s")
+        scheduler.add_job(_make_job(name, symbol, config), "interval",
+                          seconds=tick, id=name, max_instances=1)
+        console.print(f"  [green][OK][/green] {name} ({symbol}) — tick cada {tick}s")
 
     scheduler.start()
     console.print("[bold green]Bots en marcha. Pulsa Ctrl+C para detener.[/bold green]")
@@ -225,11 +414,10 @@ def start(
     def _shutdown(signum, frame):
         nonlocal _running
         _running = False
-        console.print("\n[yellow]Parando scheduler...[/yellow]")
         scheduler.shutdown(wait=False)
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
     while _running:
@@ -241,20 +429,15 @@ def start(
 # ---------------------------------------------------------------------------
 
 @app.command()
-def stop(
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
-):
+def stop(verbose: bool = typer.Option(False, "--verbose", "-v")):
     """Parada de emergencia: cancela órdenes y desactiva todos los bots."""
     _setup_logging(verbose)
     settings = _load_settings()
-    client = _make_client(settings)
-
+    client   = _make_client(settings)
     from core.risk_manager import RiskManager
     from core.database import init_db
-
     init_db()
-    rm = RiskManager(client=client, app_settings=settings)
-    rm.emergency_stop()
+    RiskManager(client=client, app_settings=settings).emergency_stop()
     console.print("[bold red]EMERGENCY STOP ejecutado.[/bold red] Todos los bots desactivados.")
 
 
@@ -263,23 +446,19 @@ def stop(
 # ---------------------------------------------------------------------------
 
 @app.command()
-def status(
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
-):
+def status(verbose: bool = typer.Option(False, "--verbose", "-v")):
     """Muestra el estado actual: bots, balance y posiciones abiertas."""
     _setup_logging(verbose)
     settings = _load_settings()
-    client = _make_client(settings)
+    client   = _make_client(settings)
 
     from core.database import BotState, Position, Trade, get_session, init_db
     from sqlalchemy import func
 
     init_db()
-
     mode = "PAPER" if settings.is_paper else "LIVE"
     console.rule(f"[bold cyan]OKX Trading Bot — modo {mode}[/bold cyan]")
 
-    # Balance
     try:
         balance = client.get_balance()
         console.print("\n[bold]Balance[/bold]")
@@ -289,40 +468,30 @@ def status(
     except Exception as exc:
         console.print(f"  [red]Exchange no disponible: {exc}[/red]")
 
-    # Bots
     console.print("\n[bold]Bots configurados[/bold]")
     with get_session() as s:
         bots = s.query(BotState).order_by(BotState.created_at).all()
-        bot_rows = [
-            (b.strategy_name, b.symbol, b.is_active, b.last_run, float(b.total_pnl))
-            for b in bots
-        ]
+        bot_rows = [(b.strategy_name, b.symbol, b.is_active, b.last_run, float(b.total_pnl))
+                    for b in bots]
 
     if not bot_rows:
-        console.print("  [dim]Sin bots configurados. Usa 'bot add' para crear uno.[/dim]")
+        console.print("  [dim]Sin bots configurados.[/dim]")
     else:
         t = Table(show_header=True, header_style="bold blue")
-        t.add_column("Nombre")
-        t.add_column("Par")
-        t.add_column("Estado")
-        t.add_column("Último tick")
-        t.add_column("P&L total", justify="right")
+        t.add_column("Nombre"); t.add_column("Par"); t.add_column("Estado")
+        t.add_column("Último tick"); t.add_column("P&L total", justify="right")
         for name, symbol, active, last_run, pnl in bot_rows:
-            status_label = "[green]ACTIVO[/green]" if active else "[red]PARADO[/red]"
+            sl = "[green]ACTIVO[/green]" if active else "[red]PARADO[/red]"
             last = last_run.strftime("%d/%m %H:%M") if last_run else "—"
-            pnl_label = f"[{'green' if pnl >= 0 else 'red'}]{pnl:+.2f}[/{'green' if pnl >= 0 else 'red'}]"
-            t.add_row(name, symbol, status_label, last, pnl_label)
+            pc = "green" if pnl >= 0 else "red"
+            t.add_row(name, symbol, sl, last, f"[{pc}]{pnl:+.2f}[/{pc}]")
         console.print(t)
 
-    # Posiciones
     console.print("\n[bold]Posiciones abiertas[/bold]")
     with get_session() as s:
         positions = s.query(Position).all()
-        pos_rows = [
-            (p.symbol, p.strategy, p.side, float(p.entry_price),
-             float(p.current_price), float(p.unrealized_pnl))
-            for p in positions
-        ]
+        pos_rows  = [(p.symbol, p.strategy, p.side, float(p.entry_price),
+                      float(p.current_price), float(p.unrealized_pnl)) for p in positions]
 
     if not pos_rows:
         console.print("  [dim]Sin posiciones abiertas.[/dim]")
@@ -337,18 +506,14 @@ def status(
                        f"[{c}]{upnl:+.2f}[/{c}]")
         console.print(pt)
 
-    # P&L diario
     today_start = datetime.combine(
         datetime.now(timezone.utc).date(), datetime.min.time()
     ).replace(tzinfo=timezone.utc)
     with get_session() as s:
-        result = (
-            s.query(func.sum(Trade.pnl), func.count(Trade.id))
-            .filter(Trade.timestamp >= today_start)
-            .one()
-        )
-    daily_pnl = float(result[0] or 0)
-    daily_trades = result[1] or 0
+        res = (s.query(func.sum(Trade.pnl), func.count(Trade.id))
+                 .filter(Trade.timestamp >= today_start).one())
+    daily_pnl    = float(res[0] or 0)
+    daily_trades = res[1] or 0
     c = "green" if daily_pnl >= 0 else "red"
     console.print(f"\n[bold]Hoy:[/bold] {daily_trades} trades | P&L: [{c}]{daily_pnl:+.2f} USDT[/{c}]")
 
@@ -359,17 +524,15 @@ def status(
 
 @app.command()
 def dashboard(
-    refresh: int = typer.Option(30, "--refresh", "-r", help="Segundos entre refrescos."),
+    refresh: int = typer.Option(30, "--refresh", "-r"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
     """Lanza el dashboard interactivo en tiempo real (Ctrl+C para salir)."""
     _setup_logging(verbose)
     settings = _load_settings()
-    client = _make_client(settings)
-
+    client   = _make_client(settings)
     from core.database import init_db
     from reporting.dashboard import run_dashboard
-
     init_db()
     run_dashboard(client=client, mode=settings.trading_mode, refresh_seconds=refresh)
 
@@ -380,17 +543,15 @@ def dashboard(
 
 @app.command()
 def trades(
-    limit: int = typer.Option(20, "--limit", "-n", help="Número de trades a mostrar."),
-    symbol: Optional[str] = typer.Option(None, "--symbol", "-s", help="Filtrar por par."),
-    paper: Optional[bool] = typer.Option(None, "--paper/--live", help="Filtrar paper o live."),
+    limit: int = typer.Option(20, "--limit", "-n"),
+    symbol: Optional[str] = typer.Option(None, "--symbol", "-s"),
+    paper: Optional[bool] = typer.Option(None, "--paper/--live"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
     """Muestra el historial de trades recientes."""
     _setup_logging(verbose)
     _load_settings()
-
     from core.database import Trade, get_session, init_db
-
     init_db()
 
     with get_session() as s:
@@ -399,41 +560,31 @@ def trades(
             q = q.filter(Trade.symbol == symbol.upper())
         if paper is not None:
             q = q.filter(Trade.is_paper == paper)
-        trade_list = q.limit(limit).all()
-        rows = [
-            (t.timestamp, t.symbol, t.side, float(t.quantity),
-             float(t.price), t.pnl, t.strategy, t.is_paper)
-            for t in trade_list
-        ]
+        rows = [(t.timestamp, t.symbol, t.side, float(t.quantity),
+                 float(t.price), t.pnl, t.strategy, t.is_paper)
+                for t in q.limit(limit).all()]
 
     if not rows:
         console.print("[dim]Sin trades que mostrar.[/dim]")
         return
 
     t = Table(title=f"Últimos {limit} trades", header_style="bold blue", show_lines=False)
-    t.add_column("Fecha/Hora")
-    t.add_column("Par", style="cyan")
-    t.add_column("Lado", justify="center")
-    t.add_column("Cantidad", justify="right")
-    t.add_column("Precio", justify="right")
-    t.add_column("P&L", justify="right")
-    t.add_column("Estrategia", style="dim")
-    t.add_column("", style="dim")
+    t.add_column("Fecha/Hora"); t.add_column("Par", style="cyan")
+    t.add_column("Lado", justify="center"); t.add_column("Cantidad", justify="right")
+    t.add_column("Precio", justify="right"); t.add_column("P&L", justify="right")
+    t.add_column("Estrategia", style="dim"); t.add_column("", style="dim")
 
     from zoneinfo import ZoneInfo
     MADRID = ZoneInfo("Europe/Madrid")
     for ts, sym, side, qty, price, pnl, strat, is_paper in rows:
-        side_label = "[green]BUY[/green]" if side == "buy" else "[red]SELL[/red]"
-        pnl_str = "—"
+        side_lbl = "[green]BUY[/green]" if side == "buy" else "[red]SELL[/red]"
+        pnl_str  = "—"
         if pnl is not None:
             c = "green" if float(pnl) >= 0 else "red"
             pnl_str = f"[{c}]{float(pnl):+.2f}[/{c}]"
-        paper_label = "[dim]P[/dim]" if is_paper else "[bold]L[/bold]"
-        t.add_row(
-            ts.astimezone(MADRID).strftime("%d/%m/%Y %H:%M"),
-            sym, side_label, f"{qty:.6f}", f"{price:,.2f}", pnl_str, strat, paper_label,
-        )
-
+        t.add_row(ts.astimezone(MADRID).strftime("%d/%m/%Y %H:%M"),
+                  sym, side_lbl, f"{qty:.6f}", f"{price:,.2f}", pnl_str,
+                  strat, "[dim]P[/dim]" if is_paper else "[bold]L[/bold]")
     console.print(t)
 
 
@@ -443,22 +594,18 @@ def trades(
 
 @app.command()
 def report(
-    year: int = typer.Option(2025, "--year", "-y", help="Año fiscal (ej: 2025)."),
-    rate: float = typer.Option(0.92, "--rate", "-r", help="Tipo de cambio USDT/EUR."),
-    losses: float = typer.Option(0.0, "--losses", "-l",
-                                  help="Pérdidas arrastradas de años anteriores (EUR)."),
+    year: int = typer.Option(2025, "--year", "-y"),
+    rate: float = typer.Option(0.92, "--rate", "-r"),
+    losses: float = typer.Option(0.0, "--losses", "-l"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ):
     """Genera el informe fiscal IRPF para el año indicado (Excel + JSON)."""
     _setup_logging(verbose)
     _load_settings()
-
     from core.database import get_session, init_db
     from reporting.fiscal_report import FiscalReportGenerator
-
     init_db()
     console.print(f"[bold]Generando informe fiscal {year}[/bold] (tasa {rate} USDT/€)...")
-
     with get_session() as s:
         gen = FiscalReportGenerator(
             session=s,
@@ -466,12 +613,11 @@ def report(
             carryover_losses_eur=Decimal(str(losses)),
         )
         excel_path = gen.generate_annual_report(year)
-
     if excel_path:
-        console.print(f"[green]✓[/green] Excel: [bold]{excel_path}[/bold]")
+        console.print(f"[green][OK][/green] Excel: [bold]{excel_path}[/bold]")
         json_path = excel_path.replace(".xlsx", ".json")
         if Path(json_path).exists():
-            console.print(f"[green]✓[/green] JSON:  [bold]{json_path}[/bold]")
+            console.print(f"[green][OK][/green] JSON:  [bold]{json_path}[/bold]")
     else:
         console.print("[yellow]Informe JSON generado. openpyxl no disponible para Excel.[/yellow]")
 
@@ -500,47 +646,42 @@ def mode():
 def bot_list():
     """Lista todos los bots configurados en la DB."""
     from core.database import BotState, get_session, init_db
-
     init_db()
     with get_session() as s:
-        bots = s.query(BotState).order_by(BotState.strategy_name).all()
-        rows = [(b.strategy_name, b.symbol, b.is_active, b.created_at) for b in bots]
-
+        rows = [(b.strategy_name, b.symbol, b.is_active, b.created_at)
+                for b in s.query(BotState).order_by(BotState.strategy_name).all()]
     if not rows:
         console.print("[dim]Sin bots configurados.[/dim]")
-        console.print("Crea uno con: [bold]bot add grid BTC-USDT ...[/bold]")
         return
-
     t = Table(header_style="bold blue")
     t.add_column("Nombre"); t.add_column("Par"); t.add_column("Estado"); t.add_column("Creado")
     for name, symbol, active, created in rows:
-        status = "[green]ACTIVO[/green]" if active else "[dim]PARADO[/dim]"
-        t.add_row(name, symbol, status, created.strftime("%d/%m/%Y"))
+        t.add_row(name, symbol,
+                  "[green]ACTIVO[/green]" if active else "[dim]PARADO[/dim]",
+                  created.strftime("%d/%m/%Y"))
     console.print(t)
 
 
 @bot_app.command("enable")
 def bot_enable(
-    name: str = typer.Argument(..., help="Nombre del bot (ej: grid_btc_usdt)"),
-    symbol: str = typer.Argument(..., help="Par de trading (ej: BTC-USDT)"),
+    name:   str = typer.Argument(...),
+    symbol: str = typer.Argument(...),
 ):
-    """Activa un bot. Lo crea si no existe (con configuración vacía)."""
+    """Activa un bot (lo crea si no existe)."""
     from core.database import get_session, set_bot_active, init_db
-
     init_db()
     with get_session() as s:
         state = set_bot_active(s, name, symbol.upper(), active=True)
-    console.print(f"[green]✓[/green] Bot [bold]{state.strategy_name}[/bold] activado.")
+    console.print(f"[green][OK][/green] Bot [bold]{state.strategy_name}[/bold] activado.")
 
 
 @bot_app.command("disable")
 def bot_disable(
-    name: str = typer.Argument(..., help="Nombre del bot"),
-    symbol: str = typer.Argument(..., help="Par de trading"),
+    name:   str = typer.Argument(...),
+    symbol: str = typer.Argument(...),
 ):
-    """Desactiva un bot (no cancela órdenes abiertas)."""
+    """Desactiva un bot."""
     from core.database import get_session, set_bot_active, init_db
-
     init_db()
     with get_session() as s:
         state = set_bot_active(s, name, symbol.upper(), active=False)
@@ -549,25 +690,18 @@ def bot_disable(
 
 @bot_app.command("add")
 def bot_add(
-    strategy_type: str = typer.Argument(..., help="Tipo: mean | adaptive | signal"),
-    symbol: str = typer.Argument(..., help="Par de trading (ej: BTC-USDT)"),
-    config_json: str = typer.Option("{}", "--config", "-c",
-                                     help="Configuración JSON del bot."),
+    strategy_type: str = typer.Argument(..., help="Tipo: mean | adaptive | pro_trend | signal"),
+    symbol: str = typer.Argument(...),
+    config_json: str = typer.Option("{}", "--config", "-c"),
 ):
-    """
-    Registra un nuevo bot con su configuración.
-
-    Ejemplo:
-      python main.py bot add adaptive BTC-USDT
-    """
+    """Registra un nuevo bot con su configuración."""
     from core.database import get_session, get_or_create_bot_state, init_db
-
     init_db()
 
-    valid_types = ("mean", "adaptive", "signal")
+    valid_types = ("mean", "adaptive", "pro_trend", "pro", "signal")
     t = strategy_type.lower()
     if not any(t.startswith(v) for v in valid_types):
-        console.print(f"[red]Tipo inválido '{strategy_type}'. Válidos: {valid_types}[/red]")
+        console.print(f"[red]Tipo inválido '{strategy_type}'. Válidos: mean, adaptive, pro_trend, signal[/red]")
         raise typer.Exit(1)
 
     try:
@@ -577,9 +711,13 @@ def bot_add(
         raise typer.Exit(1)
 
     sym_clean = symbol.upper().replace("-", "_").lower()
-    name_map = {"mean": f"mean_{sym_clean}",
-                "adaptive": f"adaptive_trend_{sym_clean}",
-                "signal": "signal_follower"}
+    name_map  = {
+        "mean":      f"mean_{sym_clean}",
+        "adaptive":  f"adaptive_trend_{sym_clean}",
+        "pro_trend": f"pro_trend_{sym_clean}",
+        "pro":       f"pro_trend_{sym_clean}",
+        "signal":    "signal_follower",
+    }
     name = next(name_map[v] for v in valid_types if t.startswith(v))
 
     with get_session() as s:
@@ -587,44 +725,38 @@ def bot_add(
         state.set_config(config)
 
     console.print(
-        f"[green]✓[/green] Bot [bold]{name}[/bold] registrado.\n"
+        f"[green][OK][/green] Bot [bold]{name}[/bold] registrado.\n"
         f"  Actívalo con: [bold]python main.py bot enable {name} {symbol.upper()}[/bold]"
     )
 
 
 # ---------------------------------------------------------------------------
-# Comando: BACKTEST
+# Comando: BACKTEST  (backtest continuo de un solo período)
 # ---------------------------------------------------------------------------
 
 @app.command()
 def backtest(
-    strategy: str = typer.Option("adaptive", "--strategy", "-s",
-                                  help="Tipo: mean | adaptive"),
-    symbol: str = typer.Option("BTC-USDT", "--symbol",
-                                help="Par de trading (ej: BTC-USDT)"),
-    from_date: str = typer.Option("2024-01-01", "--from", "-f",
-                                   help="Fecha inicio YYYY-MM-DD"),
-    to_date: str = typer.Option("2024-12-31", "--to", "-t",
-                                 help="Fecha fin YYYY-MM-DD"),
-    timeframe: str = typer.Option("1H", "--timeframe",
-                                   help="Temporalidad OKX: 1m, 5m, 15m, 1H, 4H, 1D"),
-    balance: float = typer.Option(10000.0, "--balance", "-b",
-                                   help="Balance inicial simulado en USDT"),
-    config_json: str = typer.Option("{}", "--config", "-c",
-                                     help="Configuración JSON de la estrategia"),
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    strategy: str  = typer.Option("adaptive", "--strategy", "-s"),
+    symbol: str    = typer.Option("BTC-USDT", "--symbol"),
+    from_date: str = typer.Option("2024-01-01", "--from", "-f"),
+    to_date: str   = typer.Option("2024-12-31", "--to", "-t"),
+    timeframe: str = typer.Option("1H", "--timeframe"),
+    balance: float = typer.Option(10000.0, "--balance", "-b"),
+    config_json: str = typer.Option("{}", "--config", "-c"),
+    verbose: bool  = typer.Option(False, "--verbose", "-v"),
 ):
     """
-    Backtesting de una estrategia con datos históricos de OKX.
+    Backtest continuo de una estrategia.  Las posiciones se abren y cierran
+    únicamente por señales — sin reiniciar por año ni por fecha.
 
     Ejemplo:
-      python main.py backtest --strategy adaptive --symbol BTC-USDT --from 2024-01-01 --to 2024-12-31
+      python main.py backtest --strategy pro --from 2018-01-01 --to 2024-12-31
     """
     _setup_logging(verbose)
 
     try:
         from_dt = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        to_dt   = datetime.strptime(to_date, "%Y-%m-%d").replace(
+        to_dt   = datetime.strptime(to_date,   "%Y-%m-%d").replace(
             hour=23, minute=59, second=59, tzinfo=timezone.utc)
     except ValueError:
         console.print("[red]Formato de fecha inválido. Usa YYYY-MM-DD[/red]")
@@ -636,291 +768,391 @@ def backtest(
         console.print(f"[red]JSON inválido en --config: {exc}[/red]")
         raise typer.Exit(1)
 
-    from rich.table import Table as RichTable
-
     console.print(f"[bold cyan]Backtest:[/bold cyan] {strategy.upper()} / {symbol} / {timeframe}")
-    console.print(f"Descargando {from_dt.date()} → {to_dt.date()} (+ 240d calentamiento)…")
+    console.print(f"Descargando {from_dt.date()} -> {to_dt.date()} (+ warmup)")
 
     result = _run_backtest(symbol, timeframe, strategy.lower(), balance, config, from_dt, to_dt)
     if result is None:
         console.print("[red]No se pudieron descargar datos o ejecutar el backtest.[/red]")
         raise typer.Exit(1)
 
-    t = RichTable(title=f"Resultados Backtest — {result.strategy_name} / {symbol}",
-                  header_style="bold blue", show_lines=False)
-    t.add_column("Métrica", style="dim")
-    t.add_column("Valor", justify="right")
+    # Tabla resumen
+    t = Table(title=f"Resultados — {result.strategy_name} / {symbol}",
+              header_style="bold blue", show_lines=False)
+    t.add_column("Métrica", style="dim"); t.add_column("Valor", justify="right")
     for label, value in result.summary_rows():
         t.add_row(label, value)
     console.print(t)
 
     if result.total_trades == 0:
-        console.print("[yellow]⚠  Sin trades generados.[/yellow]")
+        console.print("[yellow](!)  Sin trades generados.[/yellow]")
     elif result.profit_factor > Decimal("1.5"):
-        console.print("[green]✓ Profit Factor > 1.5 — estrategia prometedora.[/green]")
+        console.print("[green][OK] Profit Factor > 1.5 — estrategia prometedora.[/green]")
     elif result.profit_factor < Decimal("1.0"):
-        console.print("[red]✗ Profit Factor < 1.0 — estrategia pierde dinero en este período.[/red]")
+        console.print("[red][X] Profit Factor < 1.0 — estrategia pierde dinero en este período.[/red]")
+
+    # Resumen trimestral (solo visualización)
+    _print_quarterly_table(result, f"Resumen trimestral — {result.strategy_name}")
 
 
 # ---------------------------------------------------------------------------
-# Comando: COMPARE — corre todos los años de una vez y muestra tabla completa
+# Comando: COMPARE  (backtest continuo + desglose anual y trimestral)
 # ---------------------------------------------------------------------------
-
-# Rentabilidades históricas de benchmarks (fuente: datos reales de mercado)
-_BENCHMARKS: dict[str, dict[int, float]] = {
-    "S&P 500": {2018: -4.38, 2019: 31.49, 2020: 18.40, 2021: 28.71,
-                2022: -18.11, 2023: 26.29, 2024: 23.31},
-    "NASDAQ":  {2018: -3.88, 2019: 35.23, 2020: 43.64, 2021: 21.39,
-                2022: -32.97, 2023: 43.43, 2024: 28.64},
-}
-
-_STRAT_LABELS = {
-    "mean": "Mean Rev.",
-    "mean_reversion": "Mean Rev.",
-    "adaptive": "Adaptive Trend",
-    "adaptive_trend": "Adaptive Trend",
-    "trend": "Adaptive Trend",
-}
-
 
 @app.command()
 def compare(
     strategies: str = typer.Option(
-        "mean,adaptive", "--strategies", "-s",
-        help="Estrategias separadas por comas: mean, adaptive",
+        "adaptive", "--strategies", "-s",
+        help="Estrategias separadas por comas: mean, adaptive, pro",
     ),
-    from_year: int = typer.Option(2018, "--from", "-f", help="Año inicio"),
-    to_year: int = typer.Option(2024, "--to", "-t", help="Año fin"),
-    symbol: str = typer.Option("BTC-USDT", "--symbol", help="Par de trading"),
-    timeframe: str = typer.Option("1H", "--timeframe"),
-    balance: float = typer.Option(10_000.0, "--balance", "-b",
-                                   help="Balance inicial USDT por año"),
-    cumulative: bool = typer.Option(
-        False, "--cumulative", "-C",
-        help="Compounding: el balance del año anterior se lleva al siguiente",
-    ),
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
+    from_year: int  = typer.Option(2018, "--from", "-f"),
+    to_year: int    = typer.Option(2024, "--to",   "-t"),
+    symbol: str     = typer.Option("BTC-USDT", "--symbol"),
+    timeframe: str  = typer.Option("1H", "--timeframe"),
+    balance: float  = typer.Option(10_000.0, "--balance", "-b"),
+    verbose: bool   = typer.Option(False, "--verbose", "-v"),
 ):
     """
-    Compara múltiples estrategias año a año en una sola ejecución.
+    Compara estrategias en un backtest CONTINUO (sin fronteras de año).
+    Las posiciones se abren y cierran solo por señales de mercado.
+    Muestra desglose anual y trimestral como referencia — no afectan la lógica.
 
-    Ejemplos:
-      python main.py compare
-      python main.py compare --strategies mean,adaptive --from 2018 --to 2024
-      python main.py compare --cumulative
+    Ejemplo:
+      python main.py compare --strategies adaptive,pro --from 2018 --to 2024
     """
     _setup_logging(verbose)
-
-    from datetime import timedelta
-    from rich.table import Table as RichTable
+    from core.backtest import fetch_historical_bars
 
     strat_list = [s.strip().lower() for s in strategies.split(",") if s.strip()]
-    years = list(range(from_year, to_year + 1))
+    years      = list(range(from_year, to_year + 1))
 
     if not strat_list:
         console.print("[red]Indica al menos una estrategia con --strategies[/red]")
         raise typer.Exit(1)
 
-    # Silenciar logs de estrategias durante la ejecución masiva
-    logger.remove()
-    log_dir = Path(__file__).parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-    logger.add(log_dir / "trading_{time:YYYY-MM-DD}.log",
-               rotation="00:00", retention="30 days", level="DEBUG", encoding="utf-8")
-    if verbose:
-        logger.add(sys.stderr, level="INFO",
-                   format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
+    from_dt = datetime(from_year, 1, 1, tzinfo=timezone.utc)
+    to_dt   = datetime(to_year, 12, 31, hour=23, minute=59, second=59, tzinfo=timezone.utc)
 
-    # ── Recopilar resultados ────────────────────────────────────────────────
-    # results[strat][year] = {"pnl_pct": float, "final": float, "bh_pct": float, "trades": int}
-    results: dict[str, dict[int, dict]] = {s: {} for s in strat_list}
-    bh_by_year: dict[int, float] = {}   # Buy & Hold BTC % por año
+    # Descarga única de barras para todas las estrategias
+    WARMUP = 380
+    warmup_start = from_dt - timedelta(days=WARMUP)
+    console.print(
+        f"[bold cyan]Descargando {symbol}/{timeframe} "
+        f"{from_dt.date()} -> {to_dt.date()} (+{WARMUP}d warmup)...[/bold cyan]"
+    )
+    all_bars = fetch_historical_bars(symbol=symbol, bar=timeframe,
+                                      from_dt=warmup_start, to_dt=to_dt)
+    if not all_bars:
+        console.print("[red]No se pudieron descargar datos de OKX.[/red]")
+        raise typer.Exit(1)
 
-    current_balance: dict[str, float] = {s: balance for s in strat_list}
+    bh_by_year = _btc_year_returns(all_bars, years)
 
-    total = len(years) * len(strat_list)
-    done = 0
+    # Un solo backtest continuo por estrategia
+    results: dict[str, object] = {}
+    for idx, strat in enumerate(strat_list, 1):
+        label = _STRAT_LABELS.get(strat, strat)
+        console.print(f"  [{idx}/{len(strat_list)}] {label} ({from_dt.date()} -> {to_dt.date()})...")
+        results[strat] = _run_backtest(
+            symbol, timeframe, strat, balance, {}, from_dt, to_dt,
+            prefetched_bars=all_bars,
+        )
 
-    for year in years:
-        from_dt = datetime(year, 1, 1, tzinfo=timezone.utc)
-        to_dt   = datetime(year, 12, 31, hour=23, minute=59, second=59, tzinfo=timezone.utc)
-
-        for strat in strat_list:
-            start_bal = current_balance[strat] if cumulative else balance
-            done += 1
-            console.print(
-                f"  [{done}/{total}] {_STRAT_LABELS.get(strat, strat)} {year}  "
-                f"(balance={start_bal:,.0f} USDT)…",
-                end="\r",
-            )
-
-            res = _run_backtest(symbol, timeframe, strat, start_bal, {}, from_dt, to_dt)
-
-            if res is None:
-                results[strat][year] = {"pnl_pct": 0.0, "final": start_bal,
-                                        "bh_pct": 0.0, "trades": 0}
-            else:
-                final = float(res.final_balance)
-                pnl_pct = (final - start_bal) / start_bal * 100
-                results[strat][year] = {
-                    "pnl_pct": pnl_pct,
-                    "final": final,
-                    "bh_pct": float(res.buy_hold_pnl_pct),
-                    "trades": res.total_trades,
-                }
-                if year not in bh_by_year:
-                    bh_by_year[year] = float(res.buy_hold_pnl_pct)
-
-            if cumulative and results[strat][year]:
-                current_balance[strat] = results[strat][year]["final"]
-
-    console.print(" " * 80, end="\r")  # limpiar línea de progreso
-
-    # ── Helpers de formato ──────────────────────────────────────────────────
-    def _pct(v: float) -> str:
-        color = "green" if v > 0 else ("red" if v < 0 else "dim")
-        return f"[{color}]{v:+.1f}%[/{color}]"
-
-    def _usd(v: float) -> str:
-        color = "green" if v >= balance else "red"
-        return f"[{color}]${v:,.0f}[/{color}]"
+    # Extraer métricas anuales de la curva de equity continua
+    annual: dict[str, dict] = {}
+    for strat, r in results.items():
+        if r is None:
+            annual[strat] = {y: {"pnl_pct": 0.0, "end_val": balance} for y in years}
+        else:
+            annual[strat] = _annual_returns_from_curve(r.equity_curve, years,
+                                                        r.initial_balance)
 
     col_labels = [_STRAT_LABELS.get(s, s) for s in strat_list]
 
-    # ── Tabla 1: % P&L anual ────────────────────────────────────────────────
-    t1 = RichTable(title=f"Rentabilidad anual — {symbol} (inicio ${balance:,.0f}/año)",
-                   header_style="bold blue", show_lines=True)
+    # ── Tabla 1: rentabilidad anual ─────────────────────────────────────────
+    t1 = Table(
+        title=f"Rentabilidad anual — {symbol} (backtest continuo, inicio ${balance:,.0f})",
+        header_style="bold blue", show_lines=True,
+    )
     t1.add_column("Año", style="bold")
     t1.add_column("BTC B&H", justify="right")
     for lbl in col_labels:
         t1.add_column(lbl, justify="right")
-    for bm_name in _BENCHMARKS:
-        t1.add_column(bm_name, justify="right")
+    for bm in _BENCHMARKS:
+        t1.add_column(bm, justify="right")
 
+    avg_bh = sum(bh_by_year.values()) / len(bh_by_year) if bh_by_year else 0.0
     for year in years:
-        bh = bh_by_year.get(year, 0.0)
-        row = [str(year), _pct(bh)]
+        row = [str(year), _pct(bh_by_year.get(year, 0.0))]
         for strat in strat_list:
-            row.append(_pct(results[strat][year]["pnl_pct"]))
-        for bm_name, bm_data in _BENCHMARKS.items():
+            row.append(_pct(annual[strat].get(year, {}).get("pnl_pct", 0.0)))
+        for bm, bm_data in _BENCHMARKS.items():
             row.append(_pct(bm_data.get(year, 0.0)))
         t1.add_row(*row)
 
-    # Fila resumen: media anual
-    avg_bh = sum(bh_by_year.values()) / len(bh_by_year) if bh_by_year else 0.0
     avg_row = ["Promedio", _pct(avg_bh)]
     for strat in strat_list:
-        vals = [results[strat][y]["pnl_pct"] for y in years if y in results[strat]]
+        vals = [annual[strat].get(y, {}).get("pnl_pct", 0.0) for y in years]
         avg_row.append(_pct(sum(vals) / len(vals)) if vals else "—")
-    for bm_name, bm_data in _BENCHMARKS.items():
-        vals = [bm_data[y] for y in years if y in bm_data]
-        avg_row.append(_pct(sum(vals) / len(vals)) if vals else "—")
+    for bm, bm_data in _BENCHMARKS.items():
+        bm_v = [bm_data.get(y, 0.0) for y in years if y in bm_data]
+        avg_row.append(_pct(sum(bm_v) / len(bm_v)) if bm_v else "—")
     t1.add_row(*avg_row)
-
     console.print(t1)
 
-    # ── Tabla 2: balance final por año (inicio $balance independiente) ──────
-    if not cumulative:
-        t2 = RichTable(title=f"Balance final por año — inicio ${balance:,.0f} cada año",
-                       header_style="bold blue", show_lines=True)
-        t2.add_column("Año", style="bold")
-        t2.add_column("BTC B&H", justify="right")
-        for lbl in col_labels:
-            t2.add_column(lbl, justify="right")
-        for bm_name in _BENCHMARKS:
-            t2.add_column(bm_name, justify="right")
-
-        for year in years:
-            bh = bh_by_year.get(year, 0.0)
-            bh_bal = balance * (1 + bh / 100)
-            row = [str(year), _usd(bh_bal)]
-            for strat in strat_list:
-                row.append(_usd(results[strat][year]["final"]))
-            for bm_name, bm_data in _BENCHMARKS.items():
-                bm_bal = balance * (1 + bm_data.get(year, 0.0) / 100)
-                row.append(_usd(bm_bal))
-            t2.add_row(*row)
-
-        console.print(t2)
-
-    # ── Tabla 3: acumulado (compounding desde año inicial) ──────────────────
-    t3 = RichTable(
-        title=f"Acumulado — ${balance:,.0f} invertidos en enero {from_year} (compounding)",
+    # ── Tabla 2: valor acumulado (compounding continuo) ─────────────────────
+    t2 = Table(
+        title=f"Valor acumulado — ${balance:,.0f} invertidos en {from_year} (compounding continuo)",
         header_style="bold blue", show_lines=True,
     )
-    t3.add_column("Fin de año", style="bold")
-    t3.add_column("BTC B&H", justify="right")
+    t2.add_column("Fin de año", style="bold")
+    t2.add_column("BTC B&H", justify="right")
     for lbl in col_labels:
-        t3.add_column(lbl, justify="right")
-    for bm_name in _BENCHMARKS:
-        t3.add_column(bm_name, justify="right")
+        t2.add_column(lbl, justify="right")
+    for bm in _BENCHMARKS:
+        t2.add_column(bm, justify="right")
 
-    acc_bh   = balance
-    acc_strat: dict[str, float] = {s: balance for s in strat_list}
-    acc_bm:   dict[str, float] = {bm: balance for bm in _BENCHMARKS}
-
+    acc_bh = balance
+    acc_bm = {bm: balance for bm in _BENCHMARKS}
     for year in years:
-        bh_pct = bh_by_year.get(year, 0.0)
-        acc_bh *= (1 + bh_pct / 100)
-
-        row = [str(year), _usd(acc_bh)]
+        acc_bh *= (1 + bh_by_year.get(year, 0.0) / 100)
+        row = [str(year), _usd(acc_bh, balance)]
         for strat in strat_list:
-            pct = results[strat][year]["pnl_pct"]
-            acc_strat[strat] *= (1 + pct / 100)
-            row.append(_usd(acc_strat[strat]))
-        for bm_name, bm_data in _BENCHMARKS.items():
-            acc_bm[bm_name] *= (1 + bm_data.get(year, 0.0) / 100)
-            row.append(_usd(acc_bm[bm_name]))
-        t3.add_row(*row)
+            row.append(_usd(annual[strat].get(year, {}).get("end_val", balance), balance))
+        for bm, bm_data in _BENCHMARKS.items():
+            acc_bm[bm] *= (1 + bm_data.get(year, 0.0) / 100)
+            row.append(_usd(acc_bm[bm], balance))
+        t2.add_row(*row)
 
-    # Fila multiplicador
-    mult_bh = acc_bh / balance
-    mult_row = ["Multiplicador", f"[bold]{mult_bh:.2f}×[/bold]"]
+    mult_row = ["Multiplicador", f"[bold]{acc_bh / balance:.2f}x[/bold]"]
     for strat in strat_list:
-        mult_row.append(f"[bold]{acc_strat[strat] / balance:.2f}×[/bold]")
-    for bm_name in _BENCHMARKS:
-        mult_row.append(f"[bold]{acc_bm[bm_name] / balance:.2f}×[/bold]")
-    t3.add_row(*mult_row)
+        final = annual[strat].get(years[-1], {}).get("end_val", balance)
+        mult_row.append(f"[bold]{final / balance:.2f}x[/bold]")
+    for bm in _BENCHMARKS:
+        mult_row.append(f"[bold]{acc_bm[bm] / balance:.2f}x[/bold]")
+    t2.add_row(*mult_row)
+    console.print(t2)
 
-    console.print(t3)
+    # ── Tabla 3: resumen trimestral por estrategia ──────────────────────────
+    for strat, r in results.items():
+        if r is not None:
+            _print_quarterly_table(r, f"Resumen trimestral — {_STRAT_LABELS.get(strat, strat)}")
 
     # ── Tabla 4: estadísticas resumen ───────────────────────────────────────
-    t4 = RichTable(title="Estadísticas resumen", header_style="bold blue", show_lines=True)
+    t4 = Table(title="Estadísticas resumen", header_style="bold blue", show_lines=True)
     t4.add_column("Métrica", style="dim")
     t4.add_column("BTC B&H", justify="right")
     for lbl in col_labels:
         t4.add_column(lbl, justify="right")
-    for bm_name in _BENCHMARKS:
-        t4.add_column(bm_name, justify="right")
+    for bm in _BENCHMARKS:
+        t4.add_column(bm, justify="right")
 
-    def _stat_rows():
-        bh_vals = list(bh_by_year.values())
-        strat_vals = {s: [results[s][y]["pnl_pct"] for y in years if y in results[s]]
-                      for s in strat_list}
-        bm_vals = {bm: [bm_data[y] for y in years if y in bm_data]
-                   for bm, bm_data in _BENCHMARKS.items()}
+    bh_vals   = list(bh_by_year.values())
+    strat_vals = {s: [annual[s].get(y, {}).get("pnl_pct", 0.0) for y in years] for s in strat_list}
+    bm_vals    = {bm: [bm_data.get(y, 0.0) for y in years if y in bm_data]
+                  for bm, bm_data in _BENCHMARKS.items()}
 
-        metrics = [
-            ("Mejor año",   lambda v: max(v)),
-            ("Peor año",    lambda v: min(v)),
-            ("Años > 0%",   lambda v: f"{sum(1 for x in v if x > 0)}/{len(v)}"),
-            ("Años < 0%",   lambda v: f"{sum(1 for x in v if x < 0)}/{len(v)}"),
-            ("Prom. anual", lambda v: sum(v) / len(v)),
-        ]
-        for name, fn in metrics:
-            row = [name]
-            bh_v = fn(bh_vals)
-            row.append(_pct(bh_v) if isinstance(bh_v, float) else str(bh_v))
-            for s in strat_list:
-                v = fn(strat_vals[s]) if strat_vals[s] else 0.0
-                row.append(_pct(v) if isinstance(v, float) else str(v))
-            for bm in _BENCHMARKS:
-                v = fn(bm_vals[bm]) if bm_vals[bm] else 0.0
-                row.append(_pct(v) if isinstance(v, float) else str(v))
-            t4.add_row(*row)
+    def _stat(name, fn):
+        row = [name]
+        bh_v = fn(bh_vals)
+        row.append(_pct(bh_v) if isinstance(bh_v, float) else str(bh_v))
+        for s in strat_list:
+            v = fn(strat_vals[s]) if strat_vals[s] else 0.0
+            row.append(_pct(v) if isinstance(v, float) else str(v))
+        for bm in _BENCHMARKS:
+            v = fn(bm_vals[bm]) if bm_vals[bm] else 0.0
+            row.append(_pct(v) if isinstance(v, float) else str(v))
+        t4.add_row(*row)
 
-    _stat_rows()
+    _stat("Mejor año",   lambda v: float(max(v)))
+    _stat("Peor año",    lambda v: float(min(v)))
+    _stat("Años > 0%",   lambda v: f"{sum(1 for x in v if x > 0)}/{len(v)}")
+    _stat("Años < 0%",   lambda v: f"{sum(1 for x in v if x < 0)}/{len(v)}")
+    _stat("Prom. anual", lambda v: float(sum(v) / len(v)))
+
+    # Sharpe y MaxDD de cada resultado continuo
+    for strat, r in results.items():
+        if r is None:
+            continue
+        lbl = _STRAT_LABELS.get(strat, strat)
+        t4.add_row(
+            f"Sharpe ({lbl})",
+            "—", *([f"{float(r.sharpe_ratio):.2f}"] + ["—"] * (len(strat_list) - 1 + len(_BENCHMARKS))),
+        )
+        t4.add_row(
+            f"Max DD ({lbl})",
+            "—", *([f"[red]-{float(r.max_drawdown_pct):.1f}%[/red]"] + ["—"] * (len(strat_list) - 1 + len(_BENCHMARKS))),
+        )
+
     console.print(t4)
+
+
+# ---------------------------------------------------------------------------
+# Comando: RANDOM-BACKTEST  (N ventanas aleatorias de M meses)
+# ---------------------------------------------------------------------------
+
+@app.command()
+def random_backtest(
+    strategy: str  = typer.Option("adaptive", "--strategy", "-s",
+                                   help="Tipo: mean | adaptive | pro"),
+    symbol: str    = typer.Option("BTC-USDT", "--symbol"),
+    windows: int   = typer.Option(10, "--windows", "-w",
+                                   help="Número de ventanas aleatorias"),
+    months: int    = typer.Option(24, "--months", "-m",
+                                   help="Duración de cada ventana en meses"),
+    balance: float = typer.Option(10_000.0, "--balance", "-b"),
+    timeframe: str = typer.Option("1H", "--timeframe"),
+    seed: Optional[int] = typer.Option(None, "--seed",
+                                        help="Semilla para reproducibilidad"),
+    verbose: bool  = typer.Option(False, "--verbose", "-v"),
+):
+    """
+    Valida una estrategia con N ventanas de M meses en fechas ALEATORIAS.
+
+    Ninguna ventana empieza el 1 de enero ni en fecha especial — las fechas
+    se eligen al azar dentro del histórico disponible de BTC en OKX.
+
+    Ejemplo:
+      python main.py random-backtest --strategy pro --windows 10 --months 24
+      python main.py random-backtest --strategy adaptive --windows 15 --seed 42
+    """
+    _setup_logging(verbose)
+    from core.backtest import fetch_historical_bars
+
+    strat = strategy.lower()
+    label = _STRAT_LABELS.get(strat, strat)
+
+    if seed is not None:
+        _random.seed(seed)
+
+    # Rango válido para fechas de inicio
+    window_days  = months * 30
+    WARMUP       = 380 if strat in ("pro", "pro_trend") else 240
+    latest_start = datetime.now(timezone.utc) - timedelta(days=window_days + 30)
+    valid_days   = max(0, (latest_start - _OKX_EARLIEST).days)
+
+    if valid_days < window_days:
+        console.print("[red]Histórico insuficiente para ventanas de ese tamaño.[/red]")
+        raise typer.Exit(1)
+
+    # Generar fechas de inicio aleatorias (sin repetición)
+    offsets = sorted(_random.sample(range(valid_days), min(windows, valid_days)))
+    windows_list = [
+        (
+            _OKX_EARLIEST + timedelta(days=off),
+            _OKX_EARLIEST + timedelta(days=off + window_days),
+        )
+        for off in offsets
+    ]
+
+    console.print(
+        f"[bold cyan]{label} — {windows} ventanas aleatorias de {months} meses[/bold cyan]"
+        + (f" (seed={seed})" if seed is not None else "")
+    )
+
+    # Resultados individuales
+    win_results = []
+    for i, (w_from, w_to) in enumerate(windows_list, 1):
+        console.print(
+            f"  [{i}/{windows}] {w_from.strftime('%d %b %Y')} -> {w_to.strftime('%d %b %Y')}...",
+            end="\r",
+        )
+        r = _run_backtest(symbol, timeframe, strat, balance, {}, w_from, w_to)
+        win_results.append((w_from, w_to, r))
+
+    console.print(" " * 70, end="\r")
+
+    # Tabla de resultados por ventana
+    tw = Table(
+        title=f"{label} — resultados por ventana ({symbol}, inicio ${balance:,.0f})",
+        header_style="bold blue", show_lines=False,
+    )
+    tw.add_column("Ventana")
+    tw.add_column("Trades", justify="right")
+    tw.add_column("P&L %", justify="right")
+    tw.add_column("BTC B&H %", justify="right")
+    tw.add_column("Alpha %", justify="right")
+    tw.add_column("Max DD", justify="right")
+    tw.add_column("Sharpe", justify="right")
+    tw.add_column("Win %", justify="right")
+
+    pnl_pcts   = []
+    bh_pcts    = []
+    alphas     = []
+    dds        = []
+    sharpes    = []
+    win_rates  = []
+
+    for w_from, w_to, r in win_results:
+        lbl_w = f"{w_from.strftime('%d %b %y')} -> {w_to.strftime('%d %b %y')}"
+        if r is None:
+            tw.add_row(lbl_w, "—", "—", "—", "—", "—", "—", "—")
+            continue
+
+        pnl_p  = float(r.total_pnl_pct)
+        bh_p   = float(r.buy_hold_pnl_pct)
+        alpha  = pnl_p - bh_p
+        dd     = float(r.max_drawdown_pct)
+        sharpe = float(r.sharpe_ratio)
+        wr     = float(r.win_rate)
+
+        pnl_pcts.append(pnl_p); bh_pcts.append(bh_p); alphas.append(alpha)
+        dds.append(dd); sharpes.append(sharpe); win_rates.append(wr)
+
+        ca = "green" if alpha >= 0 else "red"
+        tw.add_row(
+            lbl_w,
+            str(r.total_trades),
+            _pct(pnl_p),
+            _pct(bh_p),
+            f"[{ca}]{alpha:+.1f}%[/{ca}]",
+            f"[red]-{dd:.1f}%[/red]",
+            f"{sharpe:.2f}",
+            f"{wr:.1f}%",
+        )
+
+    console.print(tw)
+
+    if not pnl_pcts:
+        console.print("[red]Sin resultados válidos.[/red]")
+        raise typer.Exit(1)
+
+    # Tabla de estadísticas agregadas
+    import statistics as _stats
+
+    ta = Table(title="Estadísticas agregadas", header_style="bold blue", show_lines=True)
+    ta.add_column("Métrica", style="dim")
+    ta.add_column(label, justify="right")
+    ta.add_column("BTC B&H ref.", justify="right")
+
+    def _agg_row(name, fn, vals, bh_v, fmt=_pct):
+        ta.add_row(name, fmt(fn(vals)), fmt(fn(bh_v)))
+
+    avg_pnl  = _stats.mean(pnl_pcts);  avg_bh  = _stats.mean(bh_pcts)
+    std_pnl  = _stats.stdev(pnl_pcts) if len(pnl_pcts) > 1 else 0.0
+    wins_pos = sum(1 for p in pnl_pcts if p > 0)
+
+    ta.add_row("Ventanas válidas",    str(len(pnl_pcts)), str(len(bh_pcts)))
+    ta.add_row("Ventanas positivas",  f"{wins_pos}/{len(pnl_pcts)}",
+               f"{sum(1 for p in bh_pcts if p > 0)}/{len(bh_pcts)}")
+    ta.add_row("P&L medio",           _pct(avg_pnl),     _pct(avg_bh))
+    ta.add_row("P&L desv. estándar",  f"{std_pnl:.1f}%", "—")
+    ta.add_row("Mejor ventana",       _pct(max(pnl_pcts)), _pct(max(bh_pcts)))
+    ta.add_row("Peor ventana",        _pct(min(pnl_pcts)), _pct(min(bh_pcts)))
+    ta.add_row("Alpha medio",         _pct(_stats.mean(alphas)), "—")
+    ta.add_row("Max DD medio",        f"[red]-{_stats.mean(dds):.1f}%[/red]", "—")
+    ta.add_row("Sharpe medio",        f"{_stats.mean(sharpes):.2f}", "—")
+    ta.add_row("Win rate medio",      f"{_stats.mean(win_rates):.1f}%", "—")
+
+    console.print(ta)
+
+    # Veredicto
+    beat_bh = sum(1 for a in alphas if a > 0)
+    console.print(
+        f"\n[bold]Veredicto:[/bold] {label} superó a BTC B&H en "
+        f"[{'green' if beat_bh > len(alphas) / 2 else 'red'}]"
+        f"{beat_bh}/{len(alphas)}[/] ventanas."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -929,17 +1161,13 @@ def compare(
 
 def _setup_logging(verbose: bool) -> None:
     logger.remove()
-    level = "DEBUG" if verbose else "INFO"
+    level   = "DEBUG" if verbose else "INFO"
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(exist_ok=True)
-    logger.add(sys.stderr, level=level, format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
-    logger.add(
-        log_dir / "trading_{time:YYYY-MM-DD}.log",
-        rotation="00:00",
-        retention="30 days",
-        level="DEBUG",
-        encoding="utf-8",
-    )
+    logger.add(sys.stderr, level=level,
+               format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
+    logger.add(log_dir / "trading_{time:YYYY-MM-DD}.log",
+               rotation="00:00", retention="30 days", level="DEBUG", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

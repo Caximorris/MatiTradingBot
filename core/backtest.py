@@ -63,13 +63,14 @@ class BacktestResult:
     sharpe_ratio: Decimal
     buy_hold_pnl_pct: Decimal
     trades: list[BacktestTrade] = field(default_factory=list)
+    equity_curve: list[tuple[datetime, Decimal]] = field(default_factory=list)
 
     def summary_rows(self) -> list[tuple[str, str]]:
         """Filas para la tabla de resultados rich."""
         c_pnl = "green" if self.total_pnl >= 0 else "red"
         c_bh  = "green" if self.buy_hold_pnl_pct >= 0 else "red"
         return [
-            ("Período", f"{self.start_date.strftime('%d/%m/%Y')} → {self.end_date.strftime('%d/%m/%Y')}"),
+            ("Periodo", f"{self.start_date.strftime('%d/%m/%Y')} -> {self.end_date.strftime('%d/%m/%Y')}"),
             ("Velas analizadas", str(self.bars_tested)),
             ("Balance inicial", f"{self.initial_balance:,.2f} USDT"),
             ("Balance final", f"{self.final_balance:,.2f} USDT"),
@@ -167,6 +168,10 @@ class BacktestClient:
             result[base] = result.get(base, Decimal("0")) + qty
         return result
 
+    def adjust_balance(self, currency: str, delta: Decimal) -> None:
+        """Ajusta directamente el saldo — usado para liquidar P&L de cortos sintéticos."""
+        self._balance[currency] = self._balance.get(currency, Decimal("0")) + delta
+
     def get_open_orders(self, symbol: str | None = None) -> list:
         orders = list(self._paper_orders.values())
         if symbol:
@@ -175,6 +180,10 @@ class BacktestClient:
 
     def get_positions(self) -> list:
         return []
+
+    def get_funding_rate(self, symbol: str) -> float:
+        """En backtest no hay datos historicos de funding — devuelve 0.0 (neutro)."""
+        return 0.0
 
     def place_order(
         self,
@@ -376,7 +385,17 @@ class BacktestEngine:
         self._factory = strategy_factory
         self._warmup = warmup_bars
 
-    def run(self) -> BacktestResult:
+    def run(
+        self,
+        on_tick: Callable[[int, int], None] | None = None,
+        tick_interval: int = 500,
+    ) -> BacktestResult:
+        """
+        Ejecuta el backtest barra a barra.
+
+        on_tick(done, total): callback opcional llamado cada `tick_interval` barras
+                              para actualizar una barra de progreso externa.
+        """
         bars = self._client._bars
         symbol = self._client._symbol
         n = len(bars)
@@ -398,13 +417,13 @@ class BacktestEngine:
         end_price = bars[-1].close
         buy_hold_pct = ((end_price - start_price) / start_price * 100).quantize(Decimal("0.01"))
 
-        # Historial de valor del portfolio (para drawdown y sharpe)
-        equity_curve: list[Decimal] = []
+        # Historial de valor del portfolio con timestamps (para drawdown, sharpe y análisis externo)
+        equity_curve: list[tuple[datetime, Decimal]] = []
 
         strategy = self._factory(self._client, session)
+        total_ticks = n - self._warmup
 
         for i in range(self._warmup, n):
-            # Avanza la barra (chequea fills de límite antes del tick)
             self._client.advance(i)
 
             try:
@@ -412,17 +431,21 @@ class BacktestEngine:
             except Exception as exc:
                 logger.warning("Backtest tick {}/{}: {}", i, n, exc)
 
-            # Valorar el portfolio a precio de cierre
             balance = self._client.get_balance()
             usdt = balance.get("USDT", Decimal("0"))
             base_token = symbol.split("-")[0]
             base_qty = balance.get(base_token, Decimal("0"))
             total = usdt + base_qty * self._client.current_bar.close
-            equity_curve.append(total)
+            equity_curve.append((self._client.current_bar_ts(), total))
+
+            done = i - self._warmup + 1
+            if on_tick and (done % tick_interval == 0 or done == total_ticks):
+                on_tick(done, total_ticks)
 
         session.close()
 
-        final_balance = equity_curve[-1] if equity_curve else self._client.initial_balance
+        equity_values = [v for _, v in equity_curve]
+        final_balance = equity_values[-1] if equity_values else self._client.initial_balance
         total_pnl = final_balance - self._client.initial_balance
         total_pnl_pct = (total_pnl / self._client.initial_balance * 100).quantize(Decimal("0.01"))
 
@@ -459,10 +482,11 @@ class BacktestEngine:
             losing_trades=len(losses),
             win_rate=win_rate,
             profit_factor=profit_factor,
-            max_drawdown_pct=self._max_drawdown(equity_curve),
-            sharpe_ratio=self._sharpe(equity_curve),
+            max_drawdown_pct=self._max_drawdown(equity_values),
+            sharpe_ratio=self._sharpe(equity_values),
             buy_hold_pnl_pct=buy_hold_pct,
             trades=pnl_trades,
+            equity_curve=equity_curve,
         )
 
     # ---- Métricas ----
@@ -536,10 +560,13 @@ def fetch_historical_bars(
     bar: str,
     from_dt: datetime,
     to_dt: datetime,
+    on_page: Callable[[int], None] | None = None,
 ) -> list[OHLCVBar]:
     """
     Descarga datos OHLCV históricos desde la API pública de OKX.
     No requiere autenticación. Pagina automáticamente si el rango es grande.
+
+    on_page(n_bars): callback opcional llamado tras cada página descargada.
     """
     try:
         from okx.MarketData import MarketAPI
@@ -552,7 +579,7 @@ def fetch_historical_bars(
     before_ts = str(int(to_dt.timestamp() * 1000))
     after_ts  = str(int(from_dt.timestamp() * 1000))
 
-    logger.info("Descargando {}/{} desde {} hasta {}…", symbol, bar, from_dt.date(), to_dt.date())
+    logger.info("Descargando {}/{} desde {} hasta {}", symbol, bar, from_dt.date(), to_dt.date())
 
     while True:
         try:
@@ -580,15 +607,16 @@ def fetch_historical_bars(
                 volume=Decimal(vol),
             ))
 
+        if on_page:
+            on_page(len(bars))
+
         if len(chunk) < 300:
             break
 
-        # La siguiente página termina donde empezó esta
         before_ts = chunk[-1][0]
         if int(before_ts) <= int(after_ts):
             break
 
-    # OKX devuelve las barras de más reciente a más antigua — invertir
     bars.sort(key=lambda b: b.timestamp)
     logger.info("Descargadas {} velas", len(bars))
     return bars

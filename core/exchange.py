@@ -314,6 +314,15 @@ class OKXClient:
             logger.warning("get_balance() falló: {}", exc)
             return {}
 
+    def adjust_balance(self, currency: str, delta: Decimal) -> None:
+        """Ajusta el saldo simulado (solo paper mode). No-op en modo live."""
+        if not self._is_paper:
+            return
+        with self._paper_lock:
+            self._paper_balance[currency] = (
+                self._paper_balance.get(currency, Decimal("0")) + delta
+            )
+
     def get_open_orders(self, symbol: str) -> list[dict]:
         """
         Órdenes abiertas para el símbolo.
@@ -377,6 +386,25 @@ class OKXClient:
         except Exception as exc:
             logger.warning("get_order_history({}) falló: {}", symbol, exc)
             return []
+
+    def get_funding_rate(self, symbol: str) -> float:
+        """
+        Funding rate actual del perpetuo de BTC (BTC-USDT-SWAP).
+        Valores tipicos: 0.0001 (0.01%) neutral, >0.0005 sobrecomprado.
+        Devuelve 0.0 en paper mode o si falla la llamada.
+        """
+        if self._is_paper or not self._available:
+            return 0.0
+        try:
+            swap_id = symbol.replace("-USDT", "-USDT-SWAP")
+            from okx import PublicData
+            pub = PublicData.PublicAPI(flag="0")
+            resp = pub.get_funding_rate(instId=swap_id)
+            rate = resp["data"][0].get("fundingRate", "0")
+            return float(rate)
+        except Exception as exc:
+            logger.warning("get_funding_rate({}) fallo: {}", symbol, exc)
+            return 0.0
 
     # -----------------------------------------------------------------------
     # Métodos de escritura — paper simula; live llama a OKX
