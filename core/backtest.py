@@ -64,24 +64,39 @@ class BacktestResult:
     buy_hold_pnl_pct: Decimal
     trades: list[BacktestTrade] = field(default_factory=list)
     equity_curve: list[tuple[datetime, Decimal]] = field(default_factory=list)
+    # Métricas adicionales (con defaults para compatibilidad)
+    cagr: Decimal = Decimal("0")
+    sortino: Decimal = Decimal("0")
+    expectancy: Decimal = Decimal("0")
+    avg_win: Decimal = Decimal("0")
+    avg_loss: Decimal = Decimal("0")
+    max_consec_losses: int = 0
+    time_in_market_pct: Decimal = Decimal("0")
 
     def summary_rows(self) -> list[tuple[str, str]]:
         """Filas para la tabla de resultados rich."""
         c_pnl = "green" if self.total_pnl >= 0 else "red"
         c_bh  = "green" if self.buy_hold_pnl_pct >= 0 else "red"
+        c_cagr = "green" if self.cagr >= 0 else "red"
         return [
             ("Periodo", f"{self.start_date.strftime('%d/%m/%Y')} -> {self.end_date.strftime('%d/%m/%Y')}"),
             ("Velas analizadas", str(self.bars_tested)),
             ("Balance inicial", f"{self.initial_balance:,.2f} USDT"),
             ("Balance final", f"{self.final_balance:,.2f} USDT"),
             ("P&L total", f"[{c_pnl}]{self.total_pnl:+,.2f} USDT ({self.total_pnl_pct:+.2f}%)[/{c_pnl}]"),
+            ("CAGR", f"[{c_cagr}]{self.cagr:+.1f}%/ano[/{c_cagr}]"),
             ("Buy & Hold", f"[{c_bh}]{self.buy_hold_pnl_pct:+.2f}%[/{c_bh}]"),
             ("Total trades", str(self.total_trades)),
             ("Ganadores / Perdedores", f"{self.winning_trades} / {self.losing_trades}"),
             ("Win rate", f"{self.win_rate:.1f}%"),
+            ("Avg Win / Avg Loss", f"+{self.avg_win:.0f} / -{self.avg_loss:.0f} USDT"),
+            ("Expectancy/trade", f"{self.expectancy:+.2f} USDT"),
             ("Profit Factor", f"{self.profit_factor:.2f}"),
             ("Max Drawdown", f"[red]-{self.max_drawdown_pct:.2f}%[/red]"),
-            ("Sharpe Ratio (est.)", f"{self.sharpe_ratio:.2f}"),
+            ("Max racha perdedoras", str(self.max_consec_losses)),
+            ("Sharpe Ratio", f"{self.sharpe_ratio:.2f}"),
+            ("Sortino Ratio", f"{self.sortino:.2f}"),
+            ("Tiempo en mercado", f"{self.time_in_market_pct:.1f}%"),
         ]
 
 
@@ -380,10 +395,13 @@ class BacktestEngine:
         bt_client: BacktestClient,
         strategy_factory: Callable,
         warmup_bars: int = 20,
+        timeframe: str = "1H",
     ) -> None:
         self._client = bt_client
         self._factory = strategy_factory
         self._warmup = warmup_bars
+        self._timeframe = timeframe
+        self.last_strategy: Any = None   # expuesto tras run() para acceder al journal
 
     def run(
         self,
@@ -420,8 +438,17 @@ class BacktestEngine:
         # Historial de valor del portfolio con timestamps (para drawdown, sharpe y análisis externo)
         equity_curve: list[tuple[datetime, Decimal]] = []
 
+        logger.info(
+            "BACKTEST: get_funding_rate() retorna 0.0 siempre — "
+            "el filtro de funding no se valida historicamente (datos no disponibles en OKX publico)"
+        )
+
         strategy = self._factory(self._client, session)
+        self.last_strategy = strategy   # expuesto para acceso al journal tras run()
         total_ticks = n - self._warmup
+
+        base_token = symbol.split("-")[0]
+        bars_in_market = 0
 
         for i in range(self._warmup, n):
             self._client.advance(i)
@@ -433,10 +460,11 @@ class BacktestEngine:
 
             balance = self._client.get_balance()
             usdt = balance.get("USDT", Decimal("0"))
-            base_token = symbol.split("-")[0]
             base_qty = balance.get(base_token, Decimal("0"))
             total = usdt + base_qty * self._client.current_bar.close
             equity_curve.append((self._client.current_bar_ts(), total))
+            if base_qty > Decimal("0"):
+                bars_in_market += 1
 
             done = i - self._warmup + 1
             if on_tick and (done % tick_interval == 0 or done == total_ticks):
@@ -466,12 +494,40 @@ class BacktestEngine:
             if gross_loss > 0 else Decimal("0")
         )
 
+        avg_win  = (gross_profit / Decimal(str(len(wins)))).quantize(Decimal("0.01")) if wins else Decimal("0")
+        avg_loss = (gross_loss  / Decimal(str(len(losses)))).quantize(Decimal("0.01")) if losses else Decimal("0")
+
+        wr_d   = Decimal(str(len(wins)))   / Decimal(str(len(pnl_trades))) if pnl_trades else Decimal("0")
+        lr_d   = Decimal("1") - wr_d
+        expectancy = (wr_d * avg_win - lr_d * avg_loss).quantize(Decimal("0.01"))
+
+        max_consec = 0
+        cur_consec  = 0
+        for t in pnl_trades:
+            if t.pnl and t.pnl < 0:
+                cur_consec += 1
+                max_consec = max(max_consec, cur_consec)
+            else:
+                cur_consec = 0
+
+        time_in_mkt = (
+            Decimal(str(bars_in_market / total_ticks * 100)).quantize(Decimal("0.1"))
+            if total_ticks > 0 else Decimal("0")
+        )
+
+        bars_per_year = {
+            "1H": 8760, "4H": 2190, "1D": 365, "15m": 35040, "5m": 105120,
+        }.get(self._timeframe, 8760)
+
+        start_dt = datetime.fromtimestamp(bars[self._warmup].timestamp / 1000, tz=timezone.utc)
+        end_dt   = datetime.fromtimestamp(bars[-1].timestamp / 1000, tz=timezone.utc)
+
         return BacktestResult(
             symbol=symbol,
             strategy_name=strategy.name,
-            timeframe="histórico",
-            start_date=datetime.fromtimestamp(bars[self._warmup].timestamp / 1000, tz=timezone.utc),
-            end_date=datetime.fromtimestamp(bars[-1].timestamp / 1000, tz=timezone.utc),
+            timeframe=self._timeframe,
+            start_date=start_dt,
+            end_date=end_dt,
             bars_tested=n - self._warmup,
             initial_balance=self._client.initial_balance,
             final_balance=final_balance,
@@ -483,10 +539,17 @@ class BacktestEngine:
             win_rate=win_rate,
             profit_factor=profit_factor,
             max_drawdown_pct=self._max_drawdown(equity_values),
-            sharpe_ratio=self._sharpe(equity_values),
+            sharpe_ratio=self._sharpe(equity_values, bars_per_year=bars_per_year),
             buy_hold_pnl_pct=buy_hold_pct,
             trades=pnl_trades,
             equity_curve=equity_curve,
+            cagr=self._cagr(equity_values, start_dt, end_dt, self._client.initial_balance),
+            sortino=self._sortino(equity_values, bars_per_year=bars_per_year),
+            expectancy=expectancy,
+            avg_win=avg_win,
+            avg_loss=avg_loss,
+            max_consec_losses=max_consec,
+            time_in_market_pct=time_in_mkt,
         )
 
     # ---- Métricas ----
@@ -532,7 +595,11 @@ class BacktestEngine:
         return max_dd.quantize(Decimal("0.01"))
 
     @staticmethod
-    def _sharpe(equity: list[Decimal], risk_free_annual: float = 0.04) -> Decimal:
+    def _sharpe(
+        equity: list[Decimal],
+        bars_per_year: int = 8760,
+        risk_free_annual: float = 0.04,
+    ) -> Decimal:
         if len(equity) < 2:
             return Decimal("0")
         returns = [
@@ -542,13 +609,55 @@ class BacktestEngine:
         if not returns:
             return Decimal("0")
         mean_r = statistics.mean(returns)
-        std_r = statistics.stdev(returns) if len(returns) > 1 else 0
+        std_r  = statistics.stdev(returns) if len(returns) > 1 else 0.0
         if std_r == 0:
             return Decimal("0")
-        # Anualizamos asumiendo que cada elemento = 1 día
-        rf_daily = risk_free_annual / 252
-        sharpe = (mean_r - rf_daily) / std_r * math.sqrt(252)
+        rf_bar = risk_free_annual / bars_per_year
+        sharpe = (mean_r - rf_bar) / std_r * math.sqrt(bars_per_year)
         return Decimal(str(round(sharpe, 2)))
+
+    @staticmethod
+    def _sortino(
+        equity: list[Decimal],
+        bars_per_year: int = 8760,
+        risk_free_annual: float = 0.04,
+    ) -> Decimal:
+        if len(equity) < 4:
+            return Decimal("0")
+        returns = [
+            float(equity[i] - equity[i - 1]) / float(equity[i - 1])
+            for i in range(1, len(equity))
+        ]
+        rf_bar  = risk_free_annual / bars_per_year
+        excess  = [r - rf_bar for r in returns]
+        neg     = [r for r in excess if r < 0]
+        if len(neg) < 2:
+            return Decimal("0")
+        downside_std = statistics.stdev(neg)
+        if downside_std == 0:
+            return Decimal("0")
+        mean_excess = statistics.mean(excess)
+        sortino = mean_excess / downside_std * math.sqrt(bars_per_year)
+        return Decimal(str(round(sortino, 2)))
+
+    @staticmethod
+    def _cagr(
+        equity: list[Decimal],
+        start_dt: datetime,
+        end_dt: datetime,
+        initial_balance: Decimal,
+    ) -> Decimal:
+        if not equity or initial_balance <= 0:
+            return Decimal("0")
+        total_days = (end_dt - start_dt).days
+        if total_days < 30:
+            return Decimal("0")
+        years = total_days / 365.25
+        ratio = float(equity[-1]) / float(initial_balance)
+        if ratio <= 0:
+            return Decimal("0")
+        cagr = (ratio ** (1.0 / years) - 1.0) * 100
+        return Decimal(str(round(cagr, 2)))
 
 
 # ---------------------------------------------------------------------------

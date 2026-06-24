@@ -1,0 +1,163 @@
+{
+  "meta": {
+    "strategy": "pro_trend_btc_usdt",
+    "symbol": "BTC-USDT",
+    "timeframe": "1H",
+    "period": "2022-10-01 -> 2023-10-01",
+    "generated_at": "2026-06-24T18:04:57.340353+00:00",
+    "total_closed_trades": 1,
+    "open_at_end": 0
+  },
+  "statistics": {
+    "total_trades": 1,
+    "winners": 0,
+    "losers": 1,
+    "win_rate_pct": 0.0,
+    "total_pnl_usdt": -266.25,
+    "avg_pnl_usdt": -266.25,
+    "median_pnl_usdt": -266.25,
+    "avg_pnl_pct": -6.83,
+    "best_trade_usdt": -266.25,
+    "worst_trade_usdt": -266.25,
+    "avg_winner_usdt": 0,
+    "avg_loser_usdt": -266.25,
+    "largest_win_pct": -6.83,
+    "largest_loss_pct": -6.83,
+    "profit_factor": 0.0,
+    "avg_holding_hours": 872.0,
+    "min_holding_hours": 872.0,
+    "max_holding_hours": 872.0,
+    "by_side": {
+      "long": 1
+    },
+    "by_exit_reason": {
+      "macd_exit": 1
+    },
+    "win_rate_by_reason": {
+      "macd_exit": 0.0
+    }
+  },
+  "trades": [
+    {
+      "trade_num": 1,
+      "side": "long",
+      "symbol": "BTC-USDT",
+      "open": {
+        "timestamp": "2023-07-11T16:00:00+00:00",
+        "price": 30643.4,
+        "qty": 0.12727047,
+        "invest_usdt": 3900.0,
+        "stop_loss": 28417.9,
+        "take_profit": 0.0,
+        "balance_usdt_before": 10000.0,
+        "score_long": 8,
+        "score_short": 3,
+        "indicators": {
+          "close": 30414.2,
+          "ema_20d": 29895.0,
+          "ema_50d": 28833.19,
+          "ema_200d": 26308.59,
+          "ema50_slope": 1.2885,
+          "ema200_slope": 0.8128,
+          "macd_above": false,
+          "rsi": 59.1,
+          "rsi_div": null,
+          "adx": 31.2,
+          "atr": 890.2,
+          "obv_slope": 1.590508,
+          "bb_pct_b": 0.5,
+          "swing": "range",
+          "support_levels": [
+            24783.0,
+            25543.88,
+            26488.85
+          ],
+          "resistance_levels": [
+            26438.0,
+            27335.46,
+            28454.9
+          ],
+          "vp_poc": 30281.19,
+          "vp_vah": 30873.3,
+          "vp_val": 26982.28,
+          "pi_cycle_top": false,
+          "weekly_trend_up": true,
+          "h4_trend_bullish": true,
+          "h4_trend_bearish": false,
+          "h4_macd_above": true,
+          "h4_swing": "uptrend",
+          "h1_close": 30643.4,
+          "h1_vol_spike_up": false,
+          "h1_vol_spike_dn": false,
+          "h1_bb_squeeze": false,
+          "h1_bb_breakout_up": false,
+          "h1_bb_breakout_dn": false,
+          "score_long": 8,
+          "score_short": 3,
+          "mvrv": 1.5,
+          "halving_phase": "accumulation",
+          "dxy_change_pct": -0.93,
+          "ndx_change_pct": 2.93,
+          "dxy_headwind": false,
+          "ndx_risk_off": false
+        }
+      },
+      "close": {
+        "timestamp": "2023-08-17T00:00:00+00:00",
+        "price": 28580.0,
+        "pnl_usdt": -266.25,
+        "pnl_pct": -6.83,
+        "reason": "macd_exit",
+        "holding_hours": 872.0,
+        "balance_usdt_after": 9729.85,
+        "score_long": 6,
+        "score_short": 5,
+        "indicators": {
+          "close": 28730.8,
+          "ema_20d": 29349.98,
+          "ema_50d": 29323.9,
+          "ema_200d": 27311.62,
+          "ema50_slope": -0.0033,
+          "ema200_slope": 0.3899,
+          "macd_above": false,
+          "rsi": 37.6,
+          "rsi_div": null,
+          "adx": 12.3,
+          "atr": 538.06,
+          "obv_slope": 1.188321,
+          "bb_pct_b": -0.126,
+          "swing": "range",
+          "support_levels": [
+            29449.87
+          ],
+          "resistance_levels": [
+            30767.89
+          ],
+          "vp_poc": 30332.51,
+          "vp_vah": 31653.83,
+          "vp_val": 26897.1,
+          "pi_cycle_top": false,
+          "weekly_trend_up": true,
+          "h4_trend_bullish": false,
+          "h4_trend_bearish": true,
+          "h4_macd_above": false,
+          "h4_swing": "downtrend",
+          "h1_close": 28580.0,
+          "h1_vol_spike_up": false,
+          "h1_vol_spike_dn": true,
+          "h1_bb_squeeze": false,
+          "h1_bb_breakout_up": false,
+          "h1_bb_breakout_dn": true,
+          "score_long": 6,
+          "score_short": 5,
+          "mvrv": 1.31,
+          "halving_phase": "accumulation",
+          "dxy_change_pct": 0.88,
+          "ndx_change_pct": -4.15,
+          "dxy_headwind": false,
+          "ndx_risk_off": false
+        }
+      }
+    }
+  ]
+}

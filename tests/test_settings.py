@@ -17,8 +17,6 @@ def _patch_env(monkeypatch, overrides: dict):
         "DAILY_LOSS_LIMIT_PCT": "5.0",
         "FISCAL_YEAR": "2025",
         "COST_BASIS_METHOD": "FIFO",
-        "SIGNAL_SOURCE": "none",
-        "WEBHOOK_PORT": "8080",
     }
     for key, value in {**defaults, **overrides}.items():
         monkeypatch.setenv(key, value)

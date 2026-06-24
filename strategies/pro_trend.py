@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, ROUND_DOWN
 from typing import TYPE_CHECKING
 
@@ -36,8 +37,9 @@ from core.database import get_or_create_bot_state, upsert_position, close_positi
 from core.exchange import OrderResult
 from strategies.base_strategy import BaseStrategy
 from strategies.macro_context import get_macro_signal
+from strategies.market_context import get_market_context
 from strategies.indicators import (
-    ema, macd as compute_macd, atr as compute_atr,
+    ema, sma as compute_sma, macd as compute_macd, atr as compute_atr,
     rsi as compute_rsi, adx as compute_adx,
     resample_to_daily, resample_to_weekly, resample_to_4h,
     obv, ema_slope, bb_bands, swing_structure, sr_levels,
@@ -104,25 +106,79 @@ class ProTrendConfig:
     ema_slope_period: int = 5
 
     # Scoring
-    entry_score_min:       int = 7   # umbral para longs (~50% del máximo ~14pts)
+    entry_score_min:       int = 6   # bajado de 7 para entrar antes en el movimiento
     entry_score_min_short: int = 9   # umbral más alto para shorts (más confirmación)
     entry_score_gap:       int = 2   # ventaja mínima sobre el opuesto para entrar
     exit_score_floor:      int = 3   # cierre si score cae por debajo
 
-    # Sizing — conservador para sobrevivir rachas de stop-outs
-    size_high:      Decimal = Decimal("0.20")
-    size_mid:       Decimal = Decimal("0.12")
-    size_short_cap: Decimal = Decimal("0.15")
+    # Sizing adaptativo por score × fase del ciclo
+    size_ultra:     Decimal = Decimal("0.75")  # score ≥ 8 en post_halving/bull_peak (era solo score≥10)
+    size_high:      Decimal = Decimal("0.60")  # score ≥ 8
+    size_mid:       Decimal = Decimal("0.40")  # score 6-7
+    size_short_cap: Decimal = Decimal("0.15")  # cap absoluto para shorts
 
-    # Cooldown: días sin entrar tras un ATR stop-out
+    # Filtros de mercado global (DXY / NASDAQ-100)
+    dxy_headwind_pct:      float = 1.5   # DXY sube >X% en lookback → bloquear longs
+    ndx_risk_off_pct:      float = 5.0   # NASDAQ cae >X% en lookback → entorno risk-off
+    market_filter_lookback: int  = 10    # días para calcular el cambio porcentual
+
+    # Trailing stop dinámico. En post_halving/bull_peak usa trailing_stop_pct_bull (mas amplio)
+    # para no ser expulsado en las correcciones normales del ciclo (20-28% en bull markets).
+    # En bear/accumulation usa trailing_stop_pct (ajustado). 0.0 = desactivado.
+    trailing_stop_pct: float = 0.22       # trailing en bear/accumulation o fase desconocida
+    trailing_stop_pct_bull: float = 0.28  # trailing en post_halving/bull_peak (mas tolerante)
+
+    # Cooldown tras trailing stop: en bull phase no hay cambio estructural, re-entrada rapida.
+    # En bear/accumulation usar cooldown_bear_days (30 dias).
+    cooldown_trailing_bull_days: int = 7  # dias cooldown tras trailing en post_halving/bull_peak
+
+    # Cooldown tras ATR stop: 30 dias (evita re-entrada inmediata en el mismo nivel de precio).
+    # Aumentado de 5 dias (cooldown_bars) para evitar clusters de ATR stops consecutivos.
+    cooldown_atr_stop_days: int = 30
+
+    # Shorts: desactivados por defecto en mercado secular alcista.
+    # Para activar: --config '{"allow_shorts": true}'
+    allow_shorts: bool = False
+
+    # MACD exit: False = la estrategia solo sale por trailing stop, ATR stop,
+    # bear_confirmed y score_floor. Backtest 2018-2026 muestra +203% sin MACD exit
+    # vs +117% con el — el MACD cortaba tendencias grandes en multiple trades pequenos.
+    # Activar con --config '{"macd_exit_enabled": true}' para reproducir comportamiento anterior.
+    macd_exit_enabled: bool = False
+
+    # Pi Cycle Top: accion cuando SMA111D > 2xSMA350D.
+    # "exit_full"     → cierra posicion completa (defecto historico)
+    # "exit_half"     → vende 50% y deja correr el resto
+    # "block_entries" → solo bloquea nuevas entradas, no toca posicion abierta
+    pi_cycle_action: str = "exit_full"
+
+    # Filtro RSI en entrada: bloquea long si RSI > umbral.
+    # 0.0 = desactivado. Activa con entry_rsi_max=72 para evitar entradas sobrecompradas.
+    entry_rsi_max: float = 0.0
+
+    # Extension ATR respecto a EMA20D: bloquea long si precio > EMA20D + N×ATR.
+    # 0.0 = desactivado. Activa con entry_max_ema20_atr=2.5 para evitar entradas extendidas.
+    entry_max_ema20_atr: float = 0.0
+
+    # Cooldown: días sin entrar tras un ATR stop-out normal
     cooldown_bars: int = 5
+    # Cooldown extendido: tras bear_confirmed o trailing_stop (mercado giró estructuralmente)
+    cooldown_bear_days: int = 30
 
     # Hard stop: cierra la posición si la pérdida supera este % del precio de entrada,
     # independientemente del ATR stop (red de seguridad contra gaps y rallies violentos).
     max_loss_pct: float = 20.0
 
-    # Historial: 365 días = ~52 semanas, suficiente para EMA50W
-    lookback_hours: int = 8760
+    # Partial exit: vende partial_exit_size de la posicion cuando la ganancia no realizada
+    # supera partial_exit_pct %. Reduce la concentracion en trades excepcionales.
+    # 0.0 = desactivado. Ejemplo: 200.0 → vende 33% cuando la ganancia llega al 200% (3x precio).
+    # La posicion restante sigue con trailing stop normal.
+    # Ablation: --config '{"partial_exit_pct": 200.0}'  o  '{"partial_exit_pct": 150.0}'
+    partial_exit_pct:  float = 0.0
+    partial_exit_size: float = 0.33   # fraccion a vender en el evento (0.33 = 33%)
+
+    # Historial: 625 dias (~87 semanas), suficiente para EMA350D del Pi Cycle Top
+    lookback_hours: int = 15000
 
     def __post_init__(self) -> None:
         if self.ema_50d >= self.ema_200d:
@@ -160,12 +216,28 @@ class ProTrendConfig:
             entry_score_min_short=int(d.get("entry_score_min_short", _c.entry_score_min_short)),
             entry_score_gap=int(d.get("entry_score_gap", _c.entry_score_gap)),
             exit_score_floor=int(d.get("exit_score_floor", _c.exit_score_floor)),
+            size_ultra=Decimal(str(d.get("size_ultra", str(_c.size_ultra)))),
             size_high=Decimal(str(d.get("size_high", str(_c.size_high)))),
             size_mid=Decimal(str(d.get("size_mid", str(_c.size_mid)))),
             size_short_cap=Decimal(str(d.get("size_short_cap", str(_c.size_short_cap)))),
+            dxy_headwind_pct=float(d.get("dxy_headwind_pct", _c.dxy_headwind_pct)),
+            ndx_risk_off_pct=float(d.get("ndx_risk_off_pct", _c.ndx_risk_off_pct)),
+            market_filter_lookback=int(d.get("market_filter_lookback", _c.market_filter_lookback)),
             cooldown_bars=int(d.get("cooldown_bars", _c.cooldown_bars)),
+            cooldown_bear_days=int(d.get("cooldown_bear_days", _c.cooldown_bear_days)),
             max_loss_pct=float(d.get("max_loss_pct", _c.max_loss_pct)),
             lookback_hours=int(d.get("lookback_hours", _c.lookback_hours)),
+            trailing_stop_pct=float(d.get("trailing_stop_pct", _c.trailing_stop_pct)),
+            trailing_stop_pct_bull=float(d.get("trailing_stop_pct_bull", _c.trailing_stop_pct_bull)),
+            cooldown_trailing_bull_days=int(d.get("cooldown_trailing_bull_days", _c.cooldown_trailing_bull_days)),
+            cooldown_atr_stop_days=int(d.get("cooldown_atr_stop_days", _c.cooldown_atr_stop_days)),
+            allow_shorts=bool(d.get("allow_shorts", _c.allow_shorts)),
+            pi_cycle_action=str(d.get("pi_cycle_action", _c.pi_cycle_action)),
+            entry_rsi_max=float(d.get("entry_rsi_max", _c.entry_rsi_max)),
+            entry_max_ema20_atr=float(d.get("entry_max_ema20_atr", _c.entry_max_ema20_atr)),
+            macd_exit_enabled=bool(d.get("macd_exit_enabled", _c.macd_exit_enabled)),
+            partial_exit_pct=float(d.get("partial_exit_pct", _c.partial_exit_pct)),
+            partial_exit_size=float(d.get("partial_exit_size", _c.partial_exit_size)),
         )
 
     def to_dict(self) -> dict:
@@ -198,12 +270,28 @@ class ProTrendConfig:
             "entry_score_min_short": self.entry_score_min_short,
             "entry_score_gap": self.entry_score_gap,
             "exit_score_floor": self.exit_score_floor,
+            "size_ultra": str(self.size_ultra),
             "size_high": str(self.size_high),
             "size_mid": str(self.size_mid),
             "size_short_cap": str(self.size_short_cap),
+            "dxy_headwind_pct": self.dxy_headwind_pct,
+            "ndx_risk_off_pct": self.ndx_risk_off_pct,
+            "market_filter_lookback": self.market_filter_lookback,
             "cooldown_bars": self.cooldown_bars,
+            "cooldown_bear_days": self.cooldown_bear_days,
             "max_loss_pct": self.max_loss_pct,
             "lookback_hours": self.lookback_hours,
+            "trailing_stop_pct": self.trailing_stop_pct,
+            "allow_shorts": self.allow_shorts,
+            "pi_cycle_action": self.pi_cycle_action,
+            "entry_rsi_max": self.entry_rsi_max,
+            "entry_max_ema20_atr": self.entry_max_ema20_atr,
+            "macd_exit_enabled": self.macd_exit_enabled,
+            "partial_exit_pct": self.partial_exit_pct,
+            "partial_exit_size": self.partial_exit_size,
+            "trailing_stop_pct_bull": self.trailing_stop_pct_bull,
+            "cooldown_trailing_bull_days": self.cooldown_trailing_bull_days,
+            "cooldown_atr_stop_days": self.cooldown_atr_stop_days,
         }
 
 
@@ -265,11 +353,15 @@ class ProTrendBot(BaseStrategy):
             "entry_price": "0",
             "position_qty": "0",
             "stop_loss": "0",
+            "peak_price": "0",        # máximo desde entrada para trailing stop
             "margin_usdt": "0",
             "half_reduced": False,
+            "partial_exited": False,  # True cuando ya se ejecutó la partial exit de ganancias
             "prev_macd_above": None,
             "prev_weekly_up": None,
             "_cooldown_until": None,
+            "_consecutive_losses": 0,
+            "_consec_cooldown_until": None,
             "_daily_cache": None,
             "_weekly_cache": None,
             "_4h_cache":    None,
@@ -368,29 +460,42 @@ class ProTrendBot(BaseStrategy):
         rsi_div = rsi_divergence(close, rsi_s, 14)
         vp_poc, vp_vah, vp_val = volume_profile(close, volume, high, low, lookback=100)
 
+        # Pi Cycle Top: SMA111D > 2×SMA350D — señal histórica de techo de ciclo BTC.
+        # El indicador estándar (Mayer/Willy Woo) usa SMA, no EMA.
+        # Ha marcado cada ATH dentro de 3 días. Solo cuando hay datos suficientes.
+        if len(daily) >= 360:
+            sma111d_s = compute_sma(close, 111)
+            sma350d_s = compute_sma(close, 350)
+            pi_top = bool(
+                self._safe_float(sma111d_s.iloc[-1]) > 2 * self._safe_float(sma350d_s.iloc[-1])
+            )
+        else:
+            pi_top = False
+
         ind = {
-            "close":       self._safe_float(close.iloc[-1]),
-            "ema_20d":     self._safe_float(ema20d.iloc[-1]),
-            "ema_50d":     self._safe_float(ema50d.iloc[-1]),
-            "ema_200d":    self._safe_float(ema200d.iloc[-1]),
-            "macd_above":  bool(self._safe_float(macd_line.iloc[-1]) > self._safe_float(sig_line.iloc[-1])),
-            "atr":         self._safe_float(atr_s.iloc[-1]),
-            "rsi":         self._safe_float(rsi_s.iloc[-1]),
-            "adx":         self._safe_float(adx_s.iloc[-1]),
+            "close":        self._safe_float(close.iloc[-1]),
+            "ema_20d":      self._safe_float(ema20d.iloc[-1]),
+            "ema_50d":      self._safe_float(ema50d.iloc[-1]),
+            "ema_200d":     self._safe_float(ema200d.iloc[-1]),
+            "macd_above":   bool(self._safe_float(macd_line.iloc[-1]) > self._safe_float(sig_line.iloc[-1])),
+            "atr":          self._safe_float(atr_s.iloc[-1]),
+            "rsi":          self._safe_float(rsi_s.iloc[-1]),
+            "adx":          self._safe_float(adx_s.iloc[-1]),
             "obv_slope":    obv_sl,
             "ema50_slope":  e50_sl,
             "ema200_slope": e200_sl,
-            "vol_last":    self._safe_float(volume.iloc[-1]),
-            "vol_ma":      self._safe_float(vol_ma.iloc[-1]),
-            "bb_width":    self._safe_float(bb_width_s.iloc[-1]),
-            "bb_pct_b":    self._safe_float(bb_pct_b_s.iloc[-1]) if not math.isnan(self._safe_float(bb_pct_b_s.iloc[-1])) else 0.5,
-            "swing":       swing,
-            "support":     sup,
-            "resistance":  res,
-            "rsi_div":     rsi_div,
-            "vp_poc":      vp_poc,
-            "vp_vah":      vp_vah,
-            "vp_val":      vp_val,
+            "vol_last":     self._safe_float(volume.iloc[-1]),
+            "vol_ma":       self._safe_float(vol_ma.iloc[-1]),
+            "bb_width":     self._safe_float(bb_width_s.iloc[-1]),
+            "bb_pct_b":     self._safe_float(bb_pct_b_s.iloc[-1]) if not math.isnan(self._safe_float(bb_pct_b_s.iloc[-1])) else 0.5,
+            "swing":        swing,
+            "support":      sup,
+            "resistance":   res,
+            "rsi_div":      rsi_div,
+            "vp_poc":       vp_poc,
+            "vp_vah":       vp_vah,
+            "vp_val":       vp_val,
+            "pi_cycle_top": pi_top,
         }
         self._state["_daily_cache"] = {"date": current_day, "ind": ind}
         return ind
@@ -726,23 +831,47 @@ class ProTrendBot(BaseStrategy):
         )
         self.log_trade(result, pnl=pnl)
 
-    def _size_pct(self, score: int, side: str, reduce_risk: bool = False) -> Decimal:
+    def _size_pct(self, score: int, side: str, reduce_risk: bool = False, halving_phase: str = "") -> Decimal:
         cfg = self._cfg
-        pct = cfg.size_high if score >= 8 else cfg.size_mid
+
         if side == "short":
-            pct = min(pct, cfg.size_short_cap)
+            return cfg.size_short_cap
+
+        # Fase alcista del ciclo: post_halving (0-180d) y bull_peak (180-540d)
+        in_bull_phase = halving_phase in ("post_halving", "bull_peak")
+
+        # Tiers de sizing por fase × score.
+        # En bull phase confirmada, score>=8 ya justifica el 75%: las mejores oportunidades
+        # del ciclo ocurren aqui y el capital en USDT pierde frente a BTC si no esta invertido.
+        if in_bull_phase and score >= 8:
+            base = cfg.size_ultra    # 75%: bull confirmado con señal fuerte
+        elif score >= 8:
+            base = cfg.size_high     # 60%: señal fuerte fuera de bull phase
+        else:
+            base = cfg.size_mid      # 40%: señal moderada
+
+        # MVRV en zona de euforia: recortar drásticamente (posible techo de ciclo)
         if reduce_risk:
-            pct = min(pct, cfg.size_mid)   # cap en size_mid cuando MVRV sugiere techo
-        return pct
+            base = min(base, Decimal("0.20"))
+        elif halving_phase in ("bear_onset", "accumulation"):
+            # Fase bajista/acumulación: conservar capital
+            base = (base * Decimal("0.65")).quantize(Decimal("0.01"))
+
+        return base
 
     # -----------------------------------------------------------------------
     # Acciones — longs
     # -----------------------------------------------------------------------
 
     def _open_long(self, price: Decimal, score: int, atr_val: float) -> None:
-        cfg = self._cfg
+        cfg  = self._cfg
         usdt = self._client.get_balance().get("USDT", Decimal("0"))
-        invest = (usdt * self._size_pct(score, "long")).quantize(Decimal("0.01"))
+        macro = getattr(self, "_current_macro", {})
+        invest = (usdt * self._size_pct(
+            score, "long",
+            reduce_risk=macro.get("long_reduce_risk", False),
+            halving_phase=macro.get("halving_phase", ""),
+        )).quantize(Decimal("0.01"))
 
         ok, reason = self.check_risk(cfg.symbol, invest)
         if not ok:
@@ -758,12 +887,14 @@ class ProTrendBot(BaseStrategy):
             return
 
         stop = result.filled_price - Decimal(str(atr_val)) * Decimal(str(cfg.atr_stop_mult))
+        self._last_open_invest = float(invest)
         self.log_trade(result)
         self._state.update({
             "position":     "long",
             "entry_price":  str(result.filled_price),
             "position_qty": str(result.filled_qty),
             "stop_loss":    str(stop),
+            "peak_price":   str(result.filled_price),
             "margin_usdt":  "0",
             "half_reduced": False,
         })
@@ -791,12 +922,15 @@ class ProTrendBot(BaseStrategy):
         )
         if result.status == "filled" and result.filled_price:
             pnl = (result.filled_price - entry) * result.filled_qty - result.fee
+            self._last_close_pnl    = float(pnl)
+            self._last_close_reason = reason
             self.log_trade(result, pnl=pnl)
             logger.info(
                 "[{}] LONG cerrado ({}) @ {} | PnL={:.2f} USDT",
                 self.name, reason, result.filled_price, pnl,
             )
             close_position(self._session, self._cfg.symbol, self.name)
+            self._track_loss_streak(float(pnl))
         self._reset_state()
 
     def _reduce_long_half(self, price: Decimal) -> None:
@@ -840,6 +974,7 @@ class ProTrendBot(BaseStrategy):
         # Reservar margen + comisión de apertura
         open_fee = qty * price * _FEE_RATE
         self._client.adjust_balance("USDT", -(margin + open_fee))
+        self._last_open_invest = float(margin)
 
         self._log_short_trade("sell", price, qty, open_fee)
 
@@ -882,6 +1017,8 @@ class ProTrendBot(BaseStrategy):
         returned = max(Decimal("0"), margin + net_pnl)
         self._client.adjust_balance("USDT", returned)
 
+        self._last_close_pnl    = float(net_pnl)
+        self._last_close_reason = reason
         self._log_short_trade("buy", price, qty, close_fee, pnl=net_pnl)
         logger.info(
             "[{}] SHORT cerrado ({}) | entrada={} salida={} | PnL={:.2f} USDT",
@@ -915,18 +1052,45 @@ class ProTrendBot(BaseStrategy):
             "[{}] SHORT reducido al 50% @ {} | PnL parcial={:.2f}", self.name, price, net_pnl
         )
 
+    def _reduce_long_partial(self, reason: str) -> None:
+        """Vende partial_exit_size de la posicion long abierta. Solo se ejecuta una vez."""
+        cfg   = self._cfg
+        qty   = Decimal(self._state["position_qty"])
+        entry = Decimal(self._state["entry_price"])
+        sell  = (qty * Decimal(str(cfg.partial_exit_size))).quantize(
+            Decimal("0.00000001"), rounding=ROUND_DOWN
+        )
+        if sell <= Decimal("0"):
+            return
+
+        result = self._client.place_order(
+            cfg.symbol, "sell", "market", sell, strategy=self.name
+        )
+        if result.status == "filled" and result.filled_price:
+            pnl = (result.filled_price - entry) * result.filled_qty - result.fee
+            self.log_trade(result, pnl=pnl)
+            self._state["position_qty"] = str(qty - sell)
+            self._state["partial_exited"] = True
+            self._save_state()
+            logger.info(
+                "[{}] LONG partial exit ({:.0f}%) @ {} | {} | PnL parcial={:.2f} USDT",
+                self.name, cfg.partial_exit_size * 100, result.filled_price, reason, pnl,
+            )
+
     # -----------------------------------------------------------------------
     # Reset
     # -----------------------------------------------------------------------
 
     def _reset_state(self) -> None:
         self._state.update({
-            "position":     "none",
-            "entry_price":  "0",
-            "position_qty": "0",
-            "stop_loss":    "0",
-            "margin_usdt":  "0",
-            "half_reduced": False,
+            "position":       "none",
+            "entry_price":    "0",
+            "position_qty":   "0",
+            "stop_loss":      "0",
+            "peak_price":     "0",
+            "margin_usdt":    "0",
+            "half_reduced":   False,
+            "partial_exited": False,
         })
         self._save_state()
 
@@ -934,17 +1098,39 @@ class ProTrendBot(BaseStrategy):
     # Cooldown post stop-out
     # -----------------------------------------------------------------------
 
-    def _set_cooldown(self) -> None:
-        """Bloquea nuevas entradas durante cooldown_bars días tras un ATR stop-out."""
+    def _track_loss_streak(self, pnl: float) -> None:
+        """Tras 2 perdidas consecutivas activa cooldown extra para evitar re-entradas en pullback."""
         from datetime import timedelta
-        days = self._cfg.cooldown_bars
-        if days > 0:
+        if pnl < 0:
+            streak = int(self._state.get("_consecutive_losses", 0)) + 1
+            self._state["_consecutive_losses"] = streak
+            if streak >= 2:
+                until = (
+                    self._client.current_time().date() + timedelta(days=15)
+                ).isoformat()
+                self._state["_consec_cooldown_until"] = until
+                self._state["_consecutive_losses"] = 0
+                logger.info(
+                    "[{}] {} perdidas consecutivas — cooldown extra 15 dias hasta {}",
+                    self.name, streak, until,
+                )
+        else:
+            self._state["_consecutive_losses"] = 0
+
+    def _set_cooldown(self, days: int | None = None) -> None:
+        """Bloquea nuevas entradas durante N días.
+        Si days=None, usa cooldown_bars (salidas normales).
+        Pasar cooldown_bear_days para salidas estructurales (bear_confirmed, trailing_stop).
+        """
+        from datetime import timedelta
+        n = days if days is not None else self._cfg.cooldown_bars
+        if n > 0:
             until = (
-                self._client.current_time().date() + timedelta(days=days)
+                self._client.current_time().date() + timedelta(days=n)
             ).isoformat()
             self._state["_cooldown_until"] = until
             self._save_state()
-            logger.debug("[{}] Cooldown activo hasta {}", self.name, until)
+            logger.debug("[{}] Cooldown {} días activo hasta {}", self.name, n, until)
 
     # -----------------------------------------------------------------------
     # Gestión de posiciones abiertas
@@ -954,17 +1140,45 @@ class ProTrendBot(BaseStrategy):
         self, daily: dict, weekly: dict, h1: dict,
         price: Decimal, ls: int, ss: int,
     ) -> None:
-        cfg  = self._cfg
-        stop = Decimal(self._state["stop_loss"])
+        cfg   = self._cfg
+        stop  = Decimal(self._state["stop_loss"])
         entry = Decimal(self._state["entry_price"])
         prev_macd = self._state.get("prev_macd_above")
 
-        # 1. Flip semanal → bajista
-        if weekly.get("weekly_trend_up") is False:
-            logger.info("[{}] Tendencia semanal BAJISTA — cerrando LONG", self.name)
-            self._close_long(price, "weekly_flip_bear")
-            self._set_cooldown()
-            return
+        # ── Actualizar el máximo desde entrada (para trailing stop) ──────────
+        peak = Decimal(self._state.get("peak_price") or "0")
+        if price > peak:
+            peak = price
+            self._state["peak_price"] = str(peak)
+
+        # 1. Trailing stop dinámico con pct adaptativo por fase del ciclo.
+        #    post_halving/bull_peak: trailing_stop_pct_bull (28%) — aguanta correcciones normales
+        #    bear/accumulation: trailing_stop_pct (22%) — proteccion ajustada
+        #    Razon: BTC corrige 20-28% regularmente en bull markets sin romper estructura.
+        #    Un trailing del 22% expulsa en correcciones validas, el 28% no.
+        _macro_ctx  = getattr(self, "_current_macro", {})
+        _phase      = _macro_ctx.get("halving_phase", "")
+        _in_bull    = _phase in ("post_halving", "bull_peak")
+        _trail_pct  = (
+            cfg.trailing_stop_pct_bull
+            if (_in_bull and cfg.trailing_stop_pct_bull > 0)
+            else cfg.trailing_stop_pct
+        )
+        if _trail_pct > 0 and peak > Decimal("0"):
+            trail = peak * (Decimal("1") - Decimal(str(_trail_pct)))
+            if price < trail:
+                logger.info(
+                    "[{}] Trailing stop LONG: {} < {:.2f} ({:.0f}% desde pico {}) | phase={}",
+                    self.name, price, trail, _trail_pct * 100, peak, _phase,
+                )
+                self._close_long(price, "trailing_stop")
+                # Cooldown adaptativo: en bull phase no hay cambio estructural → re-entrada rapida.
+                # En bear/accumulation esperar consolidacion completa.
+                if _in_bull:
+                    self._set_cooldown(cfg.cooldown_trailing_bull_days)
+                else:
+                    self._set_cooldown(cfg.cooldown_bear_days)
+                return
 
         # 2. Hard cap: pérdida > max_loss_pct desde entrada (red de seguridad vs gaps)
         if entry > Decimal("0"):
@@ -975,43 +1189,101 @@ class ProTrendBot(BaseStrategy):
                     self.name, abs(loss_pct), entry,
                 )
                 self._close_long(price, "hard_stop")
-                self._set_cooldown()
+                self._set_cooldown(15)
                 return
 
-        # 3. ATR stop (basado en precio horario actual)
+        # 3. ATR stop inicial.
+        #    Cooldown extendido (30 dias) para evitar re-entrada inmediata en el mismo nivel
+        #    de precio — patrón observado en Q2/Q3 2024 (Trade 8 + Trade 9 consecutivos).
         if stop > Decimal("0") and price <= stop:
             logger.info("[{}] ATR stop LONG @ {} <= {}", self.name, price, stop)
             self._close_long(price, "atr_stop")
-            self._set_cooldown()
+            self._set_cooldown(cfg.cooldown_atr_stop_days)
             return
 
-        # 4. MACD death cross + precio horario bajo EMA20D
+        # 3.5. Pi Cycle Top: SMA111D > 2×SMA350D — señal histórica de techo de ciclo BTC.
+        # Ha marcado cada ATH dentro de 3 dias. Accion configurable via pi_cycle_action.
+        if daily.get("pi_cycle_top", False):
+            action = cfg.pi_cycle_action
+            if action == "exit_full":
+                logger.info("[{}] Pi Cycle Top (SMA111D > 2xSMA350D) — salida total", self.name)
+                self._close_long(price, "pi_cycle_top")
+                self._set_cooldown(cfg.cooldown_bear_days)
+                return
+            elif action == "exit_half":
+                if not self._state.get("half_reduced", False):
+                    logger.info("[{}] Pi Cycle Top — reduccion 50%", self.name)
+                    self._reduce_long_half(price)
+                # Sigue gestionando la posicion restante con trailing stop
+            elif action == "block_entries":
+                pass  # Solo bloquea nuevas entradas (gestionado en long_ok); no toca posicion
+
+        # 4. Partial exit: captura ganancias extremas para reducir concentracion.
+        #    Vende partial_exit_size una sola vez cuando la ganancia supera partial_exit_pct %.
+        #    La posicion restante continua con trailing stop y todas las salidas normales.
+        if (cfg.partial_exit_pct > 0 and entry > Decimal("0")
+                and not self._state.get("partial_exited", False)):
+            gain_pct = float((price - entry) / entry * 100)
+            if gain_pct >= cfg.partial_exit_pct:
+                logger.info(
+                    "[{}] Partial exit: +{:.1f}% >= {:.0f}% umbral — vendiendo {:.0f}% de la posicion",
+                    self.name, gain_pct, cfg.partial_exit_pct, cfg.partial_exit_size * 100,
+                )
+                self._reduce_long_partial("partial_exit_gains")
+
+        # 5. Flip semanal CON confirmación estructural bajista (precio bajo EMA200D)
+        #    → No salir en correcciones normales de bull market, solo en bear confirmado
+        if weekly.get("weekly_trend_up") is False and float(price) < daily["ema_200d"]:
+            logger.info(
+                "[{}] Bear confirmado: weekly bajista + precio ({}) bajo EMA200D ({:.0f})",
+                self.name, price, daily["ema_200d"],
+            )
+            self._close_long(price, "bear_confirmed")
+            # Cooldown máximo: cambio estructural, el mercado necesita semanas para
+            # confirmar si la tendencia reanuda (evita re-entradas prematuras post-ATH)
+            self._set_cooldown(cfg.cooldown_bear_days)
+            return
+
+        # 6. MACD death cross + precio bajo EMA20D
+        #    Se omite si la posicion lleva >10% de ganancia y el weekly sigue alcista:
+        #    en ese caso el trailing stop se encargara de proteger la ganancia.
+        #    Desactivable con macd_exit_enabled=False para ablation test.
         macd_cross_dn = not daily["macd_above"] and bool(prev_macd)
-        if macd_cross_dn and price < daily["ema_20d"]:
-            logger.info("[{}] MACD death cross + precio < EMA20D — cerrando LONG", self.name)
-            self._close_long(price, "macd_exit")
-            return
+        if cfg.macd_exit_enabled and macd_cross_dn and price < daily["ema_20d"]:
+            profit_pct = float((price - entry) / entry * 100) if entry > Decimal("0") else 0.0
+            weekly_still_up = weekly.get("weekly_trend_up") is True
+            if profit_pct > 10.0 and weekly_still_up:
+                logger.debug(
+                    "[{}] MACD exit diferido — ganancia {:.1f}% + weekly bullish, trailing activo",
+                    self.name, profit_pct,
+                )
+            else:
+                logger.info("[{}] MACD death cross + precio < EMA20D — cerrando LONG", self.name)
+                self._close_long(price, "macd_exit")
+                return
 
-        # 5. Score LONG por debajo del piso mínimo
+        # 7. Score LONG por debajo del piso mínimo
         if ls < cfg.exit_score_floor:
             logger.info("[{}] Score LONG={} < {} — cerrando", self.name, ls, cfg.exit_score_floor)
             self._close_long(price, "score_floor")
             return
 
-        # 6. Divergencia bajista RSI con ganancia > 5 % → recorte parcial
+        # 8. Recorte parcial RSI: solo cuando ganancia > 40% y RSI extremamente sobrecomprado
+        #    (no a +5% — cortaría los mejores trades del ciclo demasiado pronto)
         if entry > Decimal("0"):
             unreal_pct = float((price - entry) / entry * 100)
             if (daily.get("rsi_div") == "bearish"
-                    and unreal_pct > 5.0
+                    and daily.get("rsi", 0) > 85.0
+                    and unreal_pct > 40.0
                     and not self._state.get("half_reduced")):
                 logger.info(
-                    "[{}] RSI div bajista con +{:.1f}% ganancia — reduciendo LONG",
-                    self.name, unreal_pct,
+                    "[{}] RSI extremo ({:.0f}) con +{:.1f}% ganancia — reduciendo LONG",
+                    self.name, daily.get("rsi", 0), unreal_pct,
                 )
                 self._reduce_long_half(price)
 
-        # 7. Switch a SHORT si señal contraria fuerte
-        if ss >= cfg.entry_score_min and ls < cfg.exit_score_floor + 1:
+        # 9. Switch a SHORT solo si shorts están activados y señal contraria es fuerte
+        if cfg.allow_shorts and ss >= cfg.entry_score_min and ls < cfg.exit_score_floor + 1:
             logger.info("[{}] Switch LONG → SHORT (ls={}, ss={})", self.name, ls, ss)
             self._close_long(price, "switch_to_short")
             self._open_short(price, ss, daily["atr"])
@@ -1029,7 +1301,7 @@ class ProTrendBot(BaseStrategy):
         if weekly.get("weekly_trend_up") is True:
             logger.info("[{}] Tendencia semanal ALCISTA — cerrando SHORT", self.name)
             self._close_short(price, "weekly_flip_bull")
-            self._set_cooldown()
+            self._set_cooldown(cfg.cooldown_bear_days)
             return
 
         # 2. Hard cap: pérdida > max_loss_pct desde entrada (red de seguridad vs rallies violentos)
@@ -1053,7 +1325,7 @@ class ProTrendBot(BaseStrategy):
 
         # 4. MACD golden cross + precio horario sobre EMA20D
         macd_cross_up = daily["macd_above"] and not prev_macd
-        if macd_cross_up and price > daily["ema_20d"]:
+        if cfg.macd_exit_enabled and macd_cross_up and price > daily["ema_20d"]:
             logger.info("[{}] MACD golden cross + precio > EMA20D — cerrando SHORT", self.name)
             self._close_short(price, "macd_exit")
             return
@@ -1086,6 +1358,56 @@ class ProTrendBot(BaseStrategy):
     # Tick principal
     # -----------------------------------------------------------------------
 
+    def _journal_ind_snapshot(
+        self, daily: dict, weekly: dict, h4: dict, h1: dict, ls: int, ss: int
+    ) -> dict:
+        """Construye un snapshot plano de todos los indicadores para el journal."""
+        return {
+            # Precio y EMAs diarias
+            "close":             round(daily.get("close", 0), 2),
+            "ema_20d":           round(daily.get("ema_20d", 0), 2),
+            "ema_50d":           round(daily.get("ema_50d", 0), 2),
+            "ema_200d":          round(daily.get("ema_200d", 0), 2),
+            "ema50_slope":       round(daily.get("ema50_slope", 0), 4),
+            "ema200_slope":      round(daily.get("ema200_slope", 0), 4),
+            # MACD, RSI, ADX, ATR
+            "macd_above":        daily.get("macd_above"),
+            "rsi":               round(daily.get("rsi", 0), 1),
+            "rsi_div":           daily.get("rsi_div"),
+            "adx":               round(daily.get("adx", 0), 1),
+            "atr":               round(daily.get("atr", 0), 2),
+            # OBV y Bollinger
+            "obv_slope":         round(daily.get("obv_slope", 0), 6),
+            "bb_pct_b":          round(daily.get("bb_pct_b", 0), 3),
+            # Estructura y S/R
+            "swing":             daily.get("swing"),
+            "support_levels":    [round(x, 2) for x in daily.get("support", [])[:3]],
+            "resistance_levels": [round(x, 2) for x in daily.get("resistance", [])[:3]],
+            # Volume Profile
+            "vp_poc":            round(daily.get("vp_poc") or 0, 2),
+            "vp_vah":            round(daily.get("vp_vah") or 0, 2),
+            "vp_val":            round(daily.get("vp_val") or 0, 2),
+            # Pi Cycle Top
+            "pi_cycle_top":      daily.get("pi_cycle_top", False),
+            # Semanal
+            "weekly_trend_up":   weekly.get("weekly_trend_up"),
+            # 4H
+            "h4_trend_bullish":  h4.get("trend_bullish"),
+            "h4_trend_bearish":  h4.get("trend_bearish"),
+            "h4_macd_above":     h4.get("macd_above"),
+            "h4_swing":          h4.get("swing"),
+            # 1H
+            "h1_close":          round(h1.get("close", 0), 2),
+            "h1_vol_spike_up":   h1.get("vol_spike_up"),
+            "h1_vol_spike_dn":   h1.get("vol_spike_dn"),
+            "h1_bb_squeeze":     h1.get("bb_squeeze"),
+            "h1_bb_breakout_up": h1.get("bb_breakout_up"),
+            "h1_bb_breakout_dn": h1.get("bb_breakout_dn"),
+            # Scores
+            "score_long":        ls,
+            "score_short":       ss,
+        }
+
     def run(self) -> None:
         raw = self._fetch_raw()
         if raw is None:
@@ -1105,80 +1427,194 @@ class ProTrendBot(BaseStrategy):
 
         price    = Decimal(str(h1["close"]))   # precio real de la barra horaria actual
         position = self._state.get("position", "none")
+        cfg      = self._cfg
+
+        # Contexto macro y mercado global — calculado una vez por tick.
+        # Debe ser ANTES de manage_long/short porque _open_long lo usa via _current_macro.
+        macro  = get_macro_signal(self._client.current_time())
+        market = get_market_context(
+            self._client.current_time(),
+            lookback_days=cfg.market_filter_lookback,
+            dxy_threshold=cfg.dxy_headwind_pct,
+            ndx_threshold=-cfg.ndx_risk_off_pct,
+        )
+        self._current_macro  = macro
+
+        # === Journal: capturar estado PRE-acción ===
+        _pos_before      = position
+        _balance_before  = float(self._client.get_balance().get("USDT", Decimal("0")))
+        _ts_now          = self._client.current_time().isoformat()
+        # Guardar peak y entry ANTES de que _reset_state() los borre al cerrar posicion
+        _peak_pre  = float(Decimal(self._state.get("peak_price") or "0") or "0")
+        _entry_pre = float(Decimal(self._state.get("entry_price") or "0") or "0")
 
         if position == "long":
             self._manage_long(daily, weekly, h1, price, ls, ss)
         elif position == "short":
             self._manage_short(daily, weekly, h1, price, ls, ss)
         else:
-            current_day = self._client.current_time().date().isoformat()
+            current_day    = self._client.current_time().date().isoformat()
             cooldown_until = self._state.get("_cooldown_until")
-            in_cooldown = bool(cooldown_until and current_day < cooldown_until)
+            consec_until   = self._state.get("_consec_cooldown_until")
+            in_cooldown    = bool(
+                (cooldown_until and current_day < cooldown_until)
+                or (consec_until  and current_day < consec_until)
+            )
 
             if not in_cooldown:
-                cfg          = self._cfg
                 weekly_trend = weekly.get("weekly_trend_up")
-                macro        = get_macro_signal(self._client.current_time())
                 funding      = self._client.get_funding_rate(cfg.symbol)
 
-                # Macro bear tecnico: EMA200 diaria declinando + precio por debajo
+                # Bear técnico: EMA200D declinando + precio por debajo
                 ema_bear = (
                     daily.get("ema200_slope", 0.0) < 0
                     and daily["close"] < daily["ema_200d"]
                 )
 
-                # Realized Price: no shortear si precio esta cerca/bajo el coste base del mercado
-                realized = macro.get("realized_price")
+                realized       = macro.get("realized_price")
                 above_realized = realized is None or daily["close"] > realized * 1.1
 
-                # Funding rate alto = mercado sobrecomprado en derivados = no entrar long
-                # Threshold: 0.05% por 8h = 0.0005 (niveles historicos de exceso)
                 funding_ok_long  = funding < 0.0005
-                funding_ok_short = funding > -0.0005  # funding muy negativo = sobrevendido
+                funding_ok_short = funding > -0.0005
+
+                # Filtro RSI en entrada: bloquea si sobrecomprado (configurable, 0=desactivado)
+                rsi_entry_ok = cfg.entry_rsi_max <= 0 or daily["rsi"] <= cfg.entry_rsi_max
+
+                # Filtro extension ATR: precio demasiado alejado de EMA20D
+                atr_units_ext = 0.0
+                atr_ext_ok = True
+                if cfg.entry_max_ema20_atr > 0 and daily.get("atr", 0) > 0:
+                    atr_units_ext = (daily["close"] - daily["ema_20d"]) / daily["atr"]
+                    atr_ext_ok = atr_units_ext <= cfg.entry_max_ema20_atr
+
+                # Gates individuales (facilita logging y ablation tests)
+                _g_score   = ls >= cfg.entry_score_min
+                _g_gap     = ls > ss + cfg.entry_score_gap
+                _g_weekly  = weekly_trend is not False
+                _g_h4      = h4.get("trend_bullish") is not False
+                _g_mvrv    = not macro["long_reduce_risk"]
+                _g_funding = funding_ok_long
+                _g_dxy     = not market["dxy_headwind"]
+                _g_ndx     = not market["risk_off"]
+                _g_pi      = not daily.get("pi_cycle_top", False)
+                _g_rsi     = rsi_entry_ok
+                _g_atr     = atr_ext_ok
 
                 long_ok = (
-                    ls >= cfg.entry_score_min
-                    and ls > ss + cfg.entry_score_gap
-                    and weekly_trend is not False
-                    and h4.get("trend_bullish") is not False   # 4H alineado con long
-                    and not macro["long_reduce_risk"]           # no entrar en euforia MVRV
-                    and funding_ok_long                        # mercado no sobrecomprado en derivados
+                    _g_score and _g_gap and _g_weekly and _g_h4
+                    and _g_mvrv and _g_funding and _g_dxy and _g_ndx
+                    and _g_pi and _g_rsi and _g_atr
                 )
+
+                # Log detallado cuando score cerca del umbral pero bloqueado
+                if not long_ok and ls >= cfg.entry_score_min - 1:
+                    _blocks = []
+                    if not _g_score:   _blocks.append(f"score={ls}<{cfg.entry_score_min}")
+                    if not _g_gap:     _blocks.append(f"gap={ls-ss}<={cfg.entry_score_gap}")
+                    if not _g_weekly:  _blocks.append("weekly=bajista")
+                    if not _g_h4:      _blocks.append("4H=bajista")
+                    if not _g_mvrv:    _blocks.append(f"MVRV={round(macro['mvrv'], 2) if macro.get('mvrv') else '?'}")
+                    if not _g_funding: _blocks.append(f"funding={funding:.4f}")
+                    if not _g_dxy:     _blocks.append(f"DXY={market['dxy_change']:+.1f}%" if market.get("dxy_change") is not None else "DXY=headwind")
+                    if not _g_ndx:     _blocks.append(f"NDX={market['ndx_change']:+.1f}%" if market.get("ndx_change") is not None else "NDX=risk_off")
+                    if not _g_pi:      _blocks.append("pi_cycle_top")
+                    if not _g_rsi:     _blocks.append(f"RSI={daily['rsi']:.0f}>{cfg.entry_rsi_max:.0f}")
+                    if not _g_atr:     _blocks.append(f"ext={atr_units_ext:.1f}ATR>{cfg.entry_max_ema20_atr:.1f}")
+                    logger.debug(
+                        "[{}] Entrada LONG bloqueada ls={} ss={} rsi={:.0f} mvrv={} @ {} | {}",
+                        self.name, ls, ss, daily["rsi"],
+                        round(macro["mvrv"], 2) if macro.get("mvrv") else "N/D",
+                        self._client.current_time().strftime("%Y-%m-%d"),
+                        " | ".join(_blocks) if _blocks else "sin causa clara",
+                    )
+
                 short_ok = (
-                    ss >= cfg.entry_score_min_short
+                    cfg.allow_shorts
+                    and ss >= cfg.entry_score_min_short
                     and ss > ls + cfg.entry_score_gap
                     and weekly_trend is not True
                     and ema_bear
-                    and macro["short_allowed"]                 # MVRV y halving no bloquean
-                    and above_realized                         # precio suficientemente sobre Realized
-                    and h4.get("trend_bearish") is not False   # 4H alineado con short
+                    and macro["short_allowed"]
+                    and above_realized
+                    and h4.get("trend_bearish") is not False
                     and funding_ok_short
                 )
 
                 if long_ok:
+                    size_pct = self._size_pct(
+                        ls, "long",
+                        reduce_risk=macro["long_reduce_risk"],
+                        halving_phase=macro["halving_phase"],
+                    )
                     logger.info(
-                        "[{}] ENTRADA LONG score={} (short={}) mvrv={} phase={} 4H={} funding={:.4f}",
-                        self.name, ls, ss,
+                        "[{}] ENTRADA LONG score={} (short={}) size={:.0f}% "
+                        "mvrv={} phase={} dxy={} ndx={}",
+                        self.name, ls, ss, float(size_pct) * 100,
                         round(macro["mvrv"], 2) if macro["mvrv"] else "N/D",
                         macro["halving_phase"],
-                        "bull" if h4.get("trend_bullish") else "?",
-                        funding,
+                        f"{market['dxy_change']:+.1f}%" if market["dxy_change"] is not None else "N/D",
+                        f"{market['ndx_change']:+.1f}%" if market["ndx_change"] is not None else "N/D",
                     )
                     self._open_long(price, ls, daily["atr"])
                 elif short_ok:
                     logger.info(
-                        "[{}] ENTRADA SHORT score={} (long={}) mvrv={} phase={} realized={} 4H={}",
+                        "[{}] ENTRADA SHORT score={} (long={}) mvrv={} phase={} realized={}",
                         self.name, ss, ls,
                         round(macro["mvrv"], 2) if macro["mvrv"] else "N/D",
                         macro["halving_phase"],
                         round(realized, 0) if realized else "N/D",
-                        "bear" if h4.get("trend_bearish") else "?",
                     )
                     self._open_short(price, ss, daily["atr"])
 
         self._state["prev_macd_above"] = daily["macd_above"]
         self._state["prev_weekly_up"]  = weekly.get("weekly_trend_up")
         self._save_state()
+
+        # === Journal: detectar transiciones de posición ===
+        _pos_after = self._state.get("position", "none")
+        if _pos_before != _pos_after:
+            _ind = self._journal_ind_snapshot(daily, weekly, h4, h1, ls, ss)
+            # Contexto macro/mercado en el momento del trade
+            _ind["mvrv"]           = round(macro["mvrv"], 2) if macro.get("mvrv") else None
+            _ind["halving_phase"]  = macro.get("halving_phase")
+            _ind["dxy_change_pct"] = market.get("dxy_change")
+            _ind["ndx_change_pct"] = market.get("ndx_change")
+            _ind["dxy_headwind"]   = market.get("dxy_headwind")
+            _ind["ndx_risk_off"]   = market.get("risk_off")
+            _bal_after = float(self._client.get_balance().get("USDT", Decimal("0")))
+
+            # peak_gain_pct: maximo no realizado desde entrada (diagnostico ATR stops y trailing losses)
+            _ind["peak_gain_pct"] = round(
+                (_peak_pre / _entry_pre - 1) * 100, 1
+            ) if _entry_pre > 0 and _peak_pre > 0 else 0.0
+
+            if _pos_before in ("long", "short"):
+                _open_ts = (self._pending_journal_entry or {}).get("open", {}).get("timestamp")
+                if _open_ts:
+                    try:
+                        _dt_open = datetime.fromisoformat(_open_ts)
+                        _dt_now  = datetime.fromisoformat(_ts_now)
+                        _hold_h  = (_dt_now - _dt_open).total_seconds() / 3600
+                    except Exception:
+                        _hold_h  = 0.0
+                else:
+                    _hold_h = 0.0
+                self._journal_close(
+                    ts=_ts_now, price=float(price),
+                    pnl=self._last_close_pnl, reason=self._last_close_reason,
+                    holding_hours=_hold_h, balance_after=_bal_after,
+                    ls=ls, ss=ss, indicators=_ind,
+                )
+
+            if _pos_after in ("long", "short"):
+                _stop_val = float(Decimal(self._state.get("stop_loss", "0") or "0"))
+                _qty_val  = float(Decimal(self._state.get("position_qty", "0") or "0"))
+                self._journal_open(
+                    side=_pos_after, ts=_ts_now, price=float(price),
+                    invest=self._last_open_invest, stop=_stop_val, qty=_qty_val,
+                    balance_before=_balance_before,
+                    ls=ls, ss=ss, indicators=_ind,
+                )
 
     # -----------------------------------------------------------------------
     # Señales abstractas

@@ -39,9 +39,9 @@ HALVING_DATES: list[date] = [
 
 MVRV_DEEP_BEAR  = 1.0   # precio cerca/bajo coste base del mercado — fondo historico
 MVRV_CHEAP      = 2.0   # zona barata — probablemente acumulacion o bull temprano
-MVRV_FAIR       = 3.0   # valoracion justa en bull market
-MVRV_LATE_BULL  = 3.5   # bull tardio — prudencia
-MVRV_EUPHORIA   = 4.5   # euforia — tehos historicos
+MVRV_FAIR       = 2.5   # valoracion justa: a partir de aqui long_reduce_risk=True
+MVRV_LATE_BULL  = 3.5   # bull tardio
+MVRV_EUPHORIA   = 4.5   # euforia — techos historicos
 
 # ---------------------------------------------------------------------------
 # MacroContext

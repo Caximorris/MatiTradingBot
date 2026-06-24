@@ -58,13 +58,13 @@ _BENCHMARKS: dict[str, dict[int, float]] = {
 }
 
 _STRAT_LABELS = {
-    "mean": "Mean Rev.",
-    "mean_reversion": "Mean Rev.",
     "adaptive": "Adaptive Trend",
     "adaptive_trend": "Adaptive Trend",
     "pro": "Pro Trend",
     "pro_trend": "Pro Trend",
     "trend": "Adaptive Trend",
+    "scalp": "Scalp Momentum",
+    "scalp_momentum": "Scalp Momentum",
 }
 
 # Fecha más antigua disponible en OKX para BTC-USDT
@@ -206,12 +206,7 @@ def _instantiate_strategy(bot_state, client, risk_manager, session):
     name   = bot_state.strategy_name
     config = bot_state.get_config()
     try:
-        if name.startswith("mean_"):
-            from strategies.mean_reversion import MeanReversionBot, MeanReversionConfig
-            return MeanReversionBot(client=client,
-                                    config=MeanReversionConfig.from_dict(config),
-                                    session=session, risk_manager=risk_manager)
-        elif name.startswith("adaptive_"):
+        if name.startswith("adaptive_"):
             from strategies.adaptive_trend import AdaptiveTrendBot, AdaptiveTrendConfig
             return AdaptiveTrendBot(client=client,
                                     config=AdaptiveTrendConfig.from_dict(config),
@@ -221,11 +216,11 @@ def _instantiate_strategy(bot_state, client, risk_manager, session):
             return ProTrendBot(client=client,
                                config=ProTrendConfig.from_dict(config),
                                session=session, risk_manager=risk_manager)
-        elif name.startswith("signal"):
-            from strategies.signal_follower import SignalFollower, SignalConfig
-            return SignalFollower(client=client,
-                                  config=SignalConfig(**config) if config else SignalConfig(),
-                                  session=session, risk_manager=risk_manager)
+        elif name.startswith("scalp_momentum"):
+            from strategies.scalp_momentum import ScalpMomentumBot, ScalpMomentumConfig
+            return ScalpMomentumBot(client=client,
+                                    config=ScalpMomentumConfig.from_dict(config),
+                                    session=session, risk_manager=risk_manager)
         else:
             logger.warning("Tipo de estrategia desconocido: {}", name)
             return None
@@ -255,11 +250,18 @@ def _run_backtest(
     from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, SpinnerColumn
     from core.backtest import BacktestClient, BacktestEngine, fetch_historical_bars
     from strategies.macro_context import load_macro_context
+    from strategies.market_context import load_market_context
 
-    # Carga unica de MVRV historico antes de la simulacion (usa cache si ya esta cargado)
+    # Carga unica de datos macro y mercado global antes de la simulacion
     load_macro_context(from_dt, to_dt)
+    load_market_context(from_dt, to_dt)
 
-    WARMUP_DAYS = 380 if strat_type in ("pro", "pro_trend") else 240
+    if strat_type in ("pro", "pro_trend"):
+        WARMUP_DAYS = 625   # EMA350D necesita ~350 dias + buffer
+    elif strat_type in ("scalp", "scalp_momentum"):
+        WARMUP_DAYS = 25   # necesita EMA20D diaria → 25 días de calentamiento
+    else:
+        WARMUP_DAYS = 240
     warmup_start = from_dt - timedelta(days=WARMUP_DAYS)
     label = _STRAT_LABELS.get(strat_type, strat_type)
 
@@ -316,13 +318,7 @@ def _run_backtest(
 
         def factory(client, session):
             sym = symbol.upper()
-            if strat_type in ("mean", "mean_reversion"):
-                from strategies.mean_reversion import MeanReversionBot, MeanReversionConfig
-                cfg = {"symbol": sym}; cfg.update(config)
-                return MeanReversionBot(client=client,
-                                        config=MeanReversionConfig.from_dict(cfg),
-                                        session=session)
-            elif strat_type in ("adaptive", "adaptive_trend", "trend"):
+            if strat_type in ("adaptive", "adaptive_trend", "trend"):
                 from strategies.adaptive_trend import AdaptiveTrendBot, AdaptiveTrendConfig
                 cfg = {"symbol": sym}; cfg.update(config)
                 return AdaptiveTrendBot(client=client,
@@ -334,13 +330,35 @@ def _run_backtest(
                 return ProTrendBot(client=client,
                                    config=ProTrendConfig.from_dict(cfg),
                                    session=session)
+            elif strat_type in ("scalp", "scalp_momentum"):
+                from strategies.scalp_momentum import ScalpMomentumBot, ScalpMomentumConfig
+                cfg = {"symbol": sym}; cfg.update(config)
+                return ScalpMomentumBot(client=client,
+                                        config=ScalpMomentumConfig.from_dict(cfg),
+                                        session=session)
             else:
                 raise ValueError(f"Estrategia '{strat_type}' no soportada.")
 
         try:
             engine = BacktestEngine(bt_client=bt_client, strategy_factory=factory,
-                                    warmup_bars=engine_warmup)
-            return engine.run(on_tick=on_tick)
+                                    warmup_bars=engine_warmup, timeframe=timeframe)
+            result = engine.run(on_tick=on_tick)
+
+            # Escribir journal de trades con todos los indicadores y contexto
+            strat = engine.last_strategy
+            if strat is not None and hasattr(strat, "_journal") and strat._journal:
+                from reporting.trade_journal import write_journal
+                journal_path = write_journal(
+                    journal=strat._journal,
+                    strategy_name=strat.name,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    from_date=from_dt.strftime("%Y-%m-%d"),
+                    to_date=to_dt.strftime("%Y-%m-%d"),
+                )
+                console.print(f"[dim]Journal guardado -> {journal_path}[/dim]")
+
+            return result
         except Exception as exc:
             logger.debug("Error en backtest {}: {}", strat_type, exc)
             return None
@@ -690,7 +708,7 @@ def bot_disable(
 
 @bot_app.command("add")
 def bot_add(
-    strategy_type: str = typer.Argument(..., help="Tipo: mean | adaptive | pro_trend | signal"),
+    strategy_type: str = typer.Argument(..., help="Tipo: adaptive | pro_trend"),
     symbol: str = typer.Argument(...),
     config_json: str = typer.Option("{}", "--config", "-c"),
 ):
@@ -698,10 +716,10 @@ def bot_add(
     from core.database import get_session, get_or_create_bot_state, init_db
     init_db()
 
-    valid_types = ("mean", "adaptive", "pro_trend", "pro", "signal")
+    valid_types = ("adaptive", "pro_trend", "pro", "scalp_momentum", "scalp")
     t = strategy_type.lower()
     if not any(t.startswith(v) for v in valid_types):
-        console.print(f"[red]Tipo inválido '{strategy_type}'. Válidos: mean, adaptive, pro_trend, signal[/red]")
+        console.print(f"[red]Tipo inválido '{strategy_type}'. Válidos: adaptive, pro_trend, scalp[/red]")
         raise typer.Exit(1)
 
     try:
@@ -712,11 +730,11 @@ def bot_add(
 
     sym_clean = symbol.upper().replace("-", "_").lower()
     name_map  = {
-        "mean":      f"mean_{sym_clean}",
-        "adaptive":  f"adaptive_trend_{sym_clean}",
-        "pro_trend": f"pro_trend_{sym_clean}",
-        "pro":       f"pro_trend_{sym_clean}",
-        "signal":    "signal_follower",
+        "adaptive":       f"adaptive_trend_{sym_clean}",
+        "pro_trend":      f"pro_trend_{sym_clean}",
+        "pro":            f"pro_trend_{sym_clean}",
+        "scalp_momentum": f"scalp_momentum_{sym_clean}",
+        "scalp":          f"scalp_momentum_{sym_clean}",
     }
     name = next(name_map[v] for v in valid_types if t.startswith(v))
 
@@ -833,8 +851,9 @@ def compare(
     from_dt = datetime(from_year, 1, 1, tzinfo=timezone.utc)
     to_dt   = datetime(to_year, 12, 31, hour=23, minute=59, second=59, tzinfo=timezone.utc)
 
-    # Descarga única de barras para todas las estrategias
-    WARMUP = 380
+    # Descarga única de barras para todas las estrategias.
+    # 625 dias: suficiente para EMA350D de Pi Cycle Top (pro_trend).
+    WARMUP = 625 if any(s in strat_list for s in ("pro", "pro_trend")) else 240
     warmup_start = from_dt - timedelta(days=WARMUP)
     console.print(
         f"[bold cyan]Descargando {symbol}/{timeframe} "
@@ -1027,7 +1046,7 @@ def random_backtest(
 
     # Rango válido para fechas de inicio
     window_days  = months * 30
-    WARMUP       = 380 if strat in ("pro", "pro_trend") else 240
+    WARMUP       = 625 if strat in ("pro", "pro_trend") else 240
     latest_start = datetime.now(timezone.utc) - timedelta(days=window_days + 30)
     valid_days   = max(0, (latest_start - _OKX_EARLIEST).days)
 

@@ -86,12 +86,6 @@ class Settings:
     fiscal_year: int
     cost_basis_method: str     # "FIFO"
 
-    # Señales externas
-    signal_source: str         # "none" | "tradingview_webhook" | "telegram"
-    webhook_port: int
-    telegram_bot_token: str
-    telegram_channel_id: str
-
     @property
     def is_paper(self) -> bool:
         return self.trading_mode == "paper"
@@ -108,16 +102,6 @@ def _validate_trading_mode(mode: str) -> str:
             f"TRADING_MODE debe ser 'paper' o 'live'. Valor recibido: '{mode}'"
         )
     return mode
-
-
-def _validate_signal_source(source: str) -> str:
-    source = source.lower()
-    valid = ("none", "tradingview_webhook", "telegram")
-    if source not in valid:
-        raise EnvironmentError(
-            f"SIGNAL_SOURCE debe ser uno de {valid}. Valor recibido: '{source}'"
-        )
-    return source
 
 
 def _validate_cost_method(method: str) -> str:
@@ -180,8 +164,6 @@ def load_settings() -> Settings:
 
     _validate_live_credentials(trading_mode, okx_api_key, okx_secret_key, okx_passphrase)
 
-    signal_source = _validate_signal_source(_optional("SIGNAL_SOURCE", "none"))
-
     return Settings(
         okx_api_key=okx_api_key,
         okx_secret_key=okx_secret_key,
@@ -194,10 +176,6 @@ def load_settings() -> Settings:
         daily_loss_limit_pct=_decimal_env("DAILY_LOSS_LIMIT_PCT", "5.0"),
         fiscal_year=_int_env("FISCAL_YEAR", 2025),
         cost_basis_method=_validate_cost_method(_optional("COST_BASIS_METHOD", "FIFO")),
-        signal_source=signal_source,
-        webhook_port=_int_env("WEBHOOK_PORT", 8080),
-        telegram_bot_token=_optional("TELEGRAM_BOT_TOKEN"),
-        telegram_channel_id=_optional("TELEGRAM_CHANNEL_ID"),
     )
 
 

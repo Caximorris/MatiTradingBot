@@ -369,6 +369,24 @@ def detect_regime(daily_df: pd.DataFrame,
 # Resample 1H -> 4H
 # ---------------------------------------------------------------------------
 
+def resample_to_1h(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convierte DataFrame OHLCV de 15m a barras de 1 hora.
+    Columnas esperadas: timestamp (ms), open, high, low, close, volume.
+    """
+    df = df.copy()
+    df["dt"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    df = df.set_index("dt").sort_index()
+    h1 = df.resample("1h").agg({
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }).dropna(subset=["close"])
+    return h1.reset_index()
+
+
 def resample_to_4h(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convierte DataFrame OHLCV de 1H a barras de 4 horas.

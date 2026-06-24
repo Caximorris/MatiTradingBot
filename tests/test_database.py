@@ -113,14 +113,14 @@ def test_upsert_position_creates_and_updates(session):
 
 def test_close_position_removes_record(session):
     upsert_position(
-        session, "SOL-USDT", "mean_reversion",
+        session, "SOL-USDT", "pro_trend",
         side="long",
         entry_price=Decimal("150"),
         quantity=Decimal("10"),
         current_price=Decimal("155"),
         unrealized_pnl=Decimal("50"),
     )
-    close_position(session, "SOL-USDT", "mean_reversion")
+    close_position(session, "SOL-USDT", "pro_trend")
     remaining = session.query(Position).filter_by(symbol="SOL-USDT").count()
     assert remaining == 0
 

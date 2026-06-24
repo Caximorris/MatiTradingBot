@@ -28,10 +28,6 @@ def _paper_settings(**overrides) -> Settings:
         daily_loss_limit_pct=Decimal("5.0"),
         fiscal_year=2025,
         cost_basis_method="FIFO",
-        signal_source="none",
-        webhook_port=8080,
-        telegram_bot_token="",
-        telegram_channel_id="",
     )
     return Settings(**{**defaults, **overrides})
 
