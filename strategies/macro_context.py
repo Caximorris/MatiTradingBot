@@ -1,16 +1,17 @@
 """
-Contexto macro para BTC: MVRV ratio y ciclo de halving.
+Contexto macro para BTC/ETH/SOL/BNB: MVRV ratio y ciclo de halving.
 
 Fuentes de datos:
 - MVRV Ratio: CoinMetrics Community API (gratuito, sin autenticacion)
   Endpoint: https://community-api.coinmetrics.io/v4/timeseries/asset-metrics
-- Halvings: fechas exactas de bloques historicos (hardcodeadas)
+  Activos soportados con MVRV: BTC, ETH. SOL/BNB: degradacion silenciosa (sin MVRV).
+- Halvings: solo BTC. Para otros activos halving_phase = "unknown".
 
 Como se usa:
     from strategies.macro_context import load_macro_context, get_macro_signal
 
-    load_macro_context(from_dt, to_dt)        # una vez antes del backtest
-    signal = get_macro_signal(current_time)   # cada barra en run()
+    load_macro_context(from_dt, to_dt, symbol="BTC-USDT")  # una vez antes del backtest
+    signal = get_macro_signal(current_time)                # cada barra en run()
 """
 from __future__ import annotations
 
@@ -37,9 +38,17 @@ HALVING_DATES: list[date] = [
 # Umbrales MVRV historicamente significativos
 # ---------------------------------------------------------------------------
 
+# CoinMetrics asset IDs para cada activo soportado
+_CM_ASSETS: dict[str, str] = {
+    "BTC": "btc",
+    "ETH": "eth",
+    "SOL": "sol",   # MVRV no garantizado en tier gratuito; degradacion silenciosa
+    "BNB": "bnb",   # idem
+}
+
 MVRV_DEEP_BEAR  = 1.0   # precio cerca/bajo coste base del mercado — fondo historico
 MVRV_CHEAP      = 2.0   # zona barata — probablemente acumulacion o bull temprano
-MVRV_FAIR       = 2.5   # valoracion justa: a partir de aqui long_reduce_risk=True
+MVRV_FAIR       = 3.0   # v10: revertido de 2.5 — max historico 2018-2026 fue 2.96 (Q2 2021)
 MVRV_LATE_BULL  = 3.5   # bull tardio
 MVRV_EUPHORIA   = 4.5   # euforia — techos historicos
 
@@ -53,7 +62,8 @@ class MacroContext:
     Proporciona senales por fecha sin latencia.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, asset: str = "BTC") -> None:
+        self._asset     = asset.upper()
         self._mvrv:     dict[date, float] = {}
         self._realized: dict[date, float] = {}
         self._loaded = False
@@ -81,11 +91,12 @@ class MacroContext:
         ):
             return   # ya tenemos los datos necesarios
 
+        cm_asset = _CM_ASSETS.get(self._asset, "btc")
         # PriceRealizedUSD no esta disponible en el tier gratuito de CoinMetrics.
         # Se deriva matematicamente en macro_signal(): realized = price / mvrv (equivalente exacto).
         url = (
             "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
-            f"?assets=btc&metrics=CapMVRVCur%2CPriceUSD&frequency=1d&page_size=10000"
+            f"?assets={cm_asset}&metrics=CapMVRVCur%2CPriceUSD&frequency=1d&page_size=10000"
             f"&start_time={from_dt.strftime('%Y-%m-%d')}"
             f"&end_time={to_dt.strftime('%Y-%m-%d')}"
         )
@@ -103,8 +114,8 @@ class MacroContext:
                     pass
             self._loaded_from = req_from
             self._loaded_to   = req_to
-            logger.info("MacroContext: {} dias MVRV cargados ({} a {})",
-                        len(self._mvrv),
+            logger.info("MacroContext[{}]: {} dias MVRV cargados ({} a {})",
+                        self._asset, len(self._mvrv),
                         from_dt.strftime("%Y-%m-%d"),
                         to_dt.strftime("%Y-%m-%d"))
         except urllib.error.URLError as exc:
@@ -121,9 +132,14 @@ class MacroContext:
     # ------------------------------------------------------------------
 
     def _lookup(self, store: dict[date, float], dt: datetime | date) -> float | None:
-        """Busca un valor en un dict por fecha, retrocediendo hasta 7 dias."""
+        """Busca un valor en un dict por fecha, retrocediendo hasta 7 dias.
+
+        Empieza en offset=1 (dia anterior) para evitar lookahead: el dato de
+        CoinMetrics para el dia X refleja el cierre de ese dia y no esta
+        disponible hasta la madrugada del dia X+1.
+        """
         d = dt.date() if isinstance(dt, datetime) else dt
-        for offset in range(7):
+        for offset in range(1, 8):
             candidate = d - timedelta(days=offset)
             if candidate in store:
                 return store[candidate]
@@ -146,13 +162,17 @@ class MacroContext:
     def halving_phase(self, dt: datetime | date) -> tuple[int, str]:
         """
         Devuelve (dias_desde_ultimo_halving, nombre_fase).
+        Solo BTC tiene halvings. Para otros activos devuelve (0, "unknown").
 
-        Fases basadas en patrones historicos post-halving:
+        Fases BTC:
           post_halving:  0-180 dias   — transicion, mercado indeciso
           bull_peak:     180-540 dias — historicamente el bull market principal
           bear_onset:    540-900 dias — inicio del bear market
           accumulation:  >900 dias    — fondo/acumulacion pre-proximo halving
         """
+        if self._asset != "BTC":
+            return 0, "unknown"
+
         d = dt.date() if isinstance(dt, datetime) else dt
 
         last_halving = HALVING_DATES[0]
@@ -227,17 +247,37 @@ class MacroContext:
 
 
 # ---------------------------------------------------------------------------
-# Singleton global — se inicializa una vez antes del backtest o al arrancar
+# Instancias por activo — una por símbolo, inicializadas antes del backtest
 # ---------------------------------------------------------------------------
 
-_GLOBAL_CTX: MacroContext = MacroContext()
+_INSTANCES:    dict[str, MacroContext] = {}
+_ACTIVE_ASSET: str = "BTC"
 
 
-def load_macro_context(from_dt: datetime, to_dt: datetime) -> None:
-    """Carga el contexto macro global. Llamar una vez antes de backtest o live trading."""
-    _GLOBAL_CTX.load(from_dt, to_dt)
+def load_macro_context(
+    from_dt: datetime,
+    to_dt:   datetime,
+    symbol:  str = "BTC-USDT",
+) -> None:
+    """
+    Carga el contexto macro para el activo indicado.
+    symbol: e.g. "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT"
+    """
+    global _INSTANCES, _ACTIVE_ASSET
+
+    asset = symbol.split("-")[0].upper()
+    _ACTIVE_ASSET = asset
+
+    if asset not in _INSTANCES:
+        _INSTANCES[asset] = MacroContext(asset)
+
+    _INSTANCES[asset].load(from_dt, to_dt)
 
 
 def get_macro_signal(dt: datetime | date) -> dict:
-    """Consulta las senales macro para la fecha dada."""
-    return _GLOBAL_CTX.macro_signal(dt)
+    """Consulta las senales macro para la fecha dada (activo activo del ultimo load)."""
+    ctx = _INSTANCES.get(_ACTIVE_ASSET)
+    if ctx is None:
+        ctx = MacroContext(_ACTIVE_ASSET)
+        _INSTANCES[_ACTIVE_ASSET] = ctx
+    return ctx.macro_signal(dt)

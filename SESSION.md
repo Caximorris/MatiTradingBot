@@ -1,7 +1,7 @@
 # SESSION.md — Estado del proyecto y referencia detallada
 
 Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
-**Ultima actualizacion: 2026-06-26 (quinta sesion)**
+**Ultima actualizacion: 2026-06-26 (sexta sesion)**
 
 ---
 
@@ -11,29 +11,45 @@ Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
 **Resultado honesto con costes realistas: +480.5% CAGR +24.7% vs B&H +549.7% CAGR +26.4%**
 La ventaja real de Pro Trend NO es el retorno absoluto — es el riesgo: 35% tiempo en mercado, evita crashes del -70%.
 
+**Pasos 1 y 2 COMPLETADOS. Paso 3 implementado, pendiente de correr.**
+
 ---
 
 ## PROXIMOS PASOS (orden estricto — no cambiar parametros antes de completarlos)
 
-### 1. Baselines correcto
-```bash
-python main.py baselines --from 2018-01-01 --to 2026-01-01 --costs realistic
-```
-El baseline "sin externos" anterior estaba roto. Fix aplicado: `disable_external_filters=True` en ProTrendConfig.
-Pregunta: sin MVRV/VIX/DXY/funding, ¿mejora o empeora? Si mejora → los filtros externos danian la estrategia.
+### 1. Baselines ✅ COMPLETADO (2026-06-26)
+Journals: `backtests/journal_pro_trend_btc_usdt_BTCUSDT_1H_202606260{74917,90305,101717,112546}.json`
+Conclusiones clave:
+- Filtros externos (MVRV/VIX/DXY/funding): practicamente decorativos en 2018-2026. Los mismos 12 trades
+  en los mismos momentos. Diferencia: +$1,207 sin externos (VIX>22 no capea sizing). Mantenerlos.
+- Scoring (score_min=9 vs 1): NO filtra ningún trade en BTC. Todos ya tenian score>=9. Impacto solo
+  en exit timing. score_min=9 gana $3,743 mas que score_min=1.
+- Sizing adaptativo: UNICO driver material. Fijo 50%: +$23k. Adaptativo: +$48k. Dobla el resultado.
 
-### 2. ETH backtest (anti-overfitting)
-```bash
-python main.py backtest --strategy pro --symbol ETH-USDT --from 2020-01-01 --to 2026-01-01 --costs realistic
-```
-Pi Cycle Top auto-desactivado para no-BTC en main.py.
+### 2. ETH backtest ✅ COMPLETADO (2026-06-26)
+Journal: `backtests/journal_pro_trend_eth_usdt_ETHUSDT_1H_20260626_074540.json`
+Resultado: +370.7%, CAGR +29.4%, PF 1.77, 13 trades (4W/9L), Max DD -42.76%, 30.1% tiempo en mercado
+B&H ETH: +2230% (ETH ciclo 2020-2021 fue extremo)
+Conclusiones clave:
+- La logica funciona en ETH (PF 1.77 > 1.0) — no es overfitting BTC puro. Anti-overfitting confirmado.
+- Pero el edge es mas debil: PF 1.77 vs BTC 3.64. Win rate 31% vs BTC 50%.
+- halving_phase="unknown" en todos los trades ETH — no existe sizing size_ultra para ETH.
+- 2024-2025: 5 trades perdedores seguidos. ETH underperformo BTC drasticamente en ese ciclo.
+- T2+T4+T8 = 97% del profit de ETH. Mas concentrado aun que BTC.
+- Los stops funcionan: maximo perdedor -16.41%.
 
-### 3. Sensitivity analysis (implementar + correr)
-Barrer sin cambiar nada — el objetivo es MEDIR fragilidad, no optimizar:
-- `entry_score_min`: 8 / **9** / 10
-- `adx_min_entry`: 10.0 / **15.0** / 20.0
-- `trailing_stop_pct_bull`: 0.24 / **0.28** / 0.32
-- `cooldown_atr_stop_days`: 15 / **30** / 45
+### 3. Sensitivity analysis — IMPLEMENTADO, PENDIENTE DE CORRER
+```bash
+python main.py sensitivity --from 2018-01-01 --to 2026-01-01 --costs realistic
+```
+Comando nuevo en main.py (linea ~1074). Descarga barras una sola vez, corre 9 variantes:
+- DEFAULT v12 (referencia)
+- entry_score_min: 8 / [9] / 10
+- adx_min_entry: 10 / [15] / 20
+- trailing_stop_pct_bull: 0.24 / [0.28] / 0.32
+- cooldown_atr_stop_days: 15 / [30] / 45
+Tabla con dCAGR y dPF vs default. Umbral fragilidad: |dCAGR|>=2pp o |dPF|>=0.30.
+Duracion estimada: ~40-50 min (9 backtests × ~5 min cada uno).
 
 ### 4. Journal MAE/MFE/R-multiplo
 Añadir a `reporting/trade_journal.py` y `strategies/base_strategy.py`:
@@ -67,16 +83,32 @@ python main.py start --strategy pro --symbol BTC-USDT
 - 5 perdedores: ~-$12,767
 - **ADVERTENCIA: T4+T5+T9 = 89% del profit**
 
-### Baselines comparativos (realistic, 2018-2026)
-| Estrategia | P&L | CAGR | PF |
-|---|---|---|---|
-| Pro Trend v12 completo | +480.5% | +24.7% | 3.64 |
-| Pro Trend sin externos (*pendiente re-correr*) | ? | ? | ? |
-| Pro Trend score_min=1 (gates only) | +443.3% | +23.7% | 3.74 |
-| Pro Trend sizing fijo 50% | +229.7% | +16.2% | 4.08 |
-| **Buy & Hold BTC** | **+549.7%** | **+26.4%** | — |
+### Baselines comparativos (realistic, 2018-2026) — CORREGIDOS 2026-06-26
+| Estrategia | P&L | CAGR | Max DD | Sharpe | PF | Trades | T.mkt |
+|---|---|---|---|---|---|---|---|
+| Pro Trend v12 completo | +480.5% | +24.7% | 42.6% | 0.74 | 3.64 | 12 | 35% |
+| Pro Trend sin filtros externos | +492.6% | +25.0% | 42.3% | 0.75 | 3.69 | 12 | 36% |
+| Pro Trend score_min=1 (gates only) | +443.3% | +23.7% | 38.5% | 0.72 | 3.74 | 12 | 37% |
+| Pro Trend sizing fijo 50% | +229.7% | +16.2% | 29.3% | 0.63 | 4.08 | 12 | 35% |
+| Adaptive Trend (mas simple) | +380.9% | +21.8% | 36.5% | 0.68 | 2.91 | 20 | 41% |
+| **Buy & Hold BTC** | **+549.7%** | **+26.4%** | — | — | — | — | 100% |
 
-Conclusiones: scoring aporta poco (gates solos = 92%); sizing adaptativo si aporta (~2x vs fijo 50%).
+Conclusiones (ver analisis completo en historial sesion):
+- Filtros externos: decorativos en historico. Mismos 12 trades. +$1,207 sin externos. Mantenerlos.
+- Scoring: NO filtra trades en BTC. Impacto solo en exit timing (+$3,743 con score_min=9).
+- Sizing adaptativo: UNICO driver real. Dobla el resultado vs fijo 50%.
+
+### ETH Backtest (realistic, 2020-2026) — COMPLETADO 2026-06-26
+| Metrica | ETH | BTC (ref) |
+|---|---|---|
+| P&L | +370.7% | +480.5% |
+| CAGR | +29.4% | +24.7% |
+| B&H | +2230% | +549.7% |
+| Win rate | 30.8% (4/13) | 50% (6/12) |
+| PF | 1.77 | 3.64 |
+| Max DD | -42.76% | -42.6% |
+| T.mkt | 30.1% | 35% |
+Anti-overfitting: confirmado (PF>1.0 en activo diferente). Edge mas debil por ETH/BTC ratio divergente 2024-25.
 
 ### Walk-Forward (realistic, 4 ventanas — 1 invalida)
 | Ventana TEST | CAGR | PF | Trades | vs B&H |

@@ -78,7 +78,7 @@ class ProTrendConfig:
 
     # Riesgo
     atr_period:    int   = 14
-    atr_stop_mult: float = 2.5
+    atr_stop_mult: float = 3.0
 
     # RSI / ADX
     rsi_period:    int   = 14
@@ -106,15 +106,16 @@ class ProTrendConfig:
     ema_slope_period: int = 5
 
     # Scoring
-    entry_score_min:       int = 6   # bajado de 7 para entrar antes en el movimiento
+    entry_score_min:       int = 9   # v11: subido de 7 — todos los ganadores tuvieron score>=9
+    adx_min_entry:         float = 15.0  # v12: ADX mínimo en entrada — bloquea mercados sin tendencia
     entry_score_min_short: int = 9   # umbral más alto para shorts (más confirmación)
     entry_score_gap:       int = 2   # ventaja mínima sobre el opuesto para entrar
     exit_score_floor:      int = 3   # cierre si score cae por debajo
 
     # Sizing adaptativo por score × fase del ciclo
-    size_ultra:     Decimal = Decimal("0.75")  # score ≥ 8 en post_halving/bull_peak (era solo score≥10)
-    size_high:      Decimal = Decimal("0.60")  # score ≥ 8
-    size_mid:       Decimal = Decimal("0.40")  # score 6-7
+    size_ultra:     Decimal = Decimal("0.90")  # score ≥ 8 en post_halving/bull_peak
+    size_high:      Decimal = Decimal("0.80")  # score ≥ 8 fuera de bull phase
+    size_mid:       Decimal = Decimal("0.60")  # score < 8
     size_short_cap: Decimal = Decimal("0.15")  # cap absoluto para shorts
 
     # Filtros de mercado global (DXY / NASDAQ-100)
@@ -150,7 +151,8 @@ class ProTrendConfig:
     # "exit_full"     → cierra posicion completa (defecto historico)
     # "exit_half"     → vende 50% y deja correr el resto
     # "block_entries" → solo bloquea nuevas entradas, no toca posicion abierta
-    pi_cycle_action: str = "exit_full"
+    pi_cycle_action:   str  = "exit_full"
+    pi_cycle_enabled:  bool = True    # False para activos no-BTC (ETH/SOL/BNB)
 
     # Filtro RSI en entrada: bloquea long si RSI > umbral.
     # 0.0 = desactivado. Activa con entry_rsi_max=72 para evitar entradas sobrecompradas.
@@ -179,6 +181,11 @@ class ProTrendConfig:
 
     # Historial: 625 dias (~87 semanas), suficiente para EMA350D del Pi Cycle Top
     lookback_hours: int = 15000
+
+    # Ablation: deshabilita todos los filtros de datos externos (MVRV, halving, VIX,
+    # DXY, NASDAQ, funding, Pi Cycle Top) para aislar el valor de la logica tecnica pura.
+    # Uso: --config '{"disable_external_filters": true}'
+    disable_external_filters: bool = False
 
     def __post_init__(self) -> None:
         if self.ema_50d >= self.ema_200d:
@@ -233,11 +240,13 @@ class ProTrendConfig:
             cooldown_atr_stop_days=int(d.get("cooldown_atr_stop_days", _c.cooldown_atr_stop_days)),
             allow_shorts=bool(d.get("allow_shorts", _c.allow_shorts)),
             pi_cycle_action=str(d.get("pi_cycle_action", _c.pi_cycle_action)),
+            pi_cycle_enabled=bool(d.get("pi_cycle_enabled", _c.pi_cycle_enabled)),
             entry_rsi_max=float(d.get("entry_rsi_max", _c.entry_rsi_max)),
             entry_max_ema20_atr=float(d.get("entry_max_ema20_atr", _c.entry_max_ema20_atr)),
             macd_exit_enabled=bool(d.get("macd_exit_enabled", _c.macd_exit_enabled)),
             partial_exit_pct=float(d.get("partial_exit_pct", _c.partial_exit_pct)),
             partial_exit_size=float(d.get("partial_exit_size", _c.partial_exit_size)),
+            disable_external_filters=bool(d.get("disable_external_filters", _c.disable_external_filters)),
         )
 
     def to_dict(self) -> dict:
@@ -283,12 +292,14 @@ class ProTrendConfig:
             "lookback_hours": self.lookback_hours,
             "trailing_stop_pct": self.trailing_stop_pct,
             "allow_shorts": self.allow_shorts,
-            "pi_cycle_action": self.pi_cycle_action,
+            "pi_cycle_action":  self.pi_cycle_action,
+            "pi_cycle_enabled": self.pi_cycle_enabled,
             "entry_rsi_max": self.entry_rsi_max,
             "entry_max_ema20_atr": self.entry_max_ema20_atr,
             "macd_exit_enabled": self.macd_exit_enabled,
             "partial_exit_pct": self.partial_exit_pct,
             "partial_exit_size": self.partial_exit_size,
+            "disable_external_filters": self.disable_external_filters,
             "trailing_stop_pct_bull": self.trailing_stop_pct_bull,
             "cooldown_trailing_bull_days": self.cooldown_trailing_bull_days,
             "cooldown_atr_stop_days": self.cooldown_atr_stop_days,
@@ -461,9 +472,8 @@ class ProTrendBot(BaseStrategy):
         vp_poc, vp_vah, vp_val = volume_profile(close, volume, high, low, lookback=100)
 
         # Pi Cycle Top: SMA111D > 2×SMA350D — señal histórica de techo de ciclo BTC.
-        # El indicador estándar (Mayer/Willy Woo) usa SMA, no EMA.
-        # Ha marcado cada ATH dentro de 3 días. Solo cuando hay datos suficientes.
-        if len(daily) >= 360:
+        # Solo significativo para BTC. Deshabilitado para ETH/SOL/BNB via cfg.pi_cycle_enabled.
+        if cfg.pi_cycle_enabled and len(daily) >= 360:
             sma111d_s = compute_sma(close, 111)
             sma350d_s = compute_sma(close, 350)
             pi_top = bool(
@@ -575,6 +585,15 @@ class ProTrendBot(BaseStrategy):
                           "macd_above": None, "swing": "unknown", "close": 0.0}
 
         df4 = resample_to_4h(raw_df)
+
+        # Excluir el bloque 4H actual si esta incompleto (mismo patron que daily/weekly).
+        # La clave h4_key es "YYYY-MM-DD-N" donde N = hora_inicio // 4.
+        if len(df4) > 0 and "dt" in df4.columns:
+            last_4h_dt = pd.to_datetime(df4.iloc[-1]["dt"])
+            last_h4_key = f"{last_4h_dt.date().isoformat()}-{last_4h_dt.hour // 4}"
+            if last_h4_key == h4_key:
+                df4 = df4.iloc[:-1]
+
         if len(df4) < 60:
             self._state["_4h_cache"] = {"key": h4_key, "ind": null_ind}
             return null_ind
@@ -831,7 +850,14 @@ class ProTrendBot(BaseStrategy):
         )
         self.log_trade(result, pnl=pnl)
 
-    def _size_pct(self, score: int, side: str, reduce_risk: bool = False, halving_phase: str = "") -> Decimal:
+    def _size_pct(
+        self,
+        score: int,
+        side: str,
+        reduce_risk: bool = False,
+        halving_phase: str = "",
+        vix_elevated: bool = False,
+    ) -> Decimal:
         cfg = self._cfg
 
         if side == "short":
@@ -841,21 +867,23 @@ class ProTrendBot(BaseStrategy):
         in_bull_phase = halving_phase in ("post_halving", "bull_peak")
 
         # Tiers de sizing por fase × score.
-        # En bull phase confirmada, score>=8 ya justifica el 75%: las mejores oportunidades
-        # del ciclo ocurren aqui y el capital en USDT pierde frente a BTC si no esta invertido.
         if in_bull_phase and score >= 8:
-            base = cfg.size_ultra    # 75%: bull confirmado con señal fuerte
+            base = cfg.size_ultra    # 90%: bull confirmado con señal fuerte
         elif score >= 8:
-            base = cfg.size_high     # 60%: señal fuerte fuera de bull phase
+            base = cfg.size_high     # 80%: señal fuerte fuera de bull phase
         else:
-            base = cfg.size_mid      # 40%: señal moderada
+            base = cfg.size_mid      # 60%: señal moderada
 
         # MVRV en zona de euforia: recortar drásticamente (posible techo de ciclo)
         if reduce_risk:
             base = min(base, Decimal("0.20"))
-        elif halving_phase in ("bear_onset", "accumulation"):
-            # Fase bajista/acumulación: conservar capital
-            base = (base * Decimal("0.65")).quantize(Decimal("0.01"))
+        elif halving_phase == "bear_onset":
+            # Fase de inicio bajista: conservar capital sin penalizar acumulación
+            base = (base * Decimal("0.75")).quantize(Decimal("0.01"))
+
+        # Layer 1 — VIX elevado: miedo de mercado real, cap en size_mid (60%)
+        if vix_elevated and base > cfg.size_mid:
+            base = cfg.size_mid
 
         return base
 
@@ -1487,42 +1515,73 @@ class ProTrendBot(BaseStrategy):
                     atr_units_ext = (daily["close"] - daily["ema_20d"]) / daily["atr"]
                     atr_ext_ok = atr_units_ext <= cfg.entry_max_ema20_atr
 
-                # Gates individuales (facilita logging y ablation tests)
-                _g_score   = ls >= cfg.entry_score_min
+                # ---- LAYER 1: régimen macro --------------------------------
+                # VIX elevado → cap de sizing (en _size_pct), no umbral más alto.
+                # MVRV late_bull/euphoria → hard block via _g_mvrv (long_reduce_risk).
+                # El umbral de score es fijo: el cap de tamaño es la herramienta correcta.
+                _vix_val        = market.get("vix_level")
+                _mvrv_regime    = macro.get("mvrv_regime", "unknown")
+                _required_score = cfg.entry_score_min
+
+                # ---- LAYER 1 HARD BLOCK: pánico real (VIX > 35) ---------------
+                # En crisis severa la correlación BTC/equity se dispara. No entrar.
+                _g_vix_panic = not market.get("vix_extreme", False)
+
+                # ---- Gates individuales (facilita logging y ablation tests) ----
+                _g_score   = ls >= _required_score
                 _g_gap     = ls > ss + cfg.entry_score_gap
                 _g_weekly  = weekly_trend is not False
                 _g_h4      = h4.get("trend_bullish") is not False
                 _g_mvrv    = not macro["long_reduce_risk"]
                 _g_funding = funding_ok_long
-                _g_dxy     = not market["dxy_headwind"]
-                _g_ndx     = not market["risk_off"]
+                _g_dxy     = not market["dxy_headwind"]    # Layer 2
+                _g_ndx     = not market["risk_off"]        # Layer 2
                 _g_pi      = not daily.get("pi_cycle_top", False)
+
+                # Ablation: deshabilita todos los filtros externos para aislar
+                # el valor de la logica tecnica pura (--config '{"disable_external_filters":true}')
+                if cfg.disable_external_filters:
+                    _g_vix_panic = True
+                    _g_mvrv      = True
+                    _g_funding   = True
+                    _g_dxy       = True
+                    _g_ndx       = True
+                    _g_pi        = True
                 _g_rsi     = rsi_entry_ok
                 _g_atr     = atr_ext_ok
+                # v12: ADX mínimo — evita entradas en mercados sin tendencia
+                _g_adx_min = daily.get("adx", 99) >= cfg.adx_min_entry
+                # v12: momentum cruzado — al menos un timeframe (diario o 4H) con MACD alcista
+                _g_macd_momentum = daily.get("macd_above", False) or h4.get("h4_macd_above", True)
 
                 long_ok = (
-                    _g_score and _g_gap and _g_weekly and _g_h4
+                    _g_vix_panic and _g_score and _g_gap and _g_weekly and _g_h4
                     and _g_mvrv and _g_funding and _g_dxy and _g_ndx
                     and _g_pi and _g_rsi and _g_atr
+                    and _g_adx_min and _g_macd_momentum
                 )
 
                 # Log detallado cuando score cerca del umbral pero bloqueado
                 if not long_ok and ls >= cfg.entry_score_min - 1:
                     _blocks = []
-                    if not _g_score:   _blocks.append(f"score={ls}<{cfg.entry_score_min}")
-                    if not _g_gap:     _blocks.append(f"gap={ls-ss}<={cfg.entry_score_gap}")
-                    if not _g_weekly:  _blocks.append("weekly=bajista")
-                    if not _g_h4:      _blocks.append("4H=bajista")
-                    if not _g_mvrv:    _blocks.append(f"MVRV={round(macro['mvrv'], 2) if macro.get('mvrv') else '?'}")
-                    if not _g_funding: _blocks.append(f"funding={funding:.4f}")
-                    if not _g_dxy:     _blocks.append(f"DXY={market['dxy_change']:+.1f}%" if market.get("dxy_change") is not None else "DXY=headwind")
-                    if not _g_ndx:     _blocks.append(f"NDX={market['ndx_change']:+.1f}%" if market.get("ndx_change") is not None else "NDX=risk_off")
-                    if not _g_pi:      _blocks.append("pi_cycle_top")
-                    if not _g_rsi:     _blocks.append(f"RSI={daily['rsi']:.0f}>{cfg.entry_rsi_max:.0f}")
-                    if not _g_atr:     _blocks.append(f"ext={atr_units_ext:.1f}ATR>{cfg.entry_max_ema20_atr:.1f}")
+                    if not _g_vix_panic:      _blocks.append(f"VIX={_vix_val:.0f}>35(panico)")
+                    if not _g_score:          _blocks.append(f"score={ls}<{_required_score}(req={_required_score})")
+                    if not _g_gap:            _blocks.append(f"gap={ls-ss}<={cfg.entry_score_gap}")
+                    if not _g_weekly:         _blocks.append("weekly=bajista")
+                    if not _g_h4:             _blocks.append("4H=bajista")
+                    if not _g_mvrv:           _blocks.append(f"MVRV={round(macro['mvrv'], 2) if macro.get('mvrv') else '?'}")
+                    if not _g_funding:        _blocks.append(f"funding={funding:.4f}")
+                    if not _g_dxy:            _blocks.append(f"DXY={market['dxy_change']:+.1f}%" if market.get("dxy_change") is not None else "DXY=headwind")
+                    if not _g_ndx:            _blocks.append(f"NDX={market['ndx_change']:+.1f}%" if market.get("ndx_change") is not None else "NDX=risk_off")
+                    if not _g_pi:             _blocks.append("pi_cycle_top")
+                    if not _g_rsi:            _blocks.append(f"RSI={daily['rsi']:.0f}>{cfg.entry_rsi_max:.0f}")
+                    if not _g_atr:            _blocks.append(f"ext={atr_units_ext:.1f}ATR>{cfg.entry_max_ema20_atr:.1f}")
+                    if not _g_adx_min:        _blocks.append(f"ADX={daily.get('adx', 0):.1f}<{cfg.adx_min_entry}")
+                    if not _g_macd_momentum:  _blocks.append("macd_momentum=sin_tendencia_xTF")
                     logger.debug(
-                        "[{}] Entrada LONG bloqueada ls={} ss={} rsi={:.0f} mvrv={} @ {} | {}",
-                        self.name, ls, ss, daily["rsi"],
+                        "[{}] Entrada LONG bloqueada ls={} ss={} req={} vix={} mvrv={} @ {} | {}",
+                        self.name, ls, ss, _required_score,
+                        f"{_vix_val:.0f}" if _vix_val else "N/D",
                         round(macro["mvrv"], 2) if macro.get("mvrv") else "N/D",
                         self._client.current_time().strftime("%Y-%m-%d"),
                         " | ".join(_blocks) if _blocks else "sin causa clara",
@@ -1545,6 +1604,7 @@ class ProTrendBot(BaseStrategy):
                         ls, "long",
                         reduce_risk=macro["long_reduce_risk"],
                         halving_phase=macro["halving_phase"],
+                        vix_elevated=market.get("vix_elevated", False),
                     )
                     logger.info(
                         "[{}] ENTRADA LONG score={} (short={}) size={:.0f}% "

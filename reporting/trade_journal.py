@@ -100,6 +100,8 @@ def write_journal(
     from_date: str,
     to_date: str,
     output_dir: str = "backtests",
+    cost_mode: str = "ideal",
+    config_overrides: dict | None = None,
 ) -> str:
     """
     Escribe el journal completo a un archivo JSON.
@@ -116,13 +118,15 @@ def write_journal(
 
     output = {
         "meta": {
-            "strategy":           strategy_name,
-            "symbol":             symbol,
-            "timeframe":          timeframe,
-            "period":             f"{from_date} -> {to_date}",
-            "generated_at":       datetime.now(timezone.utc).isoformat(),
+            "strategy":            strategy_name,
+            "symbol":              symbol,
+            "timeframe":           timeframe,
+            "period":              f"{from_date} -> {to_date}",
+            "generated_at":        datetime.now(timezone.utc).isoformat(),
+            "cost_mode":           cost_mode,
+            "config_overrides":    config_overrides or {},
             "total_closed_trades": len(closed),
-            "open_at_end":        len(journal) - len(closed),
+            "open_at_end":         len(journal) - len(closed),
         },
         "statistics": _compute_stats(closed),
         "trades":     [_serialize(t) for t in journal],

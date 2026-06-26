@@ -19,7 +19,12 @@ from loguru import logger
 from core.exchange import OrderResult
 from data.market_data import OHLCVBar
 
-_PAPER_FEE_RATE = Decimal("0.001")  # 0.1% taker fee OKX
+_PAPER_FEE_RATE = Decimal("0.001")  # 0.1% taker fee OKX por defecto
+
+# Modos de coste para BacktestClient
+COST_MODE_IDEAL       = "ideal"        # fee=0.001, slippage=0
+COST_MODE_REALISTIC   = "realistic"    # fee=0.001, slippage=5bps (0.05%)
+COST_MODE_CONSERVATIVE = "conservative" # fee=0.001, slippage=15bps (0.15%)
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +77,7 @@ class BacktestResult:
     avg_loss: Decimal = Decimal("0")
     max_consec_losses: int = 0
     time_in_market_pct: Decimal = Decimal("0")
+    cost_mode: str = COST_MODE_IDEAL
 
     def summary_rows(self) -> list[tuple[str, str]]:
         """Filas para la tabla de resultados rich."""
@@ -117,17 +123,32 @@ class BacktestClient:
         symbol: str,
         bars: list[OHLCVBar],
         initial_balance: Decimal = Decimal("10000"),
+        fee_rate: Decimal = Decimal("0.001"),
+        slippage_bps: float = 0.0,
+        cost_mode: str = COST_MODE_IDEAL,
     ) -> None:
         self._symbol = symbol
         self._bars = bars
         self._idx = 0
         self._balance: dict[str, Decimal] = {"USDT": initial_balance}
         self._paper_orders: dict[str, dict] = {}
-        self._reserved_usdt: dict[str, Decimal] = {}   # order_id → USDT reservado
-        self._reserved_base: dict[str, Decimal] = {}   # order_id → base reservado
+        self._reserved_usdt: dict[str, Decimal] = {}
+        self._reserved_base: dict[str, Decimal] = {}
         self._pending_fills: list[OrderResult] = []
         self._executed: list[BacktestTrade] = []
         self.initial_balance = initial_balance
+
+        # Costes configurables
+        if cost_mode == COST_MODE_REALISTIC:
+            self._fee_rate = Decimal("0.001")
+            self._slippage_bps = Decimal("5")     # 0.05%
+        elif cost_mode == COST_MODE_CONSERVATIVE:
+            self._fee_rate = Decimal("0.001")
+            self._slippage_bps = Decimal("15")    # 0.15%
+        else:
+            self._fee_rate = fee_rate
+            self._slippage_bps = Decimal(str(slippage_bps))
+        self.cost_mode = cost_mode
 
     # ---- Control de barra actual ----
 
@@ -197,8 +218,9 @@ class BacktestClient:
         return []
 
     def get_funding_rate(self, symbol: str) -> float:
-        """En backtest no hay datos historicos de funding — devuelve 0.0 (neutro)."""
-        return 0.0
+        """Devuelve el funding rate historico del dia actual de la simulacion."""
+        from strategies.funding_context import get_funding_rate_at
+        return get_funding_rate_at(self.current_time())
 
     def place_order(
         self,
@@ -288,8 +310,15 @@ class BacktestClient:
     def _fill_market(
         self, order_id: str, symbol: str, side: str, size: Decimal, strategy: str
     ) -> OrderResult:
-        price = self.current_bar.close
-        fee = (size * price * _PAPER_FEE_RATE).quantize(Decimal("0.00000001"))
+        raw_price = self.current_bar.close
+        # Aplica slippage: buy paga más, sell recibe menos
+        if self._slippage_bps > 0:
+            slip = self._slippage_bps / Decimal("10000")
+            price = raw_price * (1 + slip) if side == "buy" else raw_price * (1 - slip)
+            price = price.quantize(Decimal("0.01"))
+        else:
+            price = raw_price
+        fee = (size * price * self._fee_rate).quantize(Decimal("0.00000001"))
         base = symbol.split("-")[0]
         ts = self.current_bar_ts()
 
@@ -331,7 +360,7 @@ class BacktestClient:
                 continue
 
             size = order["size"]
-            fee = (size * lp * _PAPER_FEE_RATE).quantize(Decimal("0.00000001"))
+            fee = (size * lp * self._fee_rate).quantize(Decimal("0.00000001"))
             base = order["symbol"].split("-")[0]
             ts = self.current_bar_ts()
 
@@ -550,6 +579,7 @@ class BacktestEngine:
             avg_loss=avg_loss,
             max_consec_losses=max_consec,
             time_in_market_pct=time_in_mkt,
+            cost_mode=self._client.cost_mode,
         )
 
     # ---- Métricas ----
@@ -664,6 +694,79 @@ class BacktestEngine:
 # Descarga de datos históricos desde OKX (endpoint público)
 # ---------------------------------------------------------------------------
 
+def _fetch_binance_bars(
+    symbol: str,
+    bar: str,
+    from_dt: datetime,
+    to_dt: datetime,
+    on_page: Callable[[int], None] | None = None,
+) -> list[OHLCVBar]:
+    """
+    Fallback: descarga OHLCV desde Binance API publica (sin auth).
+    Usado cuando OKX no tiene datos para el par/periodo solicitado.
+    symbol: "ETH-USDT" → "ETHUSDT"
+    bar:    "1H" → "1h", "4H" → "4h", "1D" → "1d", "15m" → "15m"
+    """
+    import json as _json
+    import urllib.request as _req
+
+    _HEADERS = {"User-Agent": "MatiTradingBot/1.0"}
+
+    def _okx_bar_to_binance(b: str) -> str:
+        return b.replace("H", "h").replace("D", "d").replace("W", "w")
+
+    binance_symbol = symbol.replace("-", "").upper()
+    binance_bar    = _okx_bar_to_binance(bar)
+    from_ms = int(from_dt.timestamp() * 1000)
+    to_ms   = int(to_dt.timestamp()   * 1000)
+
+    bars: list[OHLCVBar] = []
+    end_ms = to_ms
+
+    logger.info("Binance fallback: descargando {}/{} desde {} hasta {}",
+                binance_symbol, binance_bar, from_dt.date(), to_dt.date())
+
+    while end_ms > from_ms:
+        url = (
+            f"https://api.binance.com/api/v3/klines"
+            f"?symbol={binance_symbol}&interval={binance_bar}&limit=1000&endTime={end_ms}"
+        )
+        try:
+            with _req.urlopen(_req.Request(url, headers=_HEADERS), timeout=20) as resp:
+                chunk = _json.loads(resp.read())
+        except Exception as exc:
+            logger.error("Binance fallback error: {}", exc)
+            break
+
+        if not chunk:
+            break
+
+        for row in chunk:
+            ts_ms = int(row[0])
+            if ts_ms < from_ms:
+                continue
+            bars.append(OHLCVBar(
+                timestamp=ts_ms,
+                open=Decimal(str(row[1])),
+                high=Decimal(str(row[2])),
+                low=Decimal(str(row[3])),
+                close=Decimal(str(row[4])),
+                volume=Decimal(str(row[5])),
+            ))
+
+        if on_page:
+            on_page(len(bars))
+
+        oldest_ms = int(chunk[0][0])
+        if oldest_ms <= from_ms or len(chunk) < 1000:
+            break
+        end_ms = oldest_ms - 1
+
+    bars.sort(key=lambda b: b.timestamp)
+    logger.info("Binance fallback: {} velas descargadas", len(bars))
+    return bars
+
+
 def fetch_historical_bars(
     symbol: str,
     bar: str,
@@ -728,4 +831,9 @@ def fetch_historical_bars(
 
     bars.sort(key=lambda b: b.timestamp)
     logger.info("Descargadas {} velas", len(bars))
+
+    if not bars:
+        logger.warning("OKX no devolvio datos para {}/{} — intentando Binance fallback", symbol, bar)
+        bars = _fetch_binance_bars(symbol, bar, from_dt, to_dt, on_page)
+
     return bars

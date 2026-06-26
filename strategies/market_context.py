@@ -28,6 +28,7 @@ from loguru import logger
 # ---------------------------------------------------------------------------
 _DXY_PRICES: dict[str, float] = {}
 _NDX_PRICES: dict[str, float] = {}
+_VIX_PRICES: dict[str, float] = {}
 _LOADED_FROM: datetime | None = None
 _LOADED_TO:   datetime | None = None
 
@@ -127,7 +128,7 @@ def load_market_context(from_dt: datetime, to_dt: datetime) -> None:
     Llamar una vez antes de iniciar el backtest (como load_macro_context).
     Tiene guard anti-redundancia: no re-descarga si el rango ya está cubierto.
     """
-    global _DXY_PRICES, _NDX_PRICES, _LOADED_FROM, _LOADED_TO
+    global _DXY_PRICES, _NDX_PRICES, _VIX_PRICES, _LOADED_FROM, _LOADED_TO
 
     fetch_from = from_dt - timedelta(days=30)  # margen para el lookback
 
@@ -141,7 +142,7 @@ def load_market_context(from_dt: datetime, to_dt: datetime) -> None:
         return
 
     logger.info(
-        "Descargando DXY y NASDAQ-100 ({} -> {}) ...",
+        "Descargando DXY, NASDAQ-100 y VIX ({} -> {}) ...",
         fetch_from.date(), to_dt.date(),
     )
     # ^DXY bloqueado en Yahoo Finance (401/estructura rota) — usar DX-Y.NYB (equivalente)
@@ -149,6 +150,7 @@ def load_market_context(from_dt: datetime, to_dt: datetime) -> None:
     if not _DXY_PRICES:
         _DXY_PRICES = _fetch_yahoo("UUP", fetch_from, to_dt)  # ETF DXY como ultimo fallback
     _NDX_PRICES = _fetch_yahoo("^NDX", fetch_from, to_dt)
+    _VIX_PRICES = _fetch_yahoo("^VIX", fetch_from, to_dt)
 
     if _DXY_PRICES:
         logger.info("DXY: {} sesiones descargadas", len(_DXY_PRICES))
@@ -159,6 +161,11 @@ def load_market_context(from_dt: datetime, to_dt: datetime) -> None:
         logger.info("NASDAQ-100: {} sesiones descargadas", len(_NDX_PRICES))
     else:
         logger.warning("NASDAQ-100 no disponible — filtro de riesgo desactivado")
+
+    if _VIX_PRICES:
+        logger.info("VIX: {} sesiones descargadas", len(_VIX_PRICES))
+    else:
+        logger.warning("VIX no disponible — filtro de panico desactivado")
 
     _LOADED_FROM = fetch_from
     _LOADED_TO   = to_dt
@@ -174,20 +181,39 @@ def get_market_context(
     Devuelve el contexto de mercado global para la fecha dada.
 
     Returns:
-        dxy_headwind  bool   DXY subió > dxy_threshold% en lookback_days → adverso para BTC
-        risk_off      bool   NASDAQ bajó > |ndx_threshold|% → entorno risk-off
-        dxy_change    float  % cambio de DXY en el período (None si sin datos)
-        ndx_change    float  % cambio de NASDAQ en el período (None si sin datos)
+        dxy_headwind  bool         DXY subió > dxy_threshold% en lookback_days → adverso para BTC
+        risk_off      bool         NASDAQ bajó > |ndx_threshold|% → entorno risk-off
+        dxy_change    float|None   % cambio de DXY en el período
+        ndx_change    float|None   % cambio de NASDAQ en el período
+        vix_level     float|None   Nivel absoluto del VIX (cierre del día)
+        vix_extreme   bool         VIX > 35 → pánico real, bloquear entradas
+        vix_elevated  bool         VIX > 22 → miedo elevado, exigir más confirmación
     """
     date_str = dt.date().isoformat()
+
+    def _spot(prices: dict[str, float]) -> float | None:
+        """Cierre de la sesion mas reciente disponible, empezando en el dia anterior.
+
+        VIX cierra a las 21:15 UTC; DXY/NDX a las 22:00 UTC. Una barra 1H de
+        cualquier hora del dia corriente no puede haber visto ese cierre aun,
+        por lo que siempre se usa delta>=1 (sesion anterior) para evitar lookahead.
+        """
+        if not prices:
+            return None
+        d = dt.date()
+        for delta in range(1, 6):
+            candidate = (d - timedelta(days=delta)).isoformat()
+            if candidate in prices:
+                return prices[candidate]
+        return None
 
     def _pct(prices: dict[str, float], target: str, lookback: int) -> float | None:
         if not prices:
             return None
-        # Resolver fecha más cercana (mercados cerrados en fines de semana)
+        # Resolver fecha mas cercana empezando en el dia anterior (evitar lookahead)
         d = dt.date()
         actual: str | None = None
-        for delta in range(4):
+        for delta in range(1, 5):
             candidate = (d - timedelta(days=delta)).isoformat()
             if candidate in prices:
                 actual = candidate
@@ -207,10 +233,14 @@ def get_market_context(
 
     dxy_chg = _pct(_DXY_PRICES, date_str, lookback_days)
     ndx_chg = _pct(_NDX_PRICES, date_str, lookback_days)
+    vix_val = _spot(_VIX_PRICES)
 
     return {
         "dxy_headwind": bool(dxy_chg is not None and dxy_chg >  dxy_threshold),
         "risk_off":     bool(ndx_chg is not None and ndx_chg <  ndx_threshold),
         "dxy_change":   round(dxy_chg, 2) if dxy_chg is not None else None,
         "ndx_change":   round(ndx_chg, 2) if ndx_chg is not None else None,
+        "vix_level":    round(vix_val, 1)  if vix_val is not None else None,
+        "vix_extreme":  bool(vix_val is not None and vix_val > 35),
+        "vix_elevated": bool(vix_val is not None and vix_val > 22),
     }

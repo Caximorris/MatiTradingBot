@@ -368,7 +368,115 @@ python3 main.py backtest --strategy scalp --from 2022-01-01 --to 2026-06-01 --ti
 - Sizing: +$3,842
 - Total estimado: +$8,000-9,000 → ~$38,000-$39,000 (+280-290%)
 
-**PENDIENTE:** correr backtest y actualizar resultados aqui
+**Resultados v9 (2018-01-01 → 2026-01-01):**
+- Balance: $37,079 (+270.8%) | 9 trades | 55.6% WR | PF 7.82
+- Trades: T8 bloqueado (cooldown_atr_stop=30d, 28d < 30d). T9 no existio.
+- Confirmado: trailing_bull=0.28 no disparo en correcciones intermedias
+- Vs v8 (+$8.7k mejora)
+
+**Siguiente:** MVRV_FAIR=3.0 (max historico fue 2.96, el 2.5 nunca se activaba en bull)
+
+---
+
+### v10 — MVRV_FAIR=3.0 + atr_mult=3.0 + VIX + Funding historico (2026-06-25)
+**Cambios respecto a v9:**
+1. **MVRV_FAIR: 2.5 → 3.0** — el max historico fue 2.96 (Q2 2021). Con 2.5, el umbral
+   nunca se activaba en la practica. Con 3.0: MVRV 2.96 (Q2 2021) y 2.53 (Q2 2024)
+   ahora bloquean entradas → correcto.
+2. **atr_stop_mult: 2.5 → 3.0** — Trade 5 (corrección Evergrande 2021) disparaba con 2.5x
+3. **VIX cargado** desde Yahoo Finance (^VIX) junto a DXY/NDX en market_context.py:
+   - `vix_elevated` (VIX > 22): cap sizing a size_mid (60%)
+   - `vix_extreme` (VIX > 35): hard block de entrada (panico sistemico)
+   - El umbral dinamico de score (VIX > 22 → +2) fue ELIMINADO tras analisis:
+     T4 (May 2020, score=9, VIX~28) hubiese sido bloqueado — es el trade mas grande.
+4. **Funding rate historico** via funding_context.py descargando historico real OKX
+   (antes BacktestClient devolvía siempre 0.0)
+5. **MVRV_FAIR revertido de 2.5 a 3.0** — el max historico fue 2.96, con 2.5 T9 acumulacion
+   (Oct23-Jul24, MVRV=1.8) ahora entra con sizing mayor
+
+**Resultados v10 (2018-01-01 → 2026-01-01):**
+- Balance: $54,832 (+448.3%) | 11 trades | 54.5% WR | PF 7.054
+- T9 (acumulacion Oct23): entra con 60% por MVRV<2.5 vs ahora 80% → +$17.7k adicionales
+- Vs v9: +$17.7k — cambio mas grande de toda la evolucion hasta este punto
+
+---
+
+### v11 — Sizing agresivo 90/80/60% + score_min=9 + sin penalizacion acumulacion (2026-06-25)
+**Cambios respecto a v10:**
+1. **entry_score_min: 7 → 9** — analisis de v10 journal: todos los ganadores tuvieron score>=9
+   en el momento de entrada; los 5 perdedores tuvieron score 7-8. Score 9 = confirmacion real.
+   CUIDADO: el threshold de entrada cambia la FECHA de entrada (no es que bloquee el trade —
+   la estrategia entra en la primera barra que alcanza score=9, que puede ser distinta a la v10).
+2. **Sizing: 90%/80%/60%** (era 75%/60%/40%): usuario tiene cartera diversificada,
+   acepta sizing agresivo en la estrategia de BTC
+3. **Penalizacion acumulacion ELIMINADA**: en fase acumulacion (MVRV bajo), la señal de
+   entrada es de alta conviccion — no tiene sentido penalizar. Solo bear_onset sigue con ×0.75.
+
+**VIX con score dinamico ELIMINADO (error corregido):**
+El codigo anterior aumentaba entry_score_min en +2 cuando VIX > 22. Esto hubiese bloqueado
+T4 (May 2020, score=9, VIX~28), el mayor winner con +$17,608. Se elimino el dinamismo:
+VIX ahora solo afecta SIZING (cap 60%) y tiene hard block en VIX>35.
+
+**Resultados v11 (2018-01-01 → 2026-01-01):**
+- Balance: $74,124 (+641.2%) | 11 trades | 54.5% WR | PF 5.61
+- **CAGR: +28.6%/año — SUPERA BTC B&H (+24.5%/año)**
+- T4 (May2020→Jan2021): +$17,608 (+201%) — post_halving, size_ultra=90%
+- T5 (Jan→Apr2021): +$18,340 (+74%) — bull_peak, Pi Cycle Top exit
+- T9 (Oct2023→Jul2024): +$22,160 (+82%) — acumulacion pre-ETF, sin penalizacion
+- 91% del profit viene de estos 3 trades
+
+**Por que el PF cayo de 7.05 a 5.61:**
+- Sizing mayor (80-90% vs 40-60%) → las perdidas son mayores en dolares aunque los % son iguales
+- T6 (Mar2021 atr_stop): -$5,051 (v11) vs -$3,634 (v10) — mismo % pero mayor capital invertido
+- Es la contrapartida del sizing agresivo: las ganancias suben pero las perdidas tambien
+
+**Trade list v11:**
+- T1  2019-06-19→06-28  ls=9  atr_stop       -$521
+- T2  2019-08-06→08-30  ls=9  trailing_stop  -$466
+- T3  2020-02-05→02-28  ls=9  atr_stop       -$1,238
+- T4  2020-05-18→21-01-13  ls=9  trailing_stop  +$17,608 ← MEGA WINNER
+- T5  2021-01-03→04-15  ls=9  pi_cycle_top   +$18,340 ← Pi Cycle exit perfecto
+- T6  2021-03-08→03-25  ls=9  atr_stop       -$5,051
+- T7  2023-07-14→08-17  ls=9  atr_stop       -$1,453
+- T8  2023-10-25→24-05-01  ls=10  trailing_stop  +$7,654
+- T9  2024-08-07→25-01-20  ls=9  trailing_stop  +$22,160 ← MEGA WINNER
+- T10 2025-02-13→03-28  ls=9  bear_confirmed -$2,700
+- T11 2025-05-08→      ls=9  [abierto al corte 2026-01-01]
+
+---
+
+### v12 — ADX gate + MACD cross-TF gate + bear_onset ×0.75 (2026-06-25) [IMPLEMENTADO, SIN BACKTEST]
+**Cambios respecto a v11:**
+1. **adx_min_entry = 15.0**: bloquea entradas cuando ADX < 15 (mercado sin tendencia definida)
+   Objetivo: evitar entrar en consolidaciones donde el scoring puede ser alto por inercia
+2. **Gate MACD cross-timeframe**: al menos uno de (daily.macd_above OR h4.h4_macd_above)
+   Objetivo: confirmar momentum alcista en al menos un TF de mayor escala
+3. **Penalizacion bear_onset ×0.75 RESTAURADA** (se mantiene solo para bear_onset):
+   En inicio de mercado bajista, la conviccion debe ser mayor para justificar el tamaño
+
+**PENDIENTE:** correr backtest
 ```bash
-python3 main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01
 ```
+
+**Estimacion:** si ADX y MACD no bloquean ninguno de los 6 ganadores, resultado ~$80-85k
+
+---
+
+## LECCIONES APRENDIDAS (NO repetir estos experimentos)
+
+1. **Backtest anual con reset de balance**: descartado — posiciones abiertas desaparecen
+2. **allow_shorts en Pro Trend**: descartado — en bull markets shortea en correcciones y pierde
+3. **macd_cross exit en Scalp**: descartado — cortaba ganadores sistematicamente
+4. **atr_stop_mult=1.5 en cualquier timeframe de BTC**: demasiado estrecho, 0% WR garantizado
+5. **allow_shorts en ScalpMomentum**: descartado — longs -207 USDT vs shorts -907 USDT (4.4x peor)
+6. **entry_score como predictor de calidad en Scalp**: confirmado que NO funciona
+   (7.7 score promedio identico para winners y losers en todas las versiones)
+7. **MVRV_FAIR = 2.5**: nunca se activaba correctamente (max historico 2.96 en Q2 2021)
+   → usar 3.0 que captura correctamente la euforia historica de BTC
+8. **lookback_hours = 8760 con EMA350D**: insuficiente — usar 15000 siempre para Pro Trend
+9. **VIX con score dinamico**: cuando VIX>22 aumentar entry_score_min en +2 bloquearia T4
+   (May 2020, score=9, VIX~28) que es el mayor winner historico. VIX solo afecta SIZING.
+10. **Ajustar thresholds sobre trades especificos**: ADX=15.0, MACD gate, cooldown=30d,
+    trailing=0.28 fueron elegidos conociendo los trades historicos. Con solo 11 trades,
+    el riesgo de overfitting es real. MANDATORIO: paper trading antes de capital real.
