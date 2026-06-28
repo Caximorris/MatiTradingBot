@@ -242,6 +242,7 @@ def _run_backtest(
     prefetched_bars=None,
     show_progress: bool = True,
     cost_mode: str = "ideal",
+    journal_out: list | None = None,
 ):
     """
     Descarga (o reutiliza) barras y ejecuta el BacktestEngine con barra de progreso.
@@ -374,7 +375,10 @@ def _run_backtest(
                     cost_mode=cost_mode,
                     config_overrides=config if config else {},
                 )
-                console.print(f"[dim]Journal guardado -> {journal_path}[/dim]")
+                if journal_out is not None:
+                    journal_out.append(journal_path)
+                else:
+                    console.print(f"[dim]Journal guardado -> {journal_path}[/dim]")
 
             return result
         except Exception as exc:
@@ -885,6 +889,7 @@ def walk_forward(
 
     rows_train = []
     rows_test  = []
+    journals: list[str] = []
 
     for tr_from, tr_to, ts_from, ts_to, label in windows:
         def _parse(s):
@@ -894,10 +899,12 @@ def walk_forward(
 
         # Train
         r_train = _run_backtest(symbol, timeframe, strategy.lower(), balance, config,
-                                _parse(tr_from), _parse(tr_to), cost_mode=costs)
+                                _parse(tr_from), _parse(tr_to), cost_mode=costs,
+                                journal_out=journals)
         # Test
         r_test  = _run_backtest(symbol, timeframe, strategy.lower(), balance, config,
-                                _parse(ts_from), _parse(ts_to), cost_mode=costs)
+                                _parse(ts_from), _parse(ts_to), cost_mode=costs,
+                                journal_out=journals)
 
         def _fmt(r):
             if r is None:
@@ -933,6 +940,10 @@ def walk_forward(
     console.print("  - Si los periodos TEST tienen CAGR > 0 y PF > 1.0: logica causal, no solo memorizada.")
     console.print("  - Si TEST empeora drasticamente vs TRAIN: probable overfitting.")
     console.print("  - Con solo 11 trades historicos, 1-2 trades en TEST limitan la significancia estadistica.")
+    if journals:
+        console.print("\n[dim]Journals guardados:[/dim]")
+        for p in journals:
+            console.print(f"[dim]  -> {p}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -983,35 +994,38 @@ def baselines(
     console.print(f"\n[bold cyan]Baselines:[/bold cyan] {symbol} / {from_dt.date()} -> {to_dt.date()} / costes={costs}\n")
 
     results = []
+    journals: list[str] = []
 
     # ── 1. Pro Trend completo (referencia)
     load_macro_context(from_dt, to_dt, symbol)
     load_market_context(from_dt, to_dt)
     load_funding_history(symbol, from_dt, to_dt)
-    r_pro = _run_backtest(symbol, timeframe, "pro", balance, {}, from_dt, to_dt, cost_mode=costs)
+    r_pro = _run_backtest(symbol, timeframe, "pro", balance, {}, from_dt, to_dt,
+                          cost_mode=costs, journal_out=journals)
     results.append(("Pro Trend v12 (completo)", r_pro))
 
     # ── 2. Pro Trend sin datos externos (MVRV, VIX, DXY, NASDAQ, funding, Pi Cycle Top)
     # Mide cuánto aportan los filtros externos vs la lógica técnica pura.
     r_no_ext = _run_backtest(symbol, timeframe, "pro", balance,
                              {"disable_external_filters": True},
-                             from_dt, to_dt, cost_mode=costs)
+                             from_dt, to_dt, cost_mode=costs, journal_out=journals)
     results.append(("Pro Trend sin filtros externos", r_no_ext))
 
     # ── 3. Pro Trend score_min=1 (solo gates estructurales, sin umbral de score)
     r_noscore = _run_backtest(symbol, timeframe, "pro", balance,
                               {"entry_score_min": 1, "entry_score_gap": 0},
-                              from_dt, to_dt, cost_mode=costs)
+                              from_dt, to_dt, cost_mode=costs, journal_out=journals)
     results.append(("Pro Trend score_min=1 (gates only)", r_noscore))
 
     # ── 4. Pro Trend con sizing fijo 50% (reduccion agresividad)
     r_50pct = _run_backtest(symbol, timeframe, "pro", balance,
                             {"size_ultra": "0.50", "size_high": "0.50", "size_mid": "0.50"},
-                            from_dt, to_dt, cost_mode=costs)
+                            from_dt, to_dt, cost_mode=costs, journal_out=journals)
     results.append(("Pro Trend sizing fijo 50%", r_50pct))
 
     # ── 5. Adaptive Trend (estrategia mas simple, BTC-only)
-    r_adaptive = _run_backtest(symbol, timeframe, "adaptive", balance, {}, from_dt, to_dt, cost_mode=costs)
+    r_adaptive = _run_backtest(symbol, timeframe, "adaptive", balance, {}, from_dt, to_dt,
+                               cost_mode=costs, journal_out=journals)
     results.append(("Adaptive Trend (mas simple)", r_adaptive))
 
     # ── 6. Buy & Hold (calculado desde las barras directamente)
@@ -1065,6 +1079,10 @@ def baselines(
     console.print("  - Si Pro Trend sin externos iguala al completo: los filtros macro son decorativos.")
     console.print("  - Si Adaptive Trend consigue resultados similares con menos complejidad: simplificar.")
     console.print("  - Si Buy & Hold supera en CAGR con menos DD: la estrategia no justifica su complejidad.")
+    if journals:
+        console.print("\n[dim]Journals guardados:[/dim]")
+        for p in journals:
+            console.print(f"[dim]  -> {p}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -1153,6 +1171,7 @@ def sensitivity(
     ]
 
     run_results: list[tuple[str, str, dict, object]] = []
+    journals: list[str] = []
     for i, (label, group, cfg) in enumerate(variants, 1):
         console.print(f"  [{i}/{len(variants)}] {label}...", end="\r")
         r = _run_backtest(
@@ -1160,6 +1179,7 @@ def sensitivity(
             from_dt, to_dt,
             prefetched_bars=all_bars,
             cost_mode=costs,
+            journal_out=journals,
         )
         run_results.append((label, group, cfg, r))
     console.print(" " * 60, end="\r")
@@ -1225,6 +1245,10 @@ def sensitivity(
     console.print("  |dCAGR| < 2pp y |dPF| < 0.30  -> parametro ROBUSTO (no sobreajustado).")
     console.print("  |dCAGR| >= 2pp o |dPF| >= 0.30 -> parametro FRAGIL (posible overfitting).")
     console.print("  Regla de fragilidad: un threshold robusto debe tolerar +/-1 paso sin colapsar.")
+    if journals:
+        console.print("\n[dim]Journals guardados:[/dim]")
+        for p in journals:
+            console.print(f"[dim]  -> {p}[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -1594,10 +1618,10 @@ def random_backtest(
 
 def _setup_logging(verbose: bool) -> None:
     logger.remove()
-    level   = "DEBUG" if verbose else "INFO"
+    stderr_level = "DEBUG" if verbose else "WARNING"
     log_dir = Path(__file__).parent / "logs"
     log_dir.mkdir(exist_ok=True)
-    logger.add(sys.stderr, level=level,
+    logger.add(sys.stderr, level=stderr_level,
                format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}")
     logger.add(log_dir / "trading_{time:YYYY-MM-DD}.log",
                rotation="00:00", retention="30 days", level="DEBUG", encoding="utf-8")

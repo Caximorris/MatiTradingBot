@@ -139,6 +139,11 @@ python main.py backtest --strategy scalp --from 2022-01-01 --to 2026-06-01 --tim
 # Comparar estrategias (descarga datos una sola vez)
 python main.py compare --strategies "adaptive,pro" --from 2018 --to 2026
 
+# Validacion: walk-forward, baselines y sensitivity analysis
+python main.py walk-forward --strategy pro --costs realistic
+python main.py baselines --from 2018-01-01 --to 2026-01-01 --costs realistic
+python main.py sensitivity --from 2018-01-01 --to 2026-01-01 --costs realistic
+
 # Monte Carlo
 python main.py random-backtest --strategy pro --windows 10 --months 24
 
@@ -155,7 +160,8 @@ python main.py dashboard
 ## 7. Estrategias disponibles
 
 ### Pro Trend (`--strategy pro`)
-**Estado: Mejor resultado actual. v11: +641%, CAGR +28.6% (supera BTC B&H).**
+**Estado: Mejor resultado actual. v12 realistic: +480.5%, CAGR +24.7% (vs BTC B&H +26.4%).**
+**Ventaja real: 35% tiempo en mercado, evita crashes del -70%. Drawdown máx 42.6%.**
 
 Estrategia de trend following multi-timeframe con sistema de puntuación (0–14 pts)
 y filtros en capas:
@@ -163,7 +169,7 @@ y filtros en capas:
 - **Layer 1 (macro):** VIX, MVRV ratio — bloquea entradas en pánico o euforia de ciclo
 - **Layer 2 (mercado):** DXY, NASDAQ-100 — bloquea en entornos adversos a BTC
 - **Layer 3 (derivados):** Funding rate histórico OKX — bloquea longs cuando el mercado paga por shorts
-- **Layer 4 (técnico):** Score 0–14 pts, ADX, MACD cross-timeframe, Pi Cycle Top
+- **Layer 4 (técnico):** Score 0–14 pts, ADX gate, MACD cross-timeframe, Pi Cycle Top
 
 **Sizing adaptativo:** 90% / 80% / 60% según fase del ciclo × score.
 **Solo longs por defecto** (`allow_shorts=False`).

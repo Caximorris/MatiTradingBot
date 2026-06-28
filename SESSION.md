@@ -38,18 +38,55 @@ Conclusiones clave:
 - T2+T4+T8 = 97% del profit de ETH. Mas concentrado aun que BTC.
 - Los stops funcionan: maximo perdedor -16.41%.
 
-### 3. Sensitivity analysis — IMPLEMENTADO, PENDIENTE DE CORRER
-```bash
-python main.py sensitivity --from 2018-01-01 --to 2026-01-01 --costs realistic
-```
-Comando nuevo en main.py (linea ~1074). Descarga barras una sola vez, corre 9 variantes:
-- DEFAULT v12 (referencia)
-- entry_score_min: 8 / [9] / 10
-- adx_min_entry: 10 / [15] / 20
-- trailing_stop_pct_bull: 0.24 / [0.28] / 0.32
-- cooldown_atr_stop_days: 15 / [30] / 45
-Tabla con dCAGR y dPF vs default. Umbral fragilidad: |dCAGR|>=2pp o |dPF|>=0.30.
-Duracion estimada: ~40-50 min (9 backtests × ~5 min cada uno).
+### 3. Sensitivity analysis ✅ COMPLETADO (2026-06-28) — con bug encontrado y corregido
+
+Resultados (realistic, 2018-2026):
+
+| Variante | CAGR | dCAGR | Max DD | PF | dPF | Diagnostico |
+|----------|------|-------|--------|----|-----|-------------|
+| DEFAULT v12 | +24.7% | — | 42.6% | 3.64 | — | referencia |
+| score_min=8 | +24.3% | -0.4pp | 41.7% | 3.38 | -0.26 | ROBUSTO |
+| score_min=10 | +25.8% | +1.1pp | 42.9% | 4.26 | +0.62 | mejora (ver nota) |
+| adx_min=10 | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | INVALIDO — ver bug |
+| adx_min=20 | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | INVALIDO — ver bug |
+| trail_bull=0.24 | +19.7% | -5.0pp | 51.6% | 2.71 | -0.93 | MUY FRAGIL |
+| trail_bull=0.32 | +27.5% | +2.8pp | 42.6% | 3.78 | +0.14 | mejora |
+| cooldown_atr=15d | +21.9% | -2.8pp | 52.0% | 3.26 | -0.38 | FRAGIL |
+| cooldown_atr=45d | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | ROBUSTO |
+
+**BUG ENCONTRADO Y CORREGIDO:** `adx_min_entry` no estaba en `from_dict()` ni `to_dict()`
+de ProTrendConfig. Las variantes adx_min=10 y adx_min=20 corrieron con el default 15.0.
+Los resultados identicos NO prueban que el gate sea decorativo — nunca se probo realmente.
+Fix: añadido a `from_dict()` y `to_dict()` en pro_trend.py.
+
+Conclusiones validas (las 3 que SI se probaron correctamente):
+
+1. **trailing_stop_pct_bull es el parametro mas sensible** — asimetrico: 0.24 destroza el
+   resultado (-5pp CAGR, DD sube 9pp a 51.6%), 0.32 mejora (+2.8pp, DD identico). El trailing
+   esta "al borde": un poco mas ajustado y se dispara en correcciones normales de bull market.
+   No cambiar per protocolo (no optimizar antes de paper trading). Senial de alarma en live:
+   si BTC corrige 25-28% durante una posicion, el stop esta muy cerca del limite.
+
+2. **cooldown_atr_stop_days=30 es el minimo robusto** — 15d empeora (-2.8pp, DD +9.4pp),
+   45d es identico a 30d. Entre dia 30 y 45 no aparece ninguna senal de re-entrada en el
+   historico. Confirmado: 30d correcto, no tiene sentido subir.
+
+3. **entry_score_min=9 es robusto hacia abajo** — score_min=8 da -0.4pp/-0.26 PF (robusto).
+   score_min=10 mejora el PF (+0.62) pero con solo 12 trades es ruido estadistico. Paradoja:
+   baselines mostraron que score_min no filtra entradas (mismos 12 trades con score_min=1 y 9),
+   pero score_min=10 da PF 4.26 vs 3.64. Significa que algunos trades tienen score exactamente
+   9 en el momento de entrada. Investicacion pendiente via journal: cual de los trades perdedores
+   entro con score=9.
+
+4. **ADX gate: estado DESCONOCIDO** — re-correr tras fix del bug:
+   ```bash
+   python main.py sensitivity --from 2018-01-01 --to 2026-01-01 --costs realistic
+   ```
+   O variantes ADX aisladas (mas rapido, ~20 min):
+   ```bash
+   python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"adx_min_entry": 10}'
+   python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"adx_min_entry": 20}'
+   ```
 
 ### 4. Journal MAE/MFE/R-multiplo
 Añadir a `reporting/trade_journal.py` y `strategies/base_strategy.py`:
@@ -295,6 +332,10 @@ Senales de alarma en live:
 3. Sin cooldown tras weekly flip: fix `_set_cooldown()` date-based
 4. `h1["close"]` no existia en dict fallback: fix añadir `"close": last_close`
 5. UnicodeEncodeError Windows cp1252: sustituidos caracteres Unicode por ASCII
+6. `adx_min_entry` no estaba en `from_dict()` / `to_dict()` de ProTrendConfig → el parametro
+   existia en el dataclass y se usaba en el gate, pero `--config '{"adx_min_entry": X}'` lo
+   ignoraba silenciosamente. Invalidó las variantes ADX del sensitivity analysis (todas corrieron
+   con adx_min_entry=15.0). Fix: añadido a ambos metodos de serializacion.
 
 ---
 

@@ -41,7 +41,7 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 
 1. **No ejecutar `python main.py ...` automaticamente.** Mostrar el comando exacto y dejar que el usuario lo corra.
 
-2. **No tocar parametros de Pro Trend** hasta completar: baselines correcto + ETH backtest + sensitivity analysis. Objetivo: VALIDAR, no optimizar.
+2. **No tocar parametros de Pro Trend** hasta completar paper trading 6 meses. Baselines, ETH y sensitivity ya completados. Proximo: MAE/MFE/R-multiplo en journal, luego paper.
 
 3. **Lookahead fixes aplicados — no revertir:**
    - `macro_context._lookup`: offset empieza en 1 (MVRV = dia anterior)
@@ -66,6 +66,11 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
    - `--costs conservative` = 0.1% fee + 15bps slippage
 
 10. **walk-forward y baselines** corren 8 y 5 sub-backtests respectivamente. ~40-60 min total. Normal.
+
+13. **`adx_min_entry` en ProTrendConfig**: existe en el dataclass y en el gate (_g_adx_min),
+    y ahora esta correctamente en `from_dict()` y `to_dict()`. Bug corregido 2026-06-29.
+    Las variantes ADX del sensitivity del 2026-06-28 son invalidas (corrieron todas con 15.0).
+    Re-correr antes de sacar conclusiones sobre el gate ADX.
 
 11. **Al crear nuevos indicadores**, añadirlos a `strategies/indicators.py`.
 
