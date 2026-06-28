@@ -1201,18 +1201,17 @@ def sensitivity(
         return f"[{c}]{d:+.2f}[/{c}]"
 
     t = Table(
-        title=f"Sensitivity Analysis — Pro Trend v12 / {symbol} {from_dt.year}-{to_dt.year} ({costs})",
+        title=f"Sensitivity — Pro Trend v12 / {symbol} {from_dt.year}-{to_dt.year} ({costs})",
         header_style="bold blue", show_lines=True,
     )
-    t.add_column("Variante",   style="dim", min_width=20)
-    t.add_column("P&L",        justify="right")
-    t.add_column("CAGR",       justify="right")
-    t.add_column("dCAGR",      justify="right")
-    t.add_column("Max DD",     justify="right")
-    t.add_column("Sharpe",     justify="right")
-    t.add_column("PF",         justify="right")
-    t.add_column("dPF",        justify="right")
-    t.add_column("Trades",     justify="right")
+    t.add_column("Variante",   style="dim", min_width=16, max_width=18)
+    t.add_column("CAGR",       justify="right", min_width=7)
+    t.add_column("dCAGR",      justify="right", min_width=7)
+    t.add_column("MaxDD",      justify="right", min_width=6)
+    t.add_column("Sharpe",     justify="right", min_width=6)
+    t.add_column("PF",         justify="right", min_width=5)
+    t.add_column("dPF",        justify="right", min_width=6)
+    t.add_column("Trades",     justify="right", min_width=6)
 
     last_group = None
     for label, group, cfg, r in run_results:
@@ -1222,14 +1221,12 @@ def sensitivity(
         last_group = group
 
         if r is None:
-            t.add_row(label, "ERROR", "—", "—", "—", "—", "—", "—", "—")
+            t.add_row(label, "—", "ERROR", "—", "—", "—", "—", "—")
             continue
 
-        c = "green" if float(r.total_pnl_pct) >= 0 else "red"
         lbl = f"[bold]{label}[/bold]" if is_default else label
         t.add_row(
             lbl,
-            f"[{c}]{float(r.total_pnl_pct):+.1f}%[/{c}]",
             f"{float(r.cagr):+.1f}%",
             "—" if is_default else _delta_cagr(r),
             f"{float(r.max_drawdown_pct):.1f}%",
