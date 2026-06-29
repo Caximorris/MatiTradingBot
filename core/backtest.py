@@ -767,7 +767,7 @@ def _fetch_binance_bars(
     return bars
 
 
-def _fetch_kraken_bars(
+def _fetch_bitstamp_bars(
     symbol: str,
     bar: str,
     from_dt: datetime,
@@ -775,11 +775,11 @@ def _fetch_kraken_bars(
     on_page: Callable[[int], None] | None = None,
 ) -> list[OHLCVBar]:
     """
-    Fallback: descarga OHLCV desde Kraken API publica (sin auth).
-    BTC/USD desde octubre 2013, ETH/USD desde agosto 2015.
+    Fallback: descarga OHLCV desde Bitstamp API publica (sin auth).
+    BTC/USD desde enero 2012, ETH/USD desde agosto 2016.
     Trata USD como USDT — diferencia negligible historicamente.
-    symbol: "BTC-USDT" → "XBTUSD", "ETH-USDT" → "ETHUSD"
-    bar:    "1H" → 60 min, "4H" → 240, "1D" → 1440
+    symbol: "BTC-USDT" → "btcusd", "ETH-USDT" → "ethusd"
+    bar:    "1H" → step=3600, "4H" → step=14400, "1D" → step=86400
     """
     import json as _json
     import urllib.request as _req
@@ -787,81 +787,75 @@ def _fetch_kraken_bars(
     _HEADERS = {"User-Agent": "MatiTradingBot/1.0"}
 
     _SYMBOL_MAP: dict[str, str] = {
-        "BTC-USDT": "XBTUSD", "BTC-USD": "XBTUSD",
-        "ETH-USDT": "ETHUSD", "ETH-USD": "ETHUSD",
-        "SOL-USDT": "SOLUSD", "SOL-USD": "SOLUSD",
-        "XRP-USDT": "XRPUSD", "LTC-USDT": "LTCUSD",
+        "BTC-USDT": "btcusd", "BTC-USD": "btcusd",
+        "ETH-USDT": "ethusd", "ETH-USD": "ethusd",
+        "SOL-USDT": "solusd", "SOL-USD": "solusd",
+        "XRP-USDT": "xrpusd", "LTC-USDT": "ltcusd",
     }
 
     _BAR_MAP: dict[str, int] = {
-        "1m": 1, "5m": 5, "15m": 15, "30m": 30,
-        "1H": 60, "4H": 240, "1D": 1440, "1W": 10080,
+        "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+        "1H": 3600, "4H": 14400, "1D": 86400,
     }
 
-    kraken_pair = _SYMBOL_MAP.get(symbol)
-    if not kraken_pair:
-        logger.warning("Kraken fallback: par {} no soportado", symbol)
+    pair = _SYMBOL_MAP.get(symbol)
+    if not pair:
+        logger.warning("Bitstamp fallback: par {} no soportado", symbol)
         return []
 
-    interval = _BAR_MAP.get(bar)
-    if not interval:
-        logger.warning("Kraken fallback: timeframe {} no soportado", bar)
+    step = _BAR_MAP.get(bar)
+    if not step:
+        logger.warning("Bitstamp fallback: timeframe {} no soportado", bar)
         return []
 
     from_ts = int(from_dt.timestamp())
     to_ts   = int(to_dt.timestamp())
 
     bars: list[OHLCVBar] = []
-    since = from_ts
+    start = from_ts
 
-    logger.info("Kraken fallback: descargando {}/{} desde {} hasta {}",
-                kraken_pair, interval, from_dt.date(), to_dt.date())
+    logger.info("Bitstamp fallback: descargando {}/{} desde {} hasta {}",
+                pair, step, from_dt.date(), to_dt.date())
 
-    while since < to_ts:
+    while start < to_ts:
+        end = min(start + step * 1000, to_ts)
         url = (
-            f"https://api.kraken.com/0/public/OHLC"
-            f"?pair={kraken_pair}&interval={interval}&since={since}"
+            f"https://www.bitstamp.net/api/v2/ohlc/{pair}/"
+            f"?step={step}&limit=1000&start={start}&end={end}"
         )
         try:
-            with _req.urlopen(_req.Request(url, headers=_HEADERS), timeout=20) as resp:
+            with _req.urlopen(_req.Request(url, headers=_HEADERS), timeout=30) as resp:
                 data = _json.loads(resp.read())
         except Exception as exc:
-            logger.error("Kraken fallback error: {}", exc)
+            logger.error("Bitstamp fallback error: {}", exc)
             break
 
-        if data.get("error"):
-            logger.error("Kraken fallback API error: {}", data["error"])
-            break
-
-        result = data.get("result", {})
-        chunk  = result.get(kraken_pair) or result.get(next(iter(result), ""), [])
-        last   = int(result.get("last", 0))
-
+        chunk = data.get("data", {}).get("ohlc", [])
         if not chunk:
             break
 
         for row in chunk:
-            ts_s = int(row[0])
+            ts_s = int(row["timestamp"])
             if ts_s >= to_ts:
                 continue
             bars.append(OHLCVBar(
                 timestamp=ts_s * 1000,
-                open=Decimal(str(row[1])),
-                high=Decimal(str(row[2])),
-                low=Decimal(str(row[3])),
-                close=Decimal(str(row[4])),
-                volume=Decimal(str(row[6])),
+                open=Decimal(row["open"]),
+                high=Decimal(row["high"]),
+                low=Decimal(row["low"]),
+                close=Decimal(row["close"]),
+                volume=Decimal(row["volume"]),
             ))
 
         if on_page:
             on_page(len(bars))
 
-        if last <= since or len(chunk) < 720:
+        if len(chunk) < 1000:
             break
-        since = last
+        start = int(chunk[-1]["timestamp"]) + step
 
     bars.sort(key=lambda b: b.timestamp)
-    logger.info("Kraken fallback: {} velas descargadas", len(bars))
+    logger.info("Bitstamp fallback: {} velas descargadas", len(bars))
     return bars
 
 
@@ -958,8 +952,8 @@ def fetch_historical_bars(
             if bars else to_dt
         )
         logger.info("Gap detectado antes de {} — intentando Kraken para rellenar", _gap_end.date())
-        kraken_bars = _fetch_kraken_bars(symbol, bar, from_dt, _gap_end, on_page)
-        if kraken_bars:
-            bars = _merge_bars(bars, kraken_bars)
+        bitstamp_bars = _fetch_bitstamp_bars(symbol, bar, from_dt, _gap_end, on_page)
+        if bitstamp_bars:
+            bars = _merge_bars(bars, bitstamp_bars)
 
     return bars
