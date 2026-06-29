@@ -366,7 +366,8 @@ class ProTrendBot(BaseStrategy):
             "entry_price": "0",
             "position_qty": "0",
             "stop_loss": "0",
-            "peak_price": "0",        # máximo desde entrada para trailing stop
+            "peak_price":   "0",       # máximo desde entrada para trailing stop y MFE
+            "trough_price": "0",       # mínimo desde entrada para MAE
             "margin_usdt": "0",
             "half_reduced": False,
             "partial_exited": False,  # True cuando ya se ejecutó la partial exit de ganancias
@@ -925,6 +926,7 @@ class ProTrendBot(BaseStrategy):
             "position_qty": str(result.filled_qty),
             "stop_loss":    str(stop),
             "peak_price":   str(result.filled_price),
+            "trough_price": str(result.filled_price),
             "margin_usdt":  "0",
             "half_reduced": False,
         })
@@ -1118,6 +1120,7 @@ class ProTrendBot(BaseStrategy):
             "position_qty":   "0",
             "stop_loss":      "0",
             "peak_price":     "0",
+            "trough_price":   "0",
             "margin_usdt":    "0",
             "half_reduced":   False,
             "partial_exited": False,
@@ -1175,11 +1178,14 @@ class ProTrendBot(BaseStrategy):
         entry = Decimal(self._state["entry_price"])
         prev_macd = self._state.get("prev_macd_above")
 
-        # ── Actualizar el máximo desde entrada (para trailing stop) ──────────
+        # ── Actualizar el máximo y mínimo desde entrada (trailing stop / MAE-MFE) ──
         peak = Decimal(self._state.get("peak_price") or "0")
         if price > peak:
             peak = price
             self._state["peak_price"] = str(peak)
+        trough = Decimal(self._state.get("trough_price") or "0") or price
+        if price < trough:
+            self._state["trough_price"] = str(price)
 
         # 1. Trailing stop dinámico con pct adaptativo por fase del ciclo.
         #    post_halving/bull_peak: trailing_stop_pct_bull (28%) — aguanta correcciones normales
@@ -1474,9 +1480,12 @@ class ProTrendBot(BaseStrategy):
         _pos_before      = position
         _balance_before  = float(self._client.get_balance().get("USDT", Decimal("0")))
         _ts_now          = self._client.current_time().isoformat()
-        # Guardar peak y entry ANTES de que _reset_state() los borre al cerrar posicion
-        _peak_pre  = float(Decimal(self._state.get("peak_price") or "0") or "0")
-        _entry_pre = float(Decimal(self._state.get("entry_price") or "0") or "0")
+        # Guardar peak/trough/entry/stop ANTES de que _reset_state() los borre al cerrar
+        _peak_pre   = float(Decimal(self._state.get("peak_price")   or "0") or "0")
+        _trough_pre = float(Decimal(self._state.get("trough_price") or "0") or "0")
+        _entry_pre  = float(Decimal(self._state.get("entry_price")  or "0") or "0")
+        _stop_pre   = float(Decimal(self._state.get("stop_loss")    or "0") or "0")
+        _qty_pre    = float(Decimal(self._state.get("position_qty") or "0") or "0")
 
         if position == "long":
             self._manage_long(daily, weekly, h1, price, ls, ss)
@@ -1661,11 +1670,24 @@ class ProTrendBot(BaseStrategy):
                         _hold_h  = 0.0
                 else:
                     _hold_h = 0.0
+
+                _mae_pct = round(
+                    (_entry_pre - _trough_pre) / _entry_pre * 100, 2
+                ) if _entry_pre > 0 and _trough_pre > 0 else 0.0
+                _mfe_pct = round(
+                    (_peak_pre - _entry_pre) / _entry_pre * 100, 2
+                ) if _entry_pre > 0 and _peak_pre > _entry_pre else 0.0
+                _atr_risk = (_entry_pre - _stop_pre) * _qty_pre
+                _r_multiple = round(
+                    self._last_close_pnl / _atr_risk, 2
+                ) if _atr_risk > 0 else 0.0
+
                 self._journal_close(
                     ts=_ts_now, price=float(price),
                     pnl=self._last_close_pnl, reason=self._last_close_reason,
                     holding_hours=_hold_h, balance_after=_bal_after,
                     ls=ls, ss=ss, indicators=_ind,
+                    mae_pct=_mae_pct, mfe_pct=_mfe_pct, r_multiple=_r_multiple,
                 )
 
             if _pos_after in ("long", "short"):

@@ -135,6 +135,9 @@ class BaseStrategy(ABC):
         ls: int,
         ss: int,
         indicators: dict,
+        mae_pct: float = 0.0,
+        mfe_pct: float = 0.0,
+        r_multiple: float = 0.0,
     ) -> None:
         """Finaliza el trade pendiente y lo añade al journal."""
         if not self._pending_journal_entry:
@@ -151,6 +154,9 @@ class BaseStrategy(ABC):
             "balance_usdt_after": round(balance_after, 2),
             "score_long":         ls,
             "score_short":        ss,
+            "mae_pct":            mae_pct,
+            "mfe_pct":            mfe_pct,
+            "r_multiple":         r_multiple,
             "indicators":         indicators,
         }
         self._journal.append(self._pending_journal_entry)

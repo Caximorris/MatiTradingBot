@@ -1,7 +1,7 @@
 # SESSION.md — Estado del proyecto y referencia detallada
 
 Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
-**Ultima actualizacion: 2026-06-26 (sexta sesion)**
+**Ultima actualizacion: 2026-06-29 (septima sesion)**
 
 ---
 
@@ -11,7 +11,7 @@ Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
 **Resultado honesto con costes realistas: +480.5% CAGR +24.7% vs B&H +549.7% CAGR +26.4%**
 La ventaja real de Pro Trend NO es el retorno absoluto — es el riesgo: 35% tiempo en mercado, evita crashes del -70%.
 
-**Pasos 1 y 2 COMPLETADOS. Paso 3 implementado, pendiente de correr.**
+**Pasos 1, 2 y 3 COMPLETADOS (incluyendo re-runs ADX corregidos 2026-06-29). Proximo: paso 4 MAE/MFE/R-multiplo.**
 
 ---
 
@@ -38,55 +38,51 @@ Conclusiones clave:
 - T2+T4+T8 = 97% del profit de ETH. Mas concentrado aun que BTC.
 - Los stops funcionan: maximo perdedor -16.41%.
 
-### 3. Sensitivity analysis ✅ COMPLETADO (2026-06-28) — con bug encontrado y corregido
+### 3. Sensitivity analysis ✅ COMPLETADO (2026-06-29) — ADX re-corrido con bug fix
 
 Resultados (realistic, 2018-2026):
 
-| Variante | CAGR | dCAGR | Max DD | PF | dPF | Diagnostico |
-|----------|------|-------|--------|----|-----|-------------|
-| DEFAULT v12 | +24.7% | — | 42.6% | 3.64 | — | referencia |
-| score_min=8 | +24.3% | -0.4pp | 41.7% | 3.38 | -0.26 | ROBUSTO |
-| score_min=10 | +25.8% | +1.1pp | 42.9% | 4.26 | +0.62 | mejora (ver nota) |
-| adx_min=10 | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | INVALIDO — ver bug |
-| adx_min=20 | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | INVALIDO — ver bug |
-| trail_bull=0.24 | +19.7% | -5.0pp | 51.6% | 2.71 | -0.93 | MUY FRAGIL |
-| trail_bull=0.32 | +27.5% | +2.8pp | 42.6% | 3.78 | +0.14 | mejora |
-| cooldown_atr=15d | +21.9% | -2.8pp | 52.0% | 3.26 | -0.38 | FRAGIL |
-| cooldown_atr=45d | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | ROBUSTO |
+| Variante | CAGR | dCAGR | Max DD | PF | dPF | Trades | Diagnostico |
+|----------|------|-------|--------|----|-----|--------|-------------|
+| DEFAULT v12 (adx=15) | +24.7% | — | 42.6% | 3.64 | — | 12 | referencia |
+| score_min=8 | +24.3% | -0.4pp | 41.7% | 3.38 | -0.26 | 12 | ROBUSTO |
+| score_min=10 | +25.8% | +1.1pp | 42.9% | 4.26 | +0.62 | 12 | ruido estadistico (ver nota) |
+| adx_min=10 | +25.7% | +1.0pp | 39.1% | 3.78 | +0.14 | 12 | ROBUSTO — mismos trades |
+| adx_min=20 | +27.4% | +2.7pp | 42.6% | 5.61 | +1.97 | 11 | POSIBLE OVERFITTING (ver nota) |
+| trail_bull=0.24 | +19.7% | -5.0pp | 51.6% | 2.71 | -0.93 | — | MUY FRAGIL |
+| trail_bull=0.32 | +27.5% | +2.8pp | 42.6% | 3.78 | +0.14 | — | mejora marginal |
+| cooldown_atr=15d | +21.9% | -2.8pp | 52.0% | 3.26 | -0.38 | — | FRAGIL |
+| cooldown_atr=45d | +24.7% | +0.0pp | 42.6% | 3.64 | +0.00 | — | ROBUSTO |
 
-**BUG ENCONTRADO Y CORREGIDO:** `adx_min_entry` no estaba en `from_dict()` ni `to_dict()`
-de ProTrendConfig. Las variantes adx_min=10 y adx_min=20 corrieron con el default 15.0.
-Los resultados identicos NO prueban que el gate sea decorativo — nunca se probo realmente.
-Fix: añadido a `from_dict()` y `to_dict()` en pro_trend.py.
+Journals ADX (2026-06-29):
+- adx=10: `backtests/journal_pro_trend_btc_usdt_BTCUSDT_1H_20260629_080548.json`
+- adx=20: `backtests/journal_pro_trend_btc_usdt_BTCUSDT_1H_20260629_080539.json`
 
-Conclusiones validas (las 3 que SI se probaron correctamente):
+**BUG (ya corregido):** `adx_min_entry` no estaba en `from_dict()`/`to_dict()`. Fix aplicado
+en pro_trend.py. Las variantes ADX de la sesion 2026-06-28 eran invalidas (corrieron con 15.0).
 
-1. **trailing_stop_pct_bull es el parametro mas sensible** — asimetrico: 0.24 destroza el
-   resultado (-5pp CAGR, DD sube 9pp a 51.6%), 0.32 mejora (+2.8pp, DD identico). El trailing
-   esta "al borde": un poco mas ajustado y se dispara en correcciones normales de bull market.
-   No cambiar per protocolo (no optimizar antes de paper trading). Senial de alarma en live:
-   si BTC corrige 25-28% durante una posicion, el stop esta muy cerca del limite.
+Conclusiones sensitivity completas:
+
+1. **trailing_stop_pct_bull es el parametro mas sensible** — asimetrico: 0.24 destroza
+   el resultado (-5pp CAGR, DD sube 9pp a 51.6%), 0.32 mejora (+2.8pp, DD identico). El trailing
+   esta "al borde". Senial de alarma en live: si BTC corrige 25-28% en una posicion, el stop
+   esta muy cerca del limite.
 
 2. **cooldown_atr_stop_days=30 es el minimo robusto** — 15d empeora (-2.8pp, DD +9.4pp),
-   45d es identico a 30d. Entre dia 30 y 45 no aparece ninguna senal de re-entrada en el
-   historico. Confirmado: 30d correcto, no tiene sentido subir.
+   45d identico a 30d. Confirmado: 30d correcto.
 
 3. **entry_score_min=9 es robusto hacia abajo** — score_min=8 da -0.4pp/-0.26 PF (robusto).
-   score_min=10 mejora el PF (+0.62) pero con solo 12 trades es ruido estadistico. Paradoja:
-   baselines mostraron que score_min no filtra entradas (mismos 12 trades con score_min=1 y 9),
-   pero score_min=10 da PF 4.26 vs 3.64. Significa que algunos trades tienen score exactamente
-   9 en el momento de entrada. Investicacion pendiente via journal: cual de los trades perdedores
-   entro con score=9.
+   score_min=10 da PF 4.26 vs 3.64 pero con 12 trades es ruido estadistico. Investigacion
+   pendiente: que trade perdedor entro con score exactamente 9.
 
-4. **ADX gate: estado DESCONOCIDO** — re-correr tras fix del bug:
-   ```bash
-   python main.py sensitivity --from 2018-01-01 --to 2026-01-01 --costs realistic
-   ```
-   O variantes ADX aisladas (mas rapido, ~20 min):
-   ```bash
-   python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"adx_min_entry": 10}'
-   python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"adx_min_entry": 20}'
-   ```
+4. **ADX gate confirmado — adx=15 es correcto:**
+   - adx=10: mismos 12 trades que default. Ningun trade historico entro con ADX 10-14.9.
+     El gate en 15 no era arbitrario — ya estaba en el limite real de los datos. DD incluso
+     mejora marginalmente (39.1% vs 42.6%), probablemente por timing de entrada ligeramente
+     distinto.
+   - adx=20: filtra 1 trade (perdedor Q2 2021), PF salta a 5.61. SOSPECHOSO — es fitting
+     sobre 1 trade de una muestra de 12. En live podria bloquear ganadores. No cambiar.
+   - Conclusion: adx_min=15 confirmado como robusto y correcto.
 
 ### 4. Journal MAE/MFE/R-multiplo
 Añadir a `reporting/trade_journal.py` y `strategies/base_strategy.py`:

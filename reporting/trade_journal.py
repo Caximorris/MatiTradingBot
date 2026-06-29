@@ -37,6 +37,9 @@ def _compute_stats(trades: list[dict]) -> dict:
     pnls      = [t["close"]["pnl_usdt"]      for t in closed if "pnl_usdt"      in t["close"]]
     pnl_pcts  = [t["close"]["pnl_pct"]        for t in closed if "pnl_pct"        in t["close"]]
     hold_hrs  = [t["close"]["holding_hours"]   for t in closed if "holding_hours"  in t["close"]]
+    maes      = [t["close"]["mae_pct"]         for t in closed if "mae_pct"         in t["close"]]
+    mfes      = [t["close"]["mfe_pct"]         for t in closed if "mfe_pct"         in t["close"]]
+    rs        = [t["close"]["r_multiple"]      for t in closed if "r_multiple"      in t["close"]]
 
     wins   = [p for p in pnls if p > 0]
     losses = [p for p in pnls if p <= 0]
@@ -89,6 +92,12 @@ def _compute_stats(trades: list[dict]) -> dict:
         "by_side":               by_side,
         "by_exit_reason":        by_reason,
         "win_rate_by_reason":    wr_by_reason,
+        "avg_mae_pct":           round(sum(maes) / len(maes), 2) if maes else 0,
+        "avg_mfe_pct":           round(sum(mfes) / len(mfes), 2) if mfes else 0,
+        "max_mae_pct":           round(max(maes), 2) if maes else 0,
+        "max_mfe_pct":           round(max(mfes), 2) if mfes else 0,
+        "avg_r_multiple":        round(sum(rs) / len(rs), 2) if rs else 0,
+        "r_multiples":           [round(r, 2) for r in rs],
     }
 
 
