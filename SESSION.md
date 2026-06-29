@@ -1,7 +1,7 @@
 # SESSION.md — Estado del proyecto y referencia detallada
 
 Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
-**Ultima actualizacion: 2026-06-29 (septima sesion)**
+**Ultima actualizacion: 2026-06-29 (septima sesion — fin de dia)**
 
 ---
 
@@ -11,7 +11,24 @@ Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
 **Resultado honesto con costes realistas: +480.5% CAGR +24.7% vs B&H +549.7% CAGR +26.4%**
 La ventaja real de Pro Trend NO es el retorno absoluto — es el riesgo: 35% tiempo en mercado, evita crashes del -70%.
 
-**Pasos 1, 2 y 3 COMPLETADOS (incluyendo re-runs ADX corregidos 2026-06-29). Proximo: paso 4 MAE/MFE/R-multiplo.**
+**Pasos 1-4 COMPLETADOS. Sesion 2026-06-29: MAE/MFE/R implementado, Bitstamp añadido, backtests ampliados pendientes de resultados.**
+
+### PENDIENTE AL CERRAR SESION (ejecutar en orden, UNO A LA VEZ — OKX rate-limita en paralelo)
+
+```
+# 1. BTC 2015 — EN CURSO al cerrar (111,499 velas, ~20% al cerrar)
+python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic
+
+# 2. ETH 2015 — tras BTC
+python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic --symbol ETH-USDT
+
+# 3. partial_exit ablation — tras ETH (CMD syntax)
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config "{\"partial_exit_pct\": 150.0}"
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config "{\"partial_exit_pct\": 200.0}"
+```
+
+Objetivo: con BTC 2015 se esperan trades del ciclo 2017 (111,499 velas vs 69,881 antes — Bitstamp funcionó).
+Analizar MAE/MFE/R del journal resultante y comparar partial_exit vs baseline.
 
 ---
 
