@@ -767,6 +767,112 @@ def _fetch_binance_bars(
     return bars
 
 
+def _fetch_kraken_bars(
+    symbol: str,
+    bar: str,
+    from_dt: datetime,
+    to_dt: datetime,
+    on_page: Callable[[int], None] | None = None,
+) -> list[OHLCVBar]:
+    """
+    Fallback: descarga OHLCV desde Kraken API publica (sin auth).
+    BTC/USD desde octubre 2013, ETH/USD desde agosto 2015.
+    Trata USD como USDT — diferencia negligible historicamente.
+    symbol: "BTC-USDT" → "XBTUSD", "ETH-USDT" → "ETHUSD"
+    bar:    "1H" → 60 min, "4H" → 240, "1D" → 1440
+    """
+    import json as _json
+    import urllib.request as _req
+
+    _HEADERS = {"User-Agent": "MatiTradingBot/1.0"}
+
+    _SYMBOL_MAP: dict[str, str] = {
+        "BTC-USDT": "XBTUSD", "BTC-USD": "XBTUSD",
+        "ETH-USDT": "ETHUSD", "ETH-USD": "ETHUSD",
+        "SOL-USDT": "SOLUSD", "SOL-USD": "SOLUSD",
+        "XRP-USDT": "XRPUSD", "LTC-USDT": "LTCUSD",
+    }
+
+    _BAR_MAP: dict[str, int] = {
+        "1m": 1, "5m": 5, "15m": 15, "30m": 30,
+        "1H": 60, "4H": 240, "1D": 1440, "1W": 10080,
+    }
+
+    kraken_pair = _SYMBOL_MAP.get(symbol)
+    if not kraken_pair:
+        logger.warning("Kraken fallback: par {} no soportado", symbol)
+        return []
+
+    interval = _BAR_MAP.get(bar)
+    if not interval:
+        logger.warning("Kraken fallback: timeframe {} no soportado", bar)
+        return []
+
+    from_ts = int(from_dt.timestamp())
+    to_ts   = int(to_dt.timestamp())
+
+    bars: list[OHLCVBar] = []
+    since = from_ts
+
+    logger.info("Kraken fallback: descargando {}/{} desde {} hasta {}",
+                kraken_pair, interval, from_dt.date(), to_dt.date())
+
+    while since < to_ts:
+        url = (
+            f"https://api.kraken.com/0/public/OHLC"
+            f"?pair={kraken_pair}&interval={interval}&since={since}"
+        )
+        try:
+            with _req.urlopen(_req.Request(url, headers=_HEADERS), timeout=20) as resp:
+                data = _json.loads(resp.read())
+        except Exception as exc:
+            logger.error("Kraken fallback error: {}", exc)
+            break
+
+        if data.get("error"):
+            logger.error("Kraken fallback API error: {}", data["error"])
+            break
+
+        result = data.get("result", {})
+        chunk  = result.get(kraken_pair) or result.get(next(iter(result), ""), [])
+        last   = int(result.get("last", 0))
+
+        if not chunk:
+            break
+
+        for row in chunk:
+            ts_s = int(row[0])
+            if ts_s >= to_ts:
+                continue
+            bars.append(OHLCVBar(
+                timestamp=ts_s * 1000,
+                open=Decimal(str(row[1])),
+                high=Decimal(str(row[2])),
+                low=Decimal(str(row[3])),
+                close=Decimal(str(row[4])),
+                volume=Decimal(str(row[6])),
+            ))
+
+        if on_page:
+            on_page(len(bars))
+
+        if last <= since or len(chunk) < 720:
+            break
+        since = last
+
+    bars.sort(key=lambda b: b.timestamp)
+    logger.info("Kraken fallback: {} velas descargadas", len(bars))
+    return bars
+
+
+def _merge_bars(primary: list[OHLCVBar], supplement: list[OHLCVBar]) -> list[OHLCVBar]:
+    """Une dos listas de barras, deduplica por timestamp y ordena cronologicamente."""
+    seen: set[int] = {b.timestamp for b in primary}
+    merged = primary + [b for b in supplement if b.timestamp not in seen]
+    merged.sort(key=lambda b: b.timestamp)
+    return merged
+
+
 def fetch_historical_bars(
     symbol: str,
     bar: str,
@@ -835,5 +941,25 @@ def fetch_historical_bars(
     if not bars:
         logger.warning("OKX no devolvio datos para {}/{} — intentando Binance fallback", symbol, bar)
         bars = _fetch_binance_bars(symbol, bar, from_dt, to_dt, on_page)
+
+    # Rellenar gap al inicio con Kraken si los datos no llegan hasta from_dt
+    from datetime import timezone as _tz
+    _bar_ms = {
+        "1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+        "1H": 3_600_000, "4H": 14_400_000, "1D": 86_400_000,
+    }
+    _from_ms    = int(from_dt.timestamp() * 1000)
+    _threshold  = _bar_ms.get(bar, 3_600_000) * 2
+    _has_gap    = not bars or (bars[0].timestamp - _from_ms) > _threshold
+
+    if _has_gap:
+        _gap_end = (
+            datetime.fromtimestamp(bars[0].timestamp / 1000, tz=_tz.utc)
+            if bars else to_dt
+        )
+        logger.info("Gap detectado antes de {} — intentando Kraken para rellenar", _gap_end.date())
+        kraken_bars = _fetch_kraken_bars(symbol, bar, from_dt, _gap_end, on_page)
+        if kraken_bars:
+            bars = _merge_bars(bars, kraken_bars)
 
     return bars
