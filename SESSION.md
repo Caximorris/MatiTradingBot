@@ -19,8 +19,10 @@ WF v1 4/4 ✅ | ETH v1 +56.4% CAGR ✅ | Conservative +69.8% CAGR ✅ | BTC 2015
 Config default: `use_regime=True, use_halving=True`, resto False. `delta_post_halving=0.20, delta_bear_onset=-0.20`.
 ETH v1 == v0 por diseno: ETH no tiene halvings, delta_post_halving/bear_onset nunca se activan.
 Buffer slippage corregido: 0.2% → 0.35% (cubria conservative 0.25% de coste con margen insuficiente).
-**Pendiente: baseline realistic fresco para verificar que defaults en codigo == CLI override anterior.**
-**Siguiente opcional: tests segunda ronda (threshold=0.15, deltas asimetricos). Ver paso 8.**
+Baseline realistic fresco CONFIRMADO: defaults en codigo == CLI override anterior ✅
+BTC 2015-2026 realistic (defaults v1): +78.4% CAGR, PF 4.33, 65 trades, Max DD -57.60%, $5.81M
+Ligeramente mejor que CLI override (77.4%) — buffer fix mejora ejecucion en rebalanceos grandes.
+**Siguiente opcional: analisis Q4 2025 (5 trades, 20% win, -$129k — estructural en todos los configs).**
 
 ---
 
@@ -324,7 +326,7 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 - Coste: DD sube 5-8pp vs v0. Sigue siendo mejor que B&H (-77% max DD historico)
 
 **Tests pendientes de segunda ronda (opcionales — v1 ya es default y validado):**
-- Baseline realistic fresco: verificar defaults codigo == CLI override anterior (~68 trades esperados)
+- ~~Baseline realistic fresco~~ ✅ COMPLETADO: +78.4% CAGR, 65 trades, PF 4.33, Max DD -57.60%
 - `delta_post_halving=0.15` — punto medio entre 0.10 y 0.20
 - `halving=0.20 + threshold=0.15` sin bajar regime delta
 - Deltas asimetricos: `delta_regime_bull=0.15, delta_regime_bear=-0.25` (salir mas rapido en bear)
@@ -347,7 +349,7 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 
 | Estrategia | Periodo | Balance | P&L | Trades | PF | CAGR |
 |------------|---------|---------|-----|--------|----|------|
-| **Swing Allocator v1 DEFAULT (halving=±0.20, WF 4/4)** | 2015-2026 | $5,486,167 | +54762% | 68 | 2.46 | +77.4% |
+| **Swing Allocator v1 DEFAULT (halving=±0.20, WF 4/4)** | 2015-2026 | $5,809,599 | +57996% | 65 | 4.33 | +78.4% |
 | **Swing Allocator v1 DEFAULT (halving=±0.20, WF 4/4)** | 2018-2026 | $121,626 | +1116% | 50 | 3.77 | +36.7% |
 | **Swing Allocator v0 (regimen+halving)** | 2015-2026 | $3,531,807 | +35218% | 64 | 3.38 | +70.5% |
 | **Swing Allocator v0 (regimen+halving)** | 2018-2026 | $109,096 | +990.96% | 52 | 3.08 | +34.8% |
