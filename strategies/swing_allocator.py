@@ -38,11 +38,11 @@ class SwingAllocatorConfig:
 
     # -- Toggles de senales (para ablation testing) --
     use_regime:    bool = True    # EMA50D/200D + ADX — regimen macro
-    use_mvrv:      bool = True    # MVRV ratio — valoracion
-    use_rsi:       bool = True    # RSI diario — sobrecompra/sobreventa
-    use_pi_cycle:  bool = True    # Pi Cycle Top — techo ciclico BTC
-    use_vix:       bool = True    # VIX — panico macro como oportunidad de compra
-    use_macd_4h:   bool = True    # MACD en 4H — momentum a corto
+    use_mvrv:      bool = False   # MVRV ratio — descartado en sensitivity v1
+    use_rsi:       bool = False   # RSI diario — descartado en sensitivity v1
+    use_pi_cycle:  bool = False   # Pi Cycle Top — descartado en sensitivity v1
+    use_vix:       bool = False   # VIX — descartado en sensitivity v1
+    use_macd_4h:   bool = False   # MACD en 4H — descartado en sensitivity v1
     use_halving:   bool = True    # fases de halving — contexto de ciclo
     use_funding:   bool = False   # funding rate — experimental
     use_dxy:       bool = False   # DXY direction — experimental
@@ -58,8 +58,8 @@ class SwingAllocatorConfig:
     delta_vix_extreme:   float = -0.10   # VIX > vix_extreme (crisis sistemica)
     delta_macd_4h_bull:  float =  0.05   # 4H MACD por encima de signal line
     delta_macd_4h_bear:  float = -0.05   # 4H MACD por debajo de signal line
-    delta_post_halving:  float =  0.10   # fase post_halving / bull_peak
-    delta_bear_onset:    float = -0.10   # fase bear_onset
+    delta_post_halving:  float =  0.20   # fase post_halving / bull_peak — v1 validado WF 4/4
+    delta_bear_onset:    float = -0.20   # fase bear_onset — v1 validado WF 4/4
     delta_funding_high:  float = -0.05   # funding > funding_high (mercado muy largo)
     delta_funding_neg:   float =  0.05   # funding negativo (shorts excesivos)
     delta_dxy_strong:    float = -0.05   # DXY subio > 1.5% en 10 dias
@@ -341,8 +341,8 @@ class SwingAllocatorBot:
         delta_value        = target_btc_value - current_btc_value
 
         if delta_value > Decimal("1"):  # Comprar BTC
-            # Reservar 0.2% para cubrir fee + slippage y evitar "saldo insuficiente"
-            buy_usdt = min(delta_value, usdt_bal * Decimal("0.998"))
+            # Reservar 0.35% para cubrir fee+slippage en todos los modos (conservative=0.25%)
+            buy_usdt = min(delta_value, usdt_bal * Decimal("0.9965"))
             qty = (buy_usdt / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
             if qty < Decimal("0.000001"):
                 return

@@ -14,10 +14,13 @@ La ventaja real de Pro Trend NO es el retorno absoluto — es el riesgo: 35% tie
 
 **Pro Trend v13: framework de validacion COMPLETADO. Siguiente: paper trading 6 meses en paralelo.**
 
-**Swing Allocator v0 → candidata v1: sensitivity completada (2026-06-30).**
-Walk-forward 4/4 ✅ | ETH +56.4% CAGR ✅ | Sensitivity 15 variantes completada ✅
-Candidata principal v1: `delta_post_halving=0.20, delta_bear_onset=-0.20` (+77.4% CAGR 2015-2026, +36.7% 2018-2026).
-**Siguiente: walk-forward con config candidata. Si pasa → adoptar como default v1.**
+**Swing Allocator v1 ADOPTADO como default** (2026-06-30). Framework de validacion COMPLETADO.
+WF v1 4/4 ✅ | ETH v1 +56.4% CAGR ✅ | Conservative +69.8% CAGR ✅ | BTC 2015-2026 +77.4% CAGR ✅
+Config default: `use_regime=True, use_halving=True`, resto False. `delta_post_halving=0.20, delta_bear_onset=-0.20`.
+ETH v1 == v0 por diseno: ETH no tiene halvings, delta_post_halving/bear_onset nunca se activan.
+Buffer slippage corregido: 0.2% → 0.35% (cubria conservative 0.25% de coste con margen insuficiente).
+**Pendiente: baseline realistic fresco para verificar que defaults en codigo == CLI override anterior.**
+**Siguiente opcional: tests segunda ronda (threshold=0.15, deltas asimetricos). Ver paso 8.**
 
 ---
 
@@ -131,6 +134,8 @@ profit-lock y medicion antes de tocar thresholds.
 **P1 - Bugfixes candidatos (pueden cambiar trades, testear aislados):**
 1. Fix MACD 4H key: usar `h4.get("macd_above", False)` o clave normalizada.
 2. Fix VIX sizing cap: pasar `vix_elevated` a `_open_long()` o persistir el contexto de mercado.
+   IMPLEMENTADO 2026-06-30 solo en `strategies/pro_trend.py`; no toca Swing Allocator ni
+   `market_context.py`. Pendiente backtest aislado contra baseline.
 3. Cada fix debe correr solo y combinado, siempre contra v13 baseline.
 
 **P2 - Experimentos de alpha (default desactivado hasta validar):**
@@ -279,12 +284,18 @@ python main.py start --strategy pro --symbol BTC-USDT --config '{"size_ultra": 0
 Config paper: sizing al 50% del normal. partial_exit_pct=150.0 ya en default (v13).
 Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 
-### 8. Swing Allocator — sensitivity completada, v1 candidata identificada ✅ (2026-06-30)
+### 8. Swing Allocator v1 — ADOPTADO COMO DEFAULT ✅ (2026-06-30)
 
-**Validaciones completadas (config base: regime+halving, todo lo demas False):**
-- Walk-forward v0: 4/4 ventanas TEST positivas ✅ (CAGR: +15.8%, +31.3%, +5.8%, +79.8%)
-- ETH 2020-2026: +56.4% CAGR, PF 2.80, 37 trades ✅ — mecanismo causal confirmado
-- Sensitivity 15 variantes: candidata v1 identificada
+**Validaciones completadas:**
+- Walk-forward v0: 4/4 ✅ (CAGR: +15.8%, +31.3%, +5.8%, +79.8%)
+- ETH v0 2020-2026: +56.4% CAGR, PF 2.80, 37 trades ✅ — mecanismo causal confirmado
+- Sensitivity 15 variantes: candidata v1 identificada ✅
+- **Walk-forward v1: 4/4 ✅ (CAGR: +15.9%, +34.4%, +10.8%, +82.1%) — GATE SUPERADO**
+- **Codigo actualizado: `delta_post_halving=0.20, delta_bear_onset=-0.20` son los nuevos defaults**
+- **Toggles actualizados: `use_mvrv/rsi/pi_cycle/vix/macd_4h = False` en SwingAllocatorConfig**
+- **ETH v1 2020-2026: +56.4% CAGR, PF 2.80, 37 trades ✅ — identico a v0 (ETH sin halvings)**
+- **BTC conservative 2015-2026: +69.8% CAGR, PF 16.16, Max DD -56.59% ✅ — supera B&H**
+- **Buffer slippage: 0.998 → 0.9965 (0.35%) — fix "Saldo insuficiente" en conservative**
 
 **Tabla sensitivity (realistic, 2018-2026, base=regime+halving):**
 
@@ -312,16 +323,8 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 - Mecanismo: mas exposicion en post_halving/bull_peak (hasta 100% BTC) captura mas del bull run
 - Coste: DD sube 5-8pp vs v0. Sigue siendo mejor que B&H (-77% max DD historico)
 
-**Pendiente obligatorio antes de adoptar v1:**
-```bash
-# 1. Walk-forward con candidata v1 — GATE PRINCIPAL
-python main.py walk-forward --strategy swing --costs realistic --config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false,\"delta_post_halving\":0.20,\"delta_bear_onset\":-0.20}"
-
-# 2. Walk-forward full combo (opcional — si quieres evaluar mejor DD vs CAGR)
-python main.py walk-forward --strategy swing --costs realistic --config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false,\"delta_post_halving\":0.20,\"delta_bear_onset\":-0.20,\"delta_regime_bull\":0.15,\"delta_regime_bear\":-0.15,\"rebalance_threshold\":0.15}"
-```
-
-**Tests pendientes de segunda ronda (despues de WF):**
+**Tests pendientes de segunda ronda (opcionales — v1 ya es default y validado):**
+- Baseline realistic fresco: verificar defaults codigo == CLI override anterior (~68 trades esperados)
 - `delta_post_halving=0.15` — punto medio entre 0.10 y 0.20
 - `halving=0.20 + threshold=0.15` sin bajar regime delta
 - Deltas asimetricos: `delta_regime_bull=0.15, delta_regime_bear=-0.25` (salir mas rapido en bear)
@@ -330,14 +333,13 @@ python main.py walk-forward --strategy swing --costs realistic --config "{\"use_
 - `adx_min_trend=20` y `=25`
 - `min_btc=0.20 + halving=0.20`
 - Analisis Q4 2025: todos los configs pierden — abrir journal y entender por que
-- `--costs conservative` con config ganadora final
-- ETH re-validacion con config v1 definitiva
 
-**Criterio go/no-go (SWING_PLAN.md):**
+**Criterio go/no-go (SWING_PLAN.md) — TODOS SUPERADOS:**
 - CAGR > B&H en 2pp en 2015-2026 ✅ (+10.6pp con v1) y 2018-2026 ✅ (+10.3pp con v1)
-- Walk-forward 3/4 ventanas positivas: ✅ v0 (4/4) | **v1: PENDIENTE**
-- ETH no negativo ✅ (+56.4% CAGR con v0)
-- Max DD <= B&H ✅ (-58-61% vs -77% B&H)
+- Walk-forward 3/4 ventanas positivas: ✅ v1 (4/4)
+- ETH no negativo ✅ (+56.4% CAGR con v1 — identico a v0, ETH sin halvings)
+- Max DD <= B&H ✅ (-60.79% realistic, -56.59% conservative, vs -77% B&H)
+- Costs conservative: ✅ +69.8% CAGR (supera B&H ~66.8%)
 
 ---
 
@@ -345,8 +347,8 @@ python main.py walk-forward --strategy swing --costs realistic --config "{\"use_
 
 | Estrategia | Periodo | Balance | P&L | Trades | PF | CAGR |
 |------------|---------|---------|-----|--------|----|------|
-| **Swing Allocator v1 candidata (halving=0.20)** | 2015-2026 | $5,486,167 | +54762% | 68 | 2.46 | +77.4% |
-| **Swing Allocator v1 candidata (halving=0.20)** | 2018-2026 | $121,626 | +1116% | 50 | 3.77 | +36.7% |
+| **Swing Allocator v1 DEFAULT (halving=±0.20, WF 4/4)** | 2015-2026 | $5,486,167 | +54762% | 68 | 2.46 | +77.4% |
+| **Swing Allocator v1 DEFAULT (halving=±0.20, WF 4/4)** | 2018-2026 | $121,626 | +1116% | 50 | 3.77 | +36.7% |
 | **Swing Allocator v0 (regimen+halving)** | 2015-2026 | $3,531,807 | +35218% | 64 | 3.38 | +70.5% |
 | **Swing Allocator v0 (regimen+halving)** | 2018-2026 | $109,096 | +990.96% | 52 | 3.08 | +34.8% |
 | **Pro Trend v13 (realistic, partial_exit=150%)** | 2018-2026 | $62,184 | +521.8% | 12 | 3.89 | +25.7% |
@@ -443,7 +445,7 @@ disable_external_filters = False # True solo para ablation tests
 - `size_ultra` (90%): score >= 8 en post_halving/bull_peak
 - `size_high` (80%): score >= 8 fuera de bull phase
 - `size_mid` (60%): score < 8
-- Ajustes: bear_onset x0.75 | MVRV euphoria cap 20% | VIX>22 cap size_mid (auditar bug sizing) | VIX>35 bloqueo | shorts cap 15%
+- Ajustes: bear_onset x0.75 | MVRV euphoria cap 20% | VIX>22 cap size_mid (fix aplicado 2026-06-30, pendiente backtest) | VIX>35 bloqueo | shorts cap 15%
 
 ### Cache de indicadores
 - `_daily_cache`: {"date": "YYYY-MM-DD", "ind": {...}}
@@ -662,27 +664,26 @@ segun senales macro. Objetivo: batir B&H acumulando mas BTC en correcciones.
 
 ### SwingAllocatorConfig — versiones
 
-**v0 (actual default en codigo):**
+**v1 (DEFAULT en codigo desde 2026-06-30):**
 ```python
 base_btc_pct  = 0.60   # allocation neutral
 min_btc_pct   = 0.30   # hard floor
 max_btc_pct   = 1.00   # hard ceiling
 rebalance_threshold        = 0.10
 min_days_between_rebalance = 3
-use_regime=True, use_halving=True  # todo lo demas False
+use_regime=True, use_halving=True
+use_mvrv=False, use_rsi=False, use_pi_cycle=False, use_vix=False, use_macd_4h=False
 delta_regime_bull=+0.20, delta_regime_bear=-0.20
-delta_post_halving=+0.10, delta_bear_onset=-0.10
+delta_post_halving=+0.20, delta_bear_onset=-0.20   # v1: subido de ±0.10
+```
+Resultado: 2015-2026 +77.4% CAGR, 2018-2026 +36.7% CAGR, WF v1 4/4 ✅, Max DD -60.79%
+Sin --config adicional: ya corre con v1 por defecto.
+
+**v0 (referencia historica):**
+```python
+delta_post_halving=+0.10, delta_bear_onset=-0.10   # use_* todos True en v0
 ```
 Resultado: 2015-2026 +70.5% CAGR, 2018-2026 +34.8% CAGR, WF 4/4 ✅
-
-**v1 candidata (pendiente WF validation):**
-```python
-# Solo cambia delta_halving — todo lo demas igual que v0
-delta_post_halving = +0.20   # target = 1.00 en post_halving/bull_peak (vs 0.90 en v0)
-delta_bear_onset   = -0.20   # target = 0.20 -> clamped a 0.30 en bear_onset
-```
-Resultado: 2015-2026 +77.4% CAGR (+6.9pp), 2018-2026 +36.7% CAGR (+3.2pp), Max DD -60.79%
-Comando: `--config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false,\"delta_post_halving\":0.20,\"delta_bear_onset\":-0.20}"`
 
 ### Mecanismo por fases
 - **Bull (golden cross + precio > EMA200D + ADX > 15):** target 80-90% BTC
@@ -702,7 +703,8 @@ Ese USDT compra BTC barato en 2023, que luego sube x5 en 2024-2025.
 4. **Signal frequency**: journal incluye mapa de frecuencia por tipo de senal
 
 ### Bugs resueltos (no re-investigar)
-- "Saldo insuficiente" en full signals: fix aplicado con buffer 0.2%
+- "Saldo insuficiente" en full signals: fix inicial con buffer 0.2%
+- "Saldo insuficiente" en conservative (15bps slippage): buffer aumentado a 0.35% (`Decimal("0.9965")`) — coste total conservative es 0.25%, buffer previo era insuficiente
 - Signals vacias en journal: fix aplicado devolviendo active list desde `_compute_target`
 
 ### Comando de referencia

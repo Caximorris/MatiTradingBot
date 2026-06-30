@@ -15,7 +15,7 @@ Archivos clave:
 - `main.py` — CLI typer (todos los comandos)
 - `core/backtest.py` — BacktestClient + BacktestEngine
 - `strategies/pro_trend.py` — estrategia principal (NO modificar hasta completar paper trading)
-- `strategies/swing_allocator.py` — Swing Allocator v0 (regimen+halving). NO tocar pro_trend.py
+- `strategies/swing_allocator.py` — Swing Allocator v1 (regimen+halving, delta_halving=±0.20). NO tocar pro_trend.py
 - `strategies/indicators.py` — UNICO modulo de indicadores activo (`data/indicators.py` es el antiguo, ignorar)
 - `strategies/macro_context.py` — MVRV + halving (CoinMetrics API)
 - `strategies/market_context.py` — DXY + NASDAQ + VIX (Yahoo Finance)
@@ -77,12 +77,12 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
     cuando la ganancia supera 150%. Confirmado por backtest: +1pp CAGR, mejor PF, DD neutro.
     Para desactivar: `--config '{"partial_exit_pct": 0.0}'`.
 
-15. **Swing Allocator v0 validado, v1 candidata identificada** (2026-06-30).
-    Config base ganadora: `use_regime=True, use_halving=True`, todo lo demas False.
-    WF 4/4 ✅ | ETH +56.4% CAGR ✅ | Sensitivity 15 variantes completada.
-    Candidata v1: `delta_post_halving=0.20, delta_bear_onset=-0.20` (+77.4% CAGR 2015-2026).
-    MVRV, Pi Cycle, RSI, VIX, MACD 4H: descartados definitivamente.
-    Siguiente: walk-forward con config v1. Ver SESSION.md paso 8 y seccion SWING ALLOCATOR.
+15. **Swing Allocator v1 adoptado como default** (2026-06-30).
+    Config: `use_regime=True, use_halving=True`, todo lo demas False.
+    `delta_post_halving=0.20, delta_bear_onset=-0.20` — ya en SwingAllocatorConfig por defecto.
+    WF v1 4/4 ✅ | ETH +56.4% CAGR ✅ | Sensitivity 15 variantes ✅ | 2015-2026 +77.4% CAGR.
+    MVRV, Pi Cycle, RSI, VIX, MACD 4H: descartados definitivamente (use_* = False en defaults).
+    Siguiente: tests segunda ronda (threshold=0.15, deltas asimetricos, ETH re-validacion v1). Ver SESSION.md paso 8.
 
 11. **Al crear nuevos indicadores**, añadirlos a `strategies/indicators.py`.
 

@@ -532,7 +532,8 @@ Orden recomendado:
    - MACD 4H gate: `h4.get("h4_macd_above", True)` parece clave equivocada; el contexto 4H devuelve
      `macd_above`. Probar fix aislado.
    - VIX elevated cap: el sizing log usa `vix_elevated`, pero `_open_long()` recalcula sizing sin ese
-     parametro. Probar fix aislado.
+     parametro. IMPLEMENTADO 2026-06-30 solo en Pro Trend; pendiente backtest aislado. No toca
+     Swing Allocator ni `market_context.py`.
 
 3. **P2 Experimentos de mejora**
    - Profit-lock o break-even tras MFE +10/+15/+20%.
