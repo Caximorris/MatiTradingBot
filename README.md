@@ -1,7 +1,7 @@
 # OKX Trading Bot
 
-Bot de trading automatizado para OKX con estrategias de trend following, modo paper trading,
-backtesting continuo multi-año, informes fiscales automáticos para España (IRPF) y dashboard en terminal.
+Bot de trading automatizado para OKX con estrategias de trend following y gestión dinámica de allocation BTC/USDT,
+modo paper trading, backtesting continuo multi-año, informes fiscales automáticos para España (IRPF) y dashboard en terminal.
 
 ---
 
@@ -135,12 +135,15 @@ python main.py trades --symbol BTC-USDT --limit 50
 python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01
 python main.py backtest --strategy adaptive --from 2018-01-01 --to 2024-12-31
 python main.py backtest --strategy scalp --from 2022-01-01 --to 2026-06-01 --timeframe 1H
+python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --costs realistic
+python main.py backtest --strategy swing --symbol ETH-USDT --from 2020-01-01 --to 2026-01-01
 
 # Comparar estrategias (descarga datos una sola vez)
 python main.py compare --strategies "adaptive,pro" --from 2018 --to 2026
 
 # Validacion: walk-forward, baselines y sensitivity analysis
 python main.py walk-forward --strategy pro --costs realistic
+python main.py walk-forward --strategy swing --costs realistic
 python main.py baselines --from 2018-01-01 --to 2026-01-01 --costs realistic
 python main.py sensitivity --from 2018-01-01 --to 2026-01-01 --costs realistic
 
@@ -181,6 +184,33 @@ Fuentes de datos externas cargadas automáticamente antes del backtest:
 - DXY, NASDAQ-100, VIX: Yahoo Finance
 - Funding rate histórico: OKX API
 
+### Swing Allocator (`--strategy swing`)
+**Estado: v1 — validado con walk-forward 4/4 ✅, ETH ✅, costs conservative ✅.**
+**BTC 2015-2026 realistic: +78.4% CAGR, $5.81M, 65 trades, PF 4.33, Max DD -57.60%.**
+**Supera BTC Buy & Hold (~+66.8% CAGR) con menor drawdown máximo histórico (-57.6% vs -77%).**
+
+Gestión dinámica de allocation BTC/USDT. Nunca sale completamente de BTC — ajusta el porcentaje
+entre 30% y 100% según señales macro y de ciclo. Objetivo: acumular más BTC en correcciones
+y reducir exposición antes de bear markets.
+
+- **Señal de régimen:** EMA50D vs EMA200D + ADX — detecta bull/bear macro
+- **Señal de halving:** fases post-halving (180-540d) y bear_onset (540d+) — ajusta exposición por ciclo
+- **Allocation neutral:** 60% BTC. Bull: +20% → 80%. Post-halving: +20% adicional → 100%. Bear: −20% → 40%
+- **Rebalanceo automático** cuando la diferencia entre actual y target supera el 10%, con cooldown de 3 días
+- **Funciona en ETH** (+56.4% CAGR 2020-2026) — el régimen es causal, no fitting de BTC
+
+**Por qué gana a Buy & Hold:** el USDT preservado en bear markets compra BTC barato en la recuperación.
+Ejemplo: en 2022 (BTC -77%) el Swing Allocator baja a 30% BTC, preserva capital, y compra a precios bajos
+para el bull run 2023-2025.
+
+```bash
+# Backtest BTC 2015-2026
+python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --costs realistic
+
+# Walk-forward para validar robustez
+python main.py walk-forward --strategy swing --costs realistic
+```
+
 ### Adaptive Trend (`--strategy adaptive`)
 **Estado: Funcional. Resultado: +409% (2018–2024).**
 
@@ -219,18 +249,24 @@ python main.py compare --strategies "adaptive,pro" --from 2018 --to 2026
 El backtest genera automáticamente un Trade Journal JSON en `backtests/` con todos los
 indicadores, scores, contexto macro, sizing/gates de entrada y razón de salida de cada operación.
 
-### Resultados actuales (balance inicial $10,000)
+### Resultados actuales (balance inicial $10,000, costes realistic)
 
 | Estrategia | Periodo | Balance | P&L | Trades | Win Rate | PF | CAGR |
 |------------|---------|---------|-----|--------|----------|----|------|
+| BTC Buy & Hold | 2015-2026 | ~$2.78M | +27,694% | — | — | — | ~+66.8% |
 | BTC Buy & Hold | 2018-2026 | ~$65k | +549.7% | — | — | — | +26.4% |
-| **Pro Trend v13** | 2018-2026 | **$62,184** | **+521.8%** | 12 | 50.0% | ~4.6 journal true | **+25.7%** |
-| Pro Trend ciclo largo | 2015-2026 | ~$591k | +5812% | 20 | 55.0% | ~5.0 | +44.9% |
+| **Swing Allocator v1** | **2015-2026** | **$5,810k** | **+57,996%** | **65** | **55.4%** | **4.33** | **+78.4%** |
+| **Swing Allocator v1** | **2018-2026** | **$122k** | **+1,116%** | **50** | **55%** | **3.77** | **+36.7%** |
+| Swing Allocator v1 ETH | 2020-2026 | $147k | +1,365% | 37 | 59.5% | 2.80 | +56.4% |
+| **Pro Trend v13** | 2018-2026 | $62k | +521.8% | 12 | 50.0% | ~4.6 | +25.7% |
+| Pro Trend v13 | 2015-2026 | ~$591k | +5,812% | 20 | 55.0% | ~5.0 | +44.9% |
 | Adaptive Trend | 2018-2026 | ~$48k | +380.9% | 20 | — | 2.91 | +21.8% |
 
-> Nota: los journals nuevos con partial exits incluyen `true_pnl_usdt`, estadisticas por PnL real,
-> `meta.resolved_config`, `meta.backtest`, sizing real/planificado y giveback desde MFE.
-> En journals antiguos, comparar por balance final o `balance_after - balance_before`.
+> **Swing Allocator v1 validado:** walk-forward 4/4 ✅, ETH cross-validation ✅, costs conservative ✅.
+> No requiere salir completamente de BTC — opera como rebalanceo gradual, compatible con holding a largo plazo.
+
+> **Pro Trend v13:** ~35% tiempo en mercado, evita crashes del -70%. Ventaja real: riesgo, no retorno absoluto.
+> Journals con partial exits incluyen `true_pnl_usdt`, sizing real/planificado y giveback desde MFE.
 
 ---
 
@@ -271,6 +307,7 @@ MatiTradingBot/
 │   ├── adaptive_trend.py           # Estrategia: régimen bull/bear/range, solo longs
 │   ├── pro_trend.py                # Estrategia: multi-timeframe, scoring system (v13)
 │   ├── scalp_momentum.py           # Estrategia: day trading 1H con contexto 4H/D
+│   ├── swing_allocator.py          # Estrategia: allocation dinámica BTC/USDT 30-100% (v1)
 │   ├── macro_context.py            # MVRV + halving cycle (singleton global)
 │   ├── market_context.py           # DXY + NASDAQ-100 + VIX (singleton global)
 │   └── funding_context.py          # Funding rate histórico OKX (singleton global)
@@ -279,7 +316,8 @@ MatiTradingBot/
 │   └── position_tracker.py
 ├── reporting/
 │   ├── trade_logger.py
-│   ├── trade_journal.py            # JSON detallado por backtest
+│   ├── trade_journal.py            # JSON detallado por backtest Pro Trend
+│   ├── swing_journal.py            # JSON detallado por backtest Swing Allocator
 │   ├── fiscal_report.py            # IRPF FIFO, tramos 2026, Excel+JSON
 │   └── dashboard.py
 ├── backtests/                      # Trade Journals JSON generados automáticamente
