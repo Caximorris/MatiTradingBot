@@ -22,7 +22,8 @@ Buffer slippage corregido: 0.2% → 0.35% (cubria conservative 0.25% de coste co
 Baseline realistic fresco CONFIRMADO: defaults en codigo == CLI override anterior ✅
 BTC 2015-2026 realistic (defaults v1): +78.4% CAGR, PF 4.33, 65 trades, Max DD -57.60%, $5.81M
 Ligeramente mejor que CLI override (77.4%) — buffer fix mejora ejecucion en rebalanceos grandes.
-**Siguiente opcional: analisis Q4 2025 (5 trades, 20% win, -$129k — estructural en todos los configs).**
+**Swing Allocator v1: framework de validacion 100% COMPLETADO. Lista para operar.**
+Proximos tests pendientes (segunda ronda): ver paso 8, seccion "Q4 2025 mitigacion".
 
 ---
 
@@ -327,14 +328,34 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 
 **Tests pendientes de segunda ronda (opcionales — v1 ya es default y validado):**
 - ~~Baseline realistic fresco~~ ✅ COMPLETADO: +78.4% CAGR, 65 trades, PF 4.33, Max DD -57.60%
+- ~~Analisis Q4 2025~~ ✅ COMPLETADO: causa identificada — ver seccion "Q4 2025 analisis" abajo
+- ~~`min_days_between_rebalance=7`~~ ✅ DESCARTADO: empeora Q4 2025 (-10.4% vs -3.3%) y pierde $190k vs v1
 - `delta_post_halving=0.15` — punto medio entre 0.10 y 0.20
 - `halving=0.20 + threshold=0.15` sin bajar regime delta
 - Deltas asimetricos: `delta_regime_bull=0.15, delta_regime_bear=-0.25` (salir mas rapido en bear)
 - `base_btc_pct=0.50` y `base_btc_pct=0.70`
-- `min_days_between_rebalance=1` y `=7`
 - `adx_min_trend=20` y `=25`
 - `min_btc=0.20 + halving=0.20`
-- Analisis Q4 2025: todos los configs pierden — abrir journal y entender por que
+
+**Q4 2025 mitigacion — PENDIENTE (proxima sesion):**
+Causa: conflicto `halving_bear_onset` (-0.20) vs `regime_bull` (+0.20) con BTC lateral $103-112k.
+EMA50D/200D cruzaba en ambas direcciones cada 3-5 dias → ping-pong 60%↔40% BTC con fees.
+Cooldown=7d descartado: no resuelve el conflicto de senales, empeora la perdida (-$280k vs -$129k).
+Dos opciones a testear:
+1. **Cap target con halving_bear_onset activo:** cuando `bear_onset` esta activo, `regime_bull` no puede subir el target por encima de `base_btc_pct` (0.60). Evita el ping-pong sin cambiar otros periodos.
+   Comando: requiere cambio de codigo en `_compute_target()` — implementar antes del test.
+2. **ADX minimo para regime signal:** si ADX < 20 (mercado lateral), `regime_bull`/`regime_bear` no mueven el target. Ataca el problema en origen.
+   Comando: requiere cambio de codigo o nuevo parametro `adx_min_regime` — implementar antes del test.
+
+**Q4 2025 analisis (2026-06-30) — causa identificada, mitigacion pendiente:**
+El 12-oct-2025 son ~540 dias desde el halving de abril-2024: `halving_bear_onset` activa (-0.20).
+Pero `regime_bull` (EMA50D > EMA200D) tambien esta activo (+0.20). BTC lateral $103-112k.
+Resultado: EMA50D cruzaba EMA200D en ambas direcciones cada 3-5 dias → 8 rebalanceos en 3 semanas:
+  compra a ~$109-111k, vende a ~$103-108k repetidamente. -$129k sobre portfolio de $6.8M (-1.9%).
+Peor swap: compra $110,566 → vende $102,982 (-7%) en 3 dias.
+Raiz: `min_days_between_rebalance=3` es exactamente la frecuencia del EMA crossover oscillation.
+Cooldown=7d descartado — empeora a -$280k (-10.4%) porque el sistema no puede salir rapido cuando cambias senales.
+Mitigacion pendiente: cap target en bear_onset o ADX minimo para regime. Ver "Q4 2025 mitigacion" arriba.
 
 **Criterio go/no-go (SWING_PLAN.md) — TODOS SUPERADOS:**
 - CAGR > B&H en 2pp en 2015-2026 ✅ (+10.6pp con v1) y 2018-2026 ✅ (+10.3pp con v1)
