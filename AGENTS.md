@@ -1,4 +1,4 @@
-# MatiTradingBot — CLAUDE.md
+# MatiTradingBot — AGENTS.md
 
 Bot de trading automatizado para OKX. Python 3.12+. Windows 10, PowerShell.
 Leer este archivo Y `SESSION.md` antes de tocar cualquier archivo.
@@ -14,14 +14,11 @@ Directorio raiz: `C:\Users\Matias\Documents\Mati\matiproyects\MatiTradingBot\`
 Archivos clave:
 - `main.py` — CLI typer (todos los comandos)
 - `core/backtest.py` — BacktestClient + BacktestEngine
-- `strategies/pro_trend.py` — estrategia principal (NO modificar hasta completar paper trading)
-- `strategies/swing_allocator.py` — Swing Allocator v0 (regimen+halving). NO tocar pro_trend.py
+- `strategies/pro_trend.py` — estrategia principal
 - `strategies/indicators.py` — UNICO modulo de indicadores activo (`data/indicators.py` es el antiguo, ignorar)
 - `strategies/macro_context.py` — MVRV + halving (CoinMetrics API)
 - `strategies/market_context.py` — DXY + NASDAQ + VIX (Yahoo Finance)
 - `strategies/funding_context.py` — funding rate historico OKX
-- `reporting/swing_journal.py` — journal de rebalanceos (Swing Allocator)
-- `SWING_PLAN.md` — diseño completo y plan de validacion del Swing Allocator
 
 Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/signal_follower.py`
 
@@ -44,7 +41,7 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 
 1. **No ejecutar `python main.py ...` automaticamente.** Mostrar el comando exacto y dejar que el usuario lo corra.
 
-2. **No tocar parametros de Pro Trend** hasta completar paper trading 6 meses. Todo el framework de validacion completado (baselines, ETH, sensitivity, MAE/MFE/R, partial_exit, BTC 2015-2026). Version actual: v13 con partial_exit_pct=150.0 por defecto. Siguiente: paper trading.
+2. **No tocar parametros de Pro Trend** hasta completar paper trading 6 meses. Baselines, ETH y sensitivity ya completados. Proximo: MAE/MFE/R-multiplo en journal, luego paper.
 
 3. **Lookahead fixes aplicados — no revertir:**
    - `macro_context._lookup`: offset empieza en 1 (MVRV = dia anterior)
@@ -70,19 +67,10 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 
 10. **walk-forward y baselines** corren 8 y 5 sub-backtests respectivamente. ~40-60 min total. Normal.
 
-13. **`adx_min_entry` en ProTrendConfig**: en `from_dict()` y `to_dict()`. Bug corregido 2026-06-29.
-    Sensitivity ADX re-corrido y confirmado: adx=15 es correcto.
-
-14. **`partial_exit_pct=150.0` es el default desde v13** (2026-06-30). Vende 33% de la posicion
-    cuando la ganancia supera 150%. Confirmado por backtest: +1pp CAGR, mejor PF, DD neutro.
-    Para desactivar: `--config '{"partial_exit_pct": 0.0}'`.
-
-15. **Swing Allocator v0 validado, v1 candidata identificada** (2026-06-30).
-    Config base ganadora: `use_regime=True, use_halving=True`, todo lo demas False.
-    WF 4/4 ✅ | ETH +56.4% CAGR ✅ | Sensitivity 15 variantes completada.
-    Candidata v1: `delta_post_halving=0.20, delta_bear_onset=-0.20` (+77.4% CAGR 2015-2026).
-    MVRV, Pi Cycle, RSI, VIX, MACD 4H: descartados definitivamente.
-    Siguiente: walk-forward con config v1. Ver SESSION.md paso 8 y seccion SWING ALLOCATOR.
+13. **`adx_min_entry` en ProTrendConfig**: existe en el dataclass y en el gate (_g_adx_min),
+    y ahora esta correctamente en `from_dict()` y `to_dict()`. Bug corregido 2026-06-29.
+    Las variantes ADX del sensitivity del 2026-06-28 son invalidas (corrieron todas con 15.0).
+    Re-correr antes de sacar conclusiones sobre el gate ADX.
 
 11. **Al crear nuevos indicadores**, añadirlos a `strategies/indicators.py`.
 

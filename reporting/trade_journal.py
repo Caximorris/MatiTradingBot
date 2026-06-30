@@ -28,14 +28,67 @@ def _serialize(obj):
     return str(obj)
 
 
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _trade_true_pnl(trade: dict) -> float:
+    """PnL real del trade completo, incluyendo partial exits si el balance esta disponible."""
+    close = trade.get("close", {})
+    open_ = trade.get("open", {})
+
+    before = open_.get("balance_usdt_before")
+    after = close.get("balance_usdt_after")
+    if before is not None and after is not None:
+        return _as_float(after) - _as_float(before)
+
+    return _as_float(close.get("pnl_usdt"))
+
+
+def _augment_true_pnl(trade: dict) -> None:
+    """Anade campos de PnL real sin eliminar el PnL del cierre final."""
+    if "close" not in trade:
+        return
+
+    close = trade["close"]
+    true_pnl = _trade_true_pnl(trade)
+    close_pnl = _as_float(close.get("pnl_usdt"))
+    close["true_pnl_usdt"] = round(true_pnl, 2)
+    close["close_pnl_usdt"] = round(close_pnl, 2)
+    close["balance_pnl_adjustment_usdt"] = round(true_pnl - close_pnl, 2)
+
+    invest = _as_float(trade.get("open", {}).get("invest_usdt"))
+    if invest:
+        true_pnl_pct = true_pnl / invest * 100
+        close["true_pnl_pct"] = round(true_pnl_pct, 2)
+
+        mfe_pct = _as_float(close.get("mfe_pct"))
+        close["giveback_pct"] = round(mfe_pct - true_pnl_pct, 2)
+
+    open_price = _as_float(trade.get("open", {}).get("price"))
+    close_price = _as_float(close.get("price"))
+    if open_price > 0 and close_price > 0:
+        close_price_return_pct = (close_price / open_price - 1) * 100
+        close["close_price_return_pct"] = round(close_price_return_pct, 2)
+        close["exit_from_peak_pct"] = round(_as_float(close.get("mfe_pct")) - close_price_return_pct, 2)
+
+    indicators = close.get("indicators", {})
+    if isinstance(indicators, dict):
+        close["partial_exit_triggered"] = bool(indicators.get("partial_exit_triggered", False))
+
+
 def _compute_stats(trades: list[dict]) -> dict:
     """Estadísticas agregadas del journal completo."""
     closed = [t for t in trades if "close" in t]
     if not closed:
         return {}
 
-    pnls      = [t["close"]["pnl_usdt"]      for t in closed if "pnl_usdt"      in t["close"]]
-    pnl_pcts  = [t["close"]["pnl_pct"]        for t in closed if "pnl_pct"        in t["close"]]
+    pnls       = [_as_float(t["close"].get("true_pnl_usdt", t["close"].get("pnl_usdt", 0))) for t in closed]
+    close_pnls = [_as_float(t["close"].get("pnl_usdt", 0)) for t in closed]
+    pnl_pcts   = [_as_float(t["close"].get("true_pnl_pct", t["close"].get("pnl_pct", 0))) for t in closed]
     hold_hrs  = [t["close"]["holding_hours"]   for t in closed if "holding_hours"  in t["close"]]
     maes      = [t["close"]["mae_pct"]         for t in closed if "mae_pct"         in t["close"]]
     mfes      = [t["close"]["mfe_pct"]         for t in closed if "mfe_pct"         in t["close"]]
@@ -54,7 +107,7 @@ def _compute_stats(trades: list[dict]) -> dict:
         s = t.get("side", "unknown")
         by_reason[r]  = by_reason.get(r, 0)  + 1
         by_side[s]    = by_side.get(s, 0)    + 1
-        p = t["close"].get("pnl_usdt", 0)
+        p = _as_float(t["close"].get("true_pnl_usdt", t["close"].get("pnl_usdt", 0)))
         if p > 0:
             win_by_reason[r]  = win_by_reason.get(r, 0)  + 1
         else:
@@ -69,13 +122,19 @@ def _compute_stats(trades: list[dict]) -> dict:
     gross_win  = sum(wins)
     gross_loss = abs(sum(losses))
     pf = round(gross_win / gross_loss, 3) if gross_loss > 0 else 0
+    close_pnl_total = sum(close_pnls)
+    true_pnl_total = sum(pnls)
+    pnl_adjustment = true_pnl_total - close_pnl_total
 
     return {
         "total_trades":          len(closed),
         "winners":               len(wins),
         "losers":                len(losses),
         "win_rate_pct":          round(len(wins) / len(closed) * 100, 2),
-        "total_pnl_usdt":        round(sum(pnls), 2),
+        "total_pnl_usdt":        round(true_pnl_total, 2),
+        "total_close_pnl_usdt":  round(close_pnl_total, 2),
+        "balance_pnl_adjustment_usdt": round(pnl_adjustment, 2),
+        "uses_balance_pnl":      any(abs(p - c) > 0.01 for p, c in zip(pnls, close_pnls)),
         "avg_pnl_usdt":          round(sum(pnls) / len(pnls), 2) if pnls else 0,
         "median_pnl_usdt":       round(sorted(pnls)[len(pnls) // 2], 2) if pnls else 0,
         "avg_pnl_pct":           round(sum(pnl_pcts) / len(pnl_pcts), 2) if pnl_pcts else 0,
@@ -111,6 +170,8 @@ def write_journal(
     output_dir: str = "backtests",
     cost_mode: str = "ideal",
     config_overrides: dict | None = None,
+    resolved_config: dict | None = None,
+    backtest_summary: dict | None = None,
 ) -> str:
     """
     Escribe el journal completo a un archivo JSON.
@@ -123,6 +184,9 @@ def write_journal(
     fn  = f"journal_{strategy_name}_{sym}_{timeframe}_{ts}.json"
     fp  = os.path.join(output_dir, fn)
 
+    for trade in journal:
+        _augment_true_pnl(trade)
+
     closed = [t for t in journal if "close" in t]
 
     output = {
@@ -134,6 +198,8 @@ def write_journal(
             "generated_at":        datetime.now(timezone.utc).isoformat(),
             "cost_mode":           cost_mode,
             "config_overrides":    config_overrides or {},
+            "resolved_config":     _serialize(resolved_config or {}),
+            "backtest":            _serialize(backtest_summary or {}),
             "total_closed_trades": len(closed),
             "open_at_end":         len(journal) - len(closed),
         },

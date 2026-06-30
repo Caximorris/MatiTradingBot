@@ -11,6 +11,32 @@ el resultado backtest y el veredicto. Antes de cambiar cualquier parametro, cons
 
 ---
 
+## REGLAS DE VALIDACION PRO TREND
+
+Estas reglas aplican antes de tocar parametros o promover cambios a default:
+
+1. **Lookahead bias cero.**
+   Usar solo velas cerradas y datos externos disponibles antes del tick: dia anterior para MVRV,
+   sesion anterior para DXY/NDX/VIX, dia completo anterior para funding, semana/4H actual excluidas
+   si estan incompletas.
+
+2. **BTC 2015-2026 es la muestra principal.**
+   Cubre 3 ciclos bull y da mas trades. 2018-2026 sigue siendo benchmark reciente contra B&H,
+   pero no basta para aprobar cambios.
+
+3. **Overfitting control.**
+   No aprobar cambios que solo eliminan 1 trade perdedor o mejoran una ventana corta. Cada cambio
+   debe testearse aislado, con costes realistic, y preferiblemente contra ETH/walk-forward si altera
+   comportamiento de entrada/salida.
+
+4. **v13 es baseline/rollback.**
+   Mantener documentada y reproducible la configuracion v13: `partial_exit_pct=150.0`,
+   `partial_exit_size=0.33`, `entry_score_min=9`, `adx_min_entry=15.0`,
+   `trailing_stop_pct_bull=0.28`, `cooldown_atr_stop_days=30`,
+   `macd_exit_enabled=False`, `allow_shorts=False`. No borrar journals v13.
+
+---
+
 ## PRO TREND
 
 ### v4 — Baseline (ultima version antes de la sesion 2026-06-24)
@@ -460,6 +486,64 @@ python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01
 ```
 
 **Estimacion:** si ADX y MACD no bloquean ninguno de los 6 ganadores, resultado ~$80-85k
+
+---
+
+### v13 — Partial exit default + auditoria de medicion (2026-06-30)
+
+**Estado:** implementado en codigo con `partial_exit_pct=150.0` y `partial_exit_size=0.33`.
+
+**Resultado documentado 2018-2026 realistic:**
+- partial_exit=150: balance $62,184 | +521.84% | 12 trades | PF journal true 4.64
+- referencia sin partial exit: balance $58,051 | +480.51% | 12 trades | PF ~3.64
+- BTC B&H: ~$64,971 | +549.7%
+
+**Resultado documentado 2015-2026 realistic:**
+- Journal `20260629_155853` valida 3 ciclos bull, pero fue generado sin partial exit.
+- Pendiente correr 2015-2026 con default v13 real (`partial_exit_pct=150.0`).
+
+**Auditoria importante:**
+- Los journals con partial exit no deben compararse solo por `statistics.total_pnl_usdt`.
+  `close.pnl_usdt` mide el cierre final de la posicion restante y puede omitir PnL ya realizado
+  en la venta parcial. Para comparar usar balance final o `balance_after - balance_before`.
+- El journal `20260629_153049` con `partial_exit_pct=200.0` muestra balance final $64,158
+  (+541.59%), superior al 150% en retorno bruto, aunque con PF journal true menor (3.69).
+  Revalidar antes de concluir.
+
+**Veredicto v13:**
+- Mantener 150% como default operativo hasta rerun limpio.
+- No cambiar parametros por intuicion: primero arreglar medicion del journal y re-testear 150 vs 200.
+- La ventaja real sigue siendo riesgo/tiempo en mercado; en retorno bruto queda cerca de B&H.
+
+---
+
+## PRO TREND - BACKLOG v14 / TEST QUEUE
+
+Orden recomendado:
+
+1. **P0 Medicion sin cambiar trades**
+   - Journal: calcular `true_pnl_usdt` por balance e incluir PF real cuando hay partial exits. IMPLEMENTADO 2026-06-30.
+   - Journal: incluir `meta.resolved_config`, `meta.backtest`, sizing real/planificado, gates de entrada,
+     contexto macro/mercado/funding y giveback desde MFE. IMPLEMENTADO 2026-06-30.
+   - Journal: registrar partial exits como eventos o sub-operaciones. PENDIENTE opcional.
+   - Backtest log: actualizar mensaje de funding, porque ya usa `funding_context.get_funding_rate_at()`. IMPLEMENTADO 2026-06-30.
+
+2. **P1 Bugfixes candidatos**
+   - MACD 4H gate: `h4.get("h4_macd_above", True)` parece clave equivocada; el contexto 4H devuelve
+     `macd_above`. Probar fix aislado.
+   - VIX elevated cap: el sizing log usa `vix_elevated`, pero `_open_long()` recalcula sizing sin ese
+     parametro. Probar fix aislado.
+
+3. **P2 Experimentos de mejora**
+   - Profit-lock o break-even tras MFE +10/+15/+20%.
+   - Trailing bull grid 0.28/0.30/0.32/0.34 en 2018-2026 y 2015-2026.
+   - ADX como modificador de sizing en vez de gate duro.
+   - MVRV late-bull como de-risk/profit-lock, no solo bloqueo.
+   - BTC core + Pro Trend overlay para competir contra B&H en retorno bruto.
+
+**Criterio de default:** un cambio debe mejorar 2018-2026 y 2015-2026 con costes realistic, sin
+empeorar de forma material MaxDD/PF. Si solo elimina un trade perdedor de muestra pequeña, tratar
+como overfitting hasta validar en ventana larga, ETH o walk-forward.
 
 ---
 

@@ -67,6 +67,8 @@ _STRAT_LABELS = {
     "scalp_momentum": "Scalp Momentum",
     "range": "Range Reversion",
     "range_reversion": "Range Reversion",
+    "swing": "Swing Allocator",
+    "swing_allocator": "Swing Allocator",
 }
 
 # Fecha más antigua disponible en OKX para BTC-USDT
@@ -268,6 +270,8 @@ def _run_backtest(
         WARMUP_DAYS = 25   # necesita EMA20D diaria → 25 días de calentamiento
     elif strat_type in ("range", "range_reversion"):
         WARMUP_DAYS = 240  # EMA200D diaria
+    elif strat_type in ("swing", "swing_allocator"):
+        WARMUP_DAYS = 250  # EMA200D diaria con buffer
     else:
         WARMUP_DAYS = 240
     warmup_start = from_dt - timedelta(days=WARMUP_DAYS)
@@ -353,6 +357,14 @@ def _run_backtest(
                 return RangeReversionBot(client=client,
                                          config=RangeReversionConfig.from_dict(cfg),
                                          session=session)
+            elif strat_type in ("swing", "swing_allocator"):
+                from strategies.swing_allocator import SwingAllocatorBot, SwingAllocatorConfig
+                cfg = {"symbol": sym}; cfg.update(config)
+                if sym.split("-")[0].upper() != "BTC":
+                    cfg.setdefault("pi_cycle_enabled", False)
+                return SwingAllocatorBot(client=client,
+                                         config=SwingAllocatorConfig.from_dict(cfg),
+                                         session=session)
             else:
                 raise ValueError(f"Estrategia '{strat_type}' no soportada.")
 
@@ -365,6 +377,38 @@ def _run_backtest(
             strat = engine.last_strategy
             if strat is not None and hasattr(strat, "_journal") and strat._journal:
                 from reporting.trade_journal import write_journal
+                cfg_obj = getattr(strat, "_cfg", None)
+                if cfg_obj is not None and hasattr(cfg_obj, "to_dict"):
+                    resolved_config = cfg_obj.to_dict()
+                else:
+                    resolved_config = getattr(strat, "_config", {}) or {}
+
+                backtest_summary = {
+                    "initial_balance":      result.initial_balance,
+                    "final_balance":        result.final_balance,
+                    "total_pnl":            result.total_pnl,
+                    "total_return_pct":     result.total_pnl_pct,
+                    "buy_hold_return_pct":  result.buy_hold_pnl_pct,
+                    "cagr_pct":             result.cagr,
+                    "max_drawdown_pct":     result.max_drawdown_pct,
+                    "sharpe":               result.sharpe_ratio,
+                    "sortino":              result.sortino,
+                    "time_in_market_pct":   result.time_in_market_pct,
+                    "profit_factor":        result.profit_factor,
+                    "win_rate_pct":         result.win_rate,
+                    "total_trades":         result.total_trades,
+                    "winning_trades":       result.winning_trades,
+                    "losing_trades":        result.losing_trades,
+                    "max_consec_losses":    result.max_consec_losses,
+                    "expectancy":           result.expectancy,
+                    "avg_win":              result.avg_win,
+                    "avg_loss":             result.avg_loss,
+                    "bars_tested":          result.bars_tested,
+                    "warmup_bars":          engine_warmup,
+                    "cost_mode":            result.cost_mode,
+                    "start_date":           result.start_date,
+                    "end_date":             result.end_date,
+                }
                 journal_path = write_journal(
                     journal=strat._journal,
                     strategy_name=strat.name,
@@ -374,11 +418,37 @@ def _run_backtest(
                     to_date=to_dt.strftime("%Y-%m-%d"),
                     cost_mode=cost_mode,
                     config_overrides=config if config else {},
+                    resolved_config=resolved_config,
+                    backtest_summary=backtest_summary,
                 )
                 if journal_out is not None:
                     journal_out.append(journal_path)
                 else:
                     console.print(f"[dim]Journal guardado -> {journal_path}[/dim]")
+
+            # Journal de rebalanceos para Swing Allocator
+            if strat is not None and hasattr(strat, "_rebalance_log") and strat._rebalance_log:
+                from reporting.swing_journal import write_swing_journal
+                _base_ccy     = symbol.split("-")[0]
+                _final_balance_raw = bt_client.get_balance()
+                _final_btc    = float(_final_balance_raw.get(_base_ccy, 0))
+                swing_path = write_swing_journal(
+                    rebalance_log=strat._rebalance_log,
+                    strategy_name=strat.name,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    from_date=from_dt.strftime("%Y-%m-%d"),
+                    to_date=to_dt.strftime("%Y-%m-%d"),
+                    cost_mode=cost_mode,
+                    config_overrides=config if config else {},
+                    initial_balance=float(bt_client.initial_balance),
+                    final_balance=float(result.final_balance),
+                    final_btc_qty=_final_btc,
+                )
+                if journal_out is not None:
+                    journal_out.append(swing_path)
+                else:
+                    console.print(f"[dim]Swing journal -> {swing_path}[/dim]")
 
             return result
         except Exception as exc:

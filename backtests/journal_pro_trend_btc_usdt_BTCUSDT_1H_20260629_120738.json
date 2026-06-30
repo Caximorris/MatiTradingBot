@@ -1,0 +1,184 @@
+{
+  "meta": {
+    "strategy": "pro_trend_btc_usdt",
+    "symbol": "BTC-USDT",
+    "timeframe": "1H",
+    "period": "2018-01-01 -> 2026-01-01",
+    "generated_at": "2026-06-29T12:07:38.496434+00:00",
+    "cost_mode": "realistic",
+    "config_overrides": {
+      "partial_exit_pct": 150.0
+    },
+    "total_closed_trades": 1,
+    "open_at_end": 0
+  },
+  "statistics": {
+    "total_trades": 1,
+    "winners": 1,
+    "losers": 0,
+    "win_rate_pct": 100.0,
+    "total_pnl_usdt": 938.94,
+    "avg_pnl_usdt": 938.94,
+    "median_pnl_usdt": 938.94,
+    "avg_pnl_pct": 10.43,
+    "best_trade_usdt": 938.94,
+    "worst_trade_usdt": 938.94,
+    "avg_winner_usdt": 938.94,
+    "avg_loser_usdt": 0,
+    "largest_win_pct": 10.43,
+    "largest_loss_pct": 10.43,
+    "profit_factor": 0,
+    "avg_holding_hours": 4012.0,
+    "min_holding_hours": 4012.0,
+    "max_holding_hours": 4012.0,
+    "by_side": {
+      "long": 1
+    },
+    "by_exit_reason": {
+      "bear_confirmed": 1
+    },
+    "win_rate_by_reason": {
+      "bear_confirmed": 100.0
+    },
+    "avg_mae_pct": 1.31,
+    "avg_mfe_pct": 29.29,
+    "max_mae_pct": 1.31,
+    "max_mfe_pct": 29.29,
+    "avg_r_multiple": 1.27,
+    "r_multiples": [
+      1.27
+    ]
+  },
+  "trades": [
+    {
+      "trade_num": 1,
+      "side": "long",
+      "symbol": "BTC-USDT",
+      "open": {
+        "timestamp": "2025-05-07T00:00:00+00:00",
+        "price": 97418.1,
+        "qty": 0.09238529,
+        "invest_usdt": 9000.0,
+        "stop_loss": 89455.15,
+        "take_profit": 0.0,
+        "balance_usdt_before": 10000.0,
+        "score_long": 12,
+        "score_short": 1,
+        "indicators": {
+          "close": 96833.9,
+          "ema_20d": 92687.26,
+          "ema_50d": 89726.97,
+          "ema_200d": 86492.19,
+          "ema50_slope": 1.5658,
+          "ema200_slope": 0.5441,
+          "macd_above": true,
+          "rsi": 65.8,
+          "rsi_div": null,
+          "adx": 28.8,
+          "atr": 2670.55,
+          "obv_slope": 5.654349,
+          "bb_pct_b": 0.758,
+          "swing": "uptrend",
+          "support_levels": [
+            74564.55,
+            76600.0,
+            79940.0
+          ],
+          "resistance_levels": [
+            86018.02,
+            95382.67,
+            97896.0
+          ],
+          "vp_poc": 83686.85,
+          "vp_vah": 95268.26,
+          "vp_val": 78495.19,
+          "pi_cycle_top": false,
+          "weekly_trend_up": true,
+          "h4_trend_bullish": true,
+          "h4_trend_bearish": false,
+          "h4_macd_above": true,
+          "h4_swing": "range",
+          "h1_close": 97418.1,
+          "h1_vol_spike_up": true,
+          "h1_vol_spike_dn": false,
+          "h1_bb_squeeze": false,
+          "h1_bb_breakout_up": true,
+          "h1_bb_breakout_dn": false,
+          "score_long": 12,
+          "score_short": 1,
+          "mvrv": 2.16,
+          "halving_phase": "bull_peak",
+          "dxy_change_pct": 0.32,
+          "ndx_change_pct": 8.29,
+          "dxy_headwind": false,
+          "ndx_risk_off": false,
+          "peak_gain_pct": 0.0
+        }
+      },
+      "close": {
+        "timestamp": "2025-10-21T04:00:00+00:00",
+        "price": 107791.7,
+        "pnl_usdt": 938.94,
+        "pnl_pct": 10.43,
+        "reason": "bear_confirmed",
+        "holding_hours": 4012.0,
+        "balance_usdt_after": 10929.93,
+        "score_long": 4,
+        "score_short": 6,
+        "mae_pct": 1.31,
+        "mfe_pct": 29.29,
+        "r_multiple": 1.27,
+        "indicators": {
+          "close": 110544.4,
+          "ema_20d": 112959.55,
+          "ema_50d": 114057.67,
+          "ema_200d": 108082.98,
+          "ema50_slope": -0.9051,
+          "ema200_slope": 0.0819,
+          "macd_above": false,
+          "rsi": 44.2,
+          "rsi_div": null,
+          "adx": 33.9,
+          "atr": 4101.16,
+          "obv_slope": -10.608713,
+          "bb_pct_b": 0.283,
+          "swing": "range",
+          "support_levels": [
+            101500.0,
+            103514.5,
+            108394.27
+          ],
+          "resistance_levels": [
+            113350.55,
+            116845.33,
+            123888.0
+          ],
+          "vp_poc": 117246.25,
+          "vp_vah": 120025.0,
+          "vp_val": 110145.0,
+          "pi_cycle_top": false,
+          "weekly_trend_up": false,
+          "h4_trend_bullish": false,
+          "h4_trend_bearish": true,
+          "h4_macd_above": true,
+          "h4_swing": "uptrend",
+          "h1_close": 107791.7,
+          "h1_vol_spike_up": false,
+          "h1_vol_spike_dn": true,
+          "h1_bb_squeeze": false,
+          "h1_bb_breakout_up": false,
+          "h1_bb_breakout_dn": true,
+          "score_long": 4,
+          "score_short": 6,
+          "mvrv": 2.0,
+          "halving_phase": "bear_onset",
+          "dxy_change_pct": 0.49,
+          "ndx_change_pct": 0.65,
+          "dxy_headwind": false,
+          "ndx_risk_off": false,
+          "peak_gain_pct": 29.3
+        }
+      }
+    }
+  ]
+}

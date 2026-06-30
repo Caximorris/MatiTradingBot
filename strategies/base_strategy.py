@@ -115,6 +115,7 @@ class BaseStrategy(ABC):
                 "price":               round(price, 2),
                 "qty":                 qty,
                 "invest_usdt":         round(invest, 2),
+                "size_pct":            round(invest / balance_before * 100, 2) if balance_before else 0.0,
                 "stop_loss":           round(stop, 2),
                 "take_profit":         round(tp, 2),
                 "balance_usdt_before": round(balance_before, 2),

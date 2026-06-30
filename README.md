@@ -160,8 +160,8 @@ python main.py dashboard
 ## 7. Estrategias disponibles
 
 ### Pro Trend (`--strategy pro`)
-**Estado: Mejor resultado actual. v12 realistic: +480.5%, CAGR +24.7% (vs BTC B&H +26.4%).**
-**Ventaja real: 35% tiempo en mercado, evita crashes del -70%. Drawdown máx 42.6%.**
+**Estado: version actual v13. 2018-2026 realistic: +521.8%, CAGR +25.7% (vs BTC B&H ~+549.7%, CAGR +26.4%).**
+**Ventaja real: ~35% tiempo en mercado, evita crashes del -70%. Drawdown max historico ~42.6%.**
 
 Estrategia de trend following multi-timeframe con sistema de puntuación (0–14 pts)
 y filtros en capas:
@@ -172,6 +172,7 @@ y filtros en capas:
 - **Layer 4 (técnico):** Score 0–14 pts, ADX gate, MACD cross-timeframe, Pi Cycle Top
 
 **Sizing adaptativo:** 90% / 80% / 60% según fase del ciclo × score.
+**Partial exit v13:** vende 33% de la posicion al +150% de ganancia.
 **Solo longs por defecto** (`allow_shorts=False`).
 **~1–2 operaciones por año** — el trailing stop del 22–28% gestiona la salida.
 
@@ -216,17 +217,20 @@ python main.py compare --strategies "adaptive,pro" --from 2018 --to 2026
 ```
 
 El backtest genera automáticamente un Trade Journal JSON en `backtests/` con todos los
-indicadores, scores, contexto macro y razón de salida de cada operación.
+indicadores, scores, contexto macro, sizing/gates de entrada y razón de salida de cada operación.
 
 ### Resultados actuales (balance inicial $10,000)
 
-| Estrategia | Período | Balance | P&L | Trades | Win Rate | PF | CAGR |
+| Estrategia | Periodo | Balance | P&L | Trades | Win Rate | PF | CAGR |
 |------------|---------|---------|-----|--------|----------|----|------|
-| BTC Buy & Hold | 2018–2026 | ~$65k | +550% | — | — | — | +24.5% |
-| **Pro Trend v11** | 2018–2026 | **$74,124** | **+641%** | 11 | 54.5% | 5.61 | **+28.6%** |
-| Adaptive Trend | 2018–2024 | ~$51k | +409% | — | — | — | — |
+| BTC Buy & Hold | 2018-2026 | ~$65k | +549.7% | — | — | — | +26.4% |
+| **Pro Trend v13** | 2018-2026 | **$62,184** | **+521.8%** | 12 | 50.0% | ~4.6 journal true | **+25.7%** |
+| Pro Trend ciclo largo | 2015-2026 | ~$591k | +5812% | 20 | 55.0% | ~5.0 | +44.9% |
+| Adaptive Trend | 2018-2026 | ~$48k | +380.9% | 20 | — | 2.91 | +21.8% |
 
-> Pro Trend v12 (con filtros ADX y MACD cross-timeframe) está implementado pero pendiente de backtest.
+> Nota: los journals nuevos con partial exits incluyen `true_pnl_usdt`, estadisticas por PnL real,
+> `meta.resolved_config`, `meta.backtest`, sizing real/planificado y giveback desde MFE.
+> En journals antiguos, comparar por balance final o `balance_after - balance_before`.
 
 ---
 
@@ -265,7 +269,7 @@ MatiTradingBot/
 │   ├── base_strategy.py            # Clase abstracta con journal helpers
 │   ├── indicators.py               # UNICO modulo de indicadores activo
 │   ├── adaptive_trend.py           # Estrategia: régimen bull/bear/range, solo longs
-│   ├── pro_trend.py                # Estrategia: multi-timeframe, scoring system (v12)
+│   ├── pro_trend.py                # Estrategia: multi-timeframe, scoring system (v13)
 │   ├── scalp_momentum.py           # Estrategia: day trading 1H con contexto 4H/D
 │   ├── macro_context.py            # MVRV + halving cycle (singleton global)
 │   ├── market_context.py           # DXY + NASDAQ-100 + VIX (singleton global)

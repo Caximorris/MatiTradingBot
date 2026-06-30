@@ -468,8 +468,8 @@ class BacktestEngine:
         equity_curve: list[tuple[datetime, Decimal]] = []
 
         logger.info(
-            "BACKTEST: get_funding_rate() retorna 0.0 siempre — "
-            "el filtro de funding no se valida historicamente (datos no disponibles en OKX publico)"
+            "BACKTEST: get_funding_rate() usa funding_context historico; "
+            "si no hay datos cargados para la fecha retorna 0.0 como fallback"
         )
 
         strategy = self._factory(self._client, session)

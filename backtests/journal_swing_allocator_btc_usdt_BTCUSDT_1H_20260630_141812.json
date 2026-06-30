@@ -1,0 +1,428 @@
+{
+  "meta": {
+    "strategy": "swing_allocator_btc_usdt",
+    "symbol": "BTC-USDT",
+    "timeframe": "1H",
+    "from_date": "2020-01-01",
+    "to_date": "2022-12-31",
+    "cost_mode": "realistic",
+    "config_overrides": {
+      "use_mvrv": false,
+      "use_rsi": false,
+      "use_pi_cycle": false,
+      "use_vix": false,
+      "use_macd_4h": false,
+      "delta_post_halving": 0.2,
+      "delta_bear_onset": -0.2
+    },
+    "generated_at": "2026-06-30T14:18:12.666219+00:00"
+  },
+  "statistics": {
+    "total_rebalances": 26,
+    "buy_count": 12,
+    "sell_count": 14,
+    "avg_btc_pct": 63.0,
+    "min_btc_pct": 30.0,
+    "max_btc_pct": 100.0,
+    "initial_balance_usdt": 10000.0,
+    "final_balance_usdt": 42486.7,
+    "pnl_pct": 324.87,
+    "final_btc_qty": 0.903107,
+    "bnh_initial_btc": 1.393301,
+    "btc_vs_bnh_ratio": 0.6482,
+    "signal_frequency": {
+      "regime_bear": 10,
+      "regime_bull": 8,
+      "halving_post": 4,
+      "halving_bull": 7,
+      "halving_bear": 6
+    }
+  },
+  "rebalances": [
+    {
+      "num": 1,
+      "timestamp": "2020-01-01T00:00:00+00:00",
+      "direction": "INIT",
+      "price": 7177.2,
+      "qty": 0.83598,
+      "btc_pct_before": 0.0,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6,
+      "portfolio_usdt": 10000.0,
+      "signals": [
+        "init"
+      ]
+    },
+    {
+      "num": 2,
+      "timestamp": "2020-01-01T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 7224.5,
+      "qty": 0.280617,
+      "btc_pct_before": 0.6021,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 10030.54,
+      "signals": [
+        "regime_bear"
+      ]
+    },
+    {
+      "num": 3,
+      "timestamp": "2020-02-08T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 9713.6,
+      "qty": 0.384338,
+      "btc_pct_before": 0.4728,
+      "btc_pct_target": 0.8,
+      "btc_pct_after": 0.8004,
+      "portfolio_usdt": 11409.85,
+      "signals": [
+        "regime_bull"
+      ]
+    },
+    {
+      "num": 4,
+      "timestamp": "2020-02-26T19:00:00+00:00",
+      "direction": "SELL",
+      "price": 8827.0,
+      "qty": 0.221148,
+      "btc_pct_before": 0.7847,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6002,
+      "portfolio_usdt": 10571.11,
+      "signals": []
+    },
+    {
+      "num": 5,
+      "timestamp": "2020-03-02T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 8603.1,
+      "qty": 0.234666,
+      "btc_pct_before": 0.594,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 10407.3,
+      "signals": [
+        "regime_bear"
+      ]
+    },
+    {
+      "num": 6,
+      "timestamp": "2020-03-05T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 8872.4,
+      "qty": 0.228518,
+      "btc_pct_before": 0.4075,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6002,
+      "portfolio_usdt": 10534.58,
+      "signals": []
+    },
+    {
+      "num": 7,
+      "timestamp": "2020-03-09T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 8063.2,
+      "qty": 0.218553,
+      "btc_pct_before": 0.577,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 9955.06,
+      "signals": [
+        "regime_bear"
+      ]
+    },
+    {
+      "num": 8,
+      "timestamp": "2020-03-12T23:00:00+00:00",
+      "direction": "BUY",
+      "price": 4797.0,
+      "qty": 0.201532,
+      "btc_pct_before": 0.2841,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 8339.4,
+      "signals": [
+        "regime_bear"
+      ]
+    },
+    {
+      "num": 9,
+      "timestamp": "2020-04-06T19:00:00+00:00",
+      "direction": "SELL",
+      "price": 7267.6,
+      "qty": 0.141915,
+      "btc_pct_before": 0.5026,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 10055.97,
+      "signals": [
+        "regime_bear"
+      ]
+    },
+    {
+      "num": 10,
+      "timestamp": "2020-05-11T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 8695.7,
+      "qty": 0.19482,
+      "btc_pct_before": 0.4438,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6001,
+      "portfolio_usdt": 10844.83,
+      "signals": [
+        "regime_bear",
+        "halving_post_halving"
+      ]
+    },
+    {
+      "num": 11,
+      "timestamp": "2020-05-17T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 9547.4,
+      "qty": 0.453182,
+      "btc_pct_before": 0.6223,
+      "btc_pct_target": 1.0,
+      "btc_pct_after": 0.9998,
+      "portfolio_usdt": 11479.6,
+      "signals": [
+        "regime_bull",
+        "halving_post_halving"
+      ]
+    },
+    {
+      "num": 12,
+      "timestamp": "2020-09-30T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 10742.0,
+      "qty": 0.240131,
+      "btc_pct_before": 0.9998,
+      "btc_pct_target": 0.8,
+      "btc_pct_after": 0.8002,
+      "portfolio_usdt": 12908.39,
+      "signals": [
+        "halving_post_halving"
+      ]
+    },
+    {
+      "num": 13,
+      "timestamp": "2020-10-11T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 11332.0,
+      "qty": 0.227025,
+      "btc_pct_before": 0.8087,
+      "btc_pct_target": 1.0,
+      "btc_pct_after": 0.9999,
+      "portfolio_usdt": 13471.71,
+      "signals": [
+        "regime_bull",
+        "halving_post_halving"
+      ]
+    },
+    {
+      "num": 14,
+      "timestamp": "2021-05-19T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 40587.5,
+      "qty": 0.237647,
+      "btc_pct_before": 1.0,
+      "btc_pct_target": 0.8,
+      "btc_pct_after": 0.8002,
+      "portfolio_usdt": 48234.07,
+      "signals": [
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 15,
+      "timestamp": "2021-06-23T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 33966.6,
+      "qty": 0.210137,
+      "btc_pct_before": 0.7702,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6002,
+      "portfolio_usdt": 41924.99,
+      "signals": [
+        "regime_bear",
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 16,
+      "timestamp": "2021-08-16T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 47356.8,
+      "qty": 0.353185,
+      "btc_pct_before": 0.6767,
+      "btc_pct_target": 1.0,
+      "btc_pct_after": 0.9998,
+      "portfolio_usdt": 51830.82,
+      "signals": [
+        "regime_bull",
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 17,
+      "timestamp": "2021-09-20T23:00:00+00:00",
+      "direction": "SELL",
+      "price": 43020.6,
+      "qty": 0.218595,
+      "btc_pct_before": 0.9998,
+      "btc_pct_target": 0.8,
+      "btc_pct_after": 0.8002,
+      "portfolio_usdt": 47062.93,
+      "signals": [
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 18,
+      "timestamp": "2021-09-23T23:00:00+00:00",
+      "direction": "BUY",
+      "price": 44866.9,
+      "qty": 0.209055,
+      "btc_pct_before": 0.8069,
+      "btc_pct_target": 1.0,
+      "btc_pct_after": 0.9999,
+      "portfolio_usdt": 48664.66,
+      "signals": [
+        "regime_bull",
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 19,
+      "timestamp": "2021-09-26T23:00:00+00:00",
+      "direction": "SELL",
+      "price": 43172.1,
+      "qty": 0.216757,
+      "btc_pct_before": 0.9999,
+      "btc_pct_target": 0.8,
+      "btc_pct_after": 0.8002,
+      "portfolio_usdt": 46813.04,
+      "signals": [
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 20,
+      "timestamp": "2021-09-30T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 43604.3,
+      "qty": 0.213966,
+      "btc_pct_before": 0.8018,
+      "btc_pct_target": 1.0,
+      "btc_pct_after": 0.9999,
+      "portfolio_usdt": 47173.93,
+      "signals": [
+        "regime_bull",
+        "halving_bull_peak"
+      ]
+    },
+    {
+      "num": 21,
+      "timestamp": "2021-11-02T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 61081.9,
+      "qty": 0.432527,
+      "btc_pct_before": 0.9999,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6004,
+      "portfolio_usdt": 66060.82,
+      "signals": [
+        "regime_bull",
+        "halving_bear_onset"
+      ]
+    },
+    {
+      "num": 22,
+      "timestamp": "2021-12-04T03:00:00+00:00",
+      "direction": "SELL",
+      "price": 52000.5,
+      "qty": 0.186387,
+      "btc_pct_before": 0.5612,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 60128.21,
+      "signals": [
+        "halving_bear_onset"
+      ]
+    },
+    {
+      "num": 23,
+      "timestamp": "2021-12-27T15:00:00+00:00",
+      "direction": "BUY",
+      "price": 51447.0,
+      "qty": 0.235568,
+      "btc_pct_before": 0.3975,
+      "btc_pct_target": 0.6,
+      "btc_pct_after": 0.6002,
+      "portfolio_usdt": 59857.67,
+      "signals": [
+        "regime_bull",
+        "halving_bear_onset"
+      ]
+    },
+    {
+      "num": 24,
+      "timestamp": "2021-12-30T15:00:00+00:00",
+      "direction": "SELL",
+      "price": 47175.0,
+      "qty": 0.215992,
+      "btc_pct_before": 0.5792,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 56857.25,
+      "signals": [
+        "halving_bear_onset"
+      ]
+    },
+    {
+      "num": 25,
+      "timestamp": "2022-03-28T11:00:00+00:00",
+      "direction": "SELL",
+      "price": 47248.0,
+      "qty": 0.120956,
+      "btc_pct_before": 0.4005,
+      "btc_pct_target": 0.3,
+      "btc_pct_after": 0.3,
+      "portfolio_usdt": 56877.16,
+      "signals": [
+        "regime_bear",
+        "halving_bear_onset"
+      ]
+    },
+    {
+      "num": 26,
+      "timestamp": "2022-06-12T11:00:00+00:00",
+      "direction": "BUY",
+      "price": 27456.3,
+      "qty": 0.182133,
+      "btc_pct_before": 0.1994,
+      "btc_pct_target": 0.3,
+      "btc_pct_after": 0.3,
+      "portfolio_usdt": 49721.0,
+      "signals": [
+        "regime_bear",
+        "halving_bear_onset"
+      ]
+    },
+    {
+      "num": 27,
+      "timestamp": "2022-10-28T03:00:00+00:00",
+      "direction": "BUY",
+      "price": 20295.9,
+      "qty": 0.359833,
+      "btc_pct_before": 0.2406,
+      "btc_pct_target": 0.4,
+      "btc_pct_after": 0.4001,
+      "portfolio_usdt": 45823.44,
+      "signals": [
+        "regime_bear"
+      ]
+    }
+  ]
+}

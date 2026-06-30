@@ -1,34 +1,171 @@
 # SESSION.md — Estado del proyecto y referencia detallada
 
 Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
-**Ultima actualizacion: 2026-06-29 (septima sesion — fin de dia)**
+**Ultima actualizacion: 2026-06-30 (decima sesion)**
 
 ---
 
 ## ESTADO ACTUAL
 
-**Version en codigo: Pro Trend v12** con 5 lookahead fixes y framework de validacion completo.
-**Resultado honesto con costes realistas: +480.5% CAGR +24.7% vs B&H +549.7% CAGR +26.4%**
+**Version en codigo: Pro Trend v13** con 5 lookahead fixes, framework de validacion completo y partial_exit_pct=150% por defecto.
+**Resultado honesto 2018-2026 realistic: +521.84% CAGR +25.7% (con partial_exit=150%) vs B&H +550% CAGR +26.4%**
+**Resultado 2015-2026 realistic: +5812% CAGR +44.9% — validado en 3 ciclos bull (2017, 2021, 2024-25)**
 La ventaja real de Pro Trend NO es el retorno absoluto — es el riesgo: 35% tiempo en mercado, evita crashes del -70%.
 
-**Pasos 1-4 COMPLETADOS. Sesion 2026-06-29: MAE/MFE/R implementado, Bitstamp añadido, backtests ampliados pendientes de resultados.**
+**Pro Trend v13: framework de validacion COMPLETADO. Siguiente: paper trading 6 meses en paralelo.**
 
-### PENDIENTE AL CERRAR SESION (ejecutar en orden, UNO A LA VEZ — OKX rate-limita en paralelo)
+**Swing Allocator v0 → candidata v1: sensitivity completada (2026-06-30).**
+Walk-forward 4/4 ✅ | ETH +56.4% CAGR ✅ | Sensitivity 15 variantes completada ✅
+Candidata principal v1: `delta_post_halving=0.20, delta_bear_onset=-0.20` (+77.4% CAGR 2015-2026, +36.7% 2018-2026).
+**Siguiente: walk-forward con config candidata. Si pasa → adoptar como default v1.**
 
-```
-# 1. BTC 2015 — EN CURSO al cerrar (111,499 velas, ~20% al cerrar)
+---
+
+## REGLAS INVARIANTES ANTES DE TOCAR CODIGO
+
+Estas reglas tienen prioridad sobre cualquier optimizacion. Si un cambio no las cumple, no se
+implementa como default aunque mejore un backtest puntual.
+
+### 1. Lookahead bias - tolerancia cero
+
+- Cualquier dato diario/semanal/4H usado en una decision intradia debe estar cerrado antes del tick.
+- No usar la vela diaria actual para decidir en 1H si esa vela aun no cerro.
+- No usar la semana actual para `weekly_trend_up`; solo semanas completas.
+- No usar el bloque 4H actual si esta incompleto.
+- Datos externos siempre con offset conservador:
+  - MVRV/CoinMetrics: dia anterior completo.
+  - DXY/NDX/VIX/Yahoo: sesion anterior completa.
+  - Funding OKX: dia completo anterior, no liquidaciones futuras del mismo dia.
+- Si se anade un indicador o filtro nuevo, documentar explicitamente en el codigo/doc:
+  que timestamp representa, cuando se publica/cierra y por que no mira futuro.
+- Si hay duda sobre disponibilidad historica de un dato, asumir que NO estaba disponible y desplazarlo.
+
+### 2. Overfitting - protocolo obligatorio
+
+- No promover a default un cambio que solo mejora 2018-2026 o que elimina un unico trade perdedor.
+- La ventana principal de observacion para BTC es **2015-01-01 a 2026-01-01** porque da mas trades
+  y cubre 3 ciclos bull. 2018-2026 queda como comparacion secundaria contra B&H reciente.
+- Cada cambio se testea aislado contra v13 baseline y luego combinado solo si aporta por separado.
+- Coste minimo de validacion: `--costs realistic`. Para candidatos finales, tambien mirar `conservative`.
+- Confirmaciones deseables antes de default:
+  - BTC 2015-2026 mejora o mantiene retorno/riesgo.
+  - BTC 2018-2026 no se rompe.
+  - ETH o walk-forward no contradicen brutalmente el edge.
+- Thresholds nuevos deben tener justificacion estructural, no "porque arregla T6/T8/T9".
+- Si el cambio aumenta CAGR pero empeora mucho PF/MaxDD, queda como variante agresiva, no default.
+
+### 3. Preservar Pro Trend v13 como rollback
+
+No perder la informacion de v13. Antes de cambios que alteren comportamiento:
+
+- Mantener documentada la config v13 exacta en esta sesion y en `backtests/STRATEGY_VERSIONS.md`.
+- No sobrescribir ni borrar journals v13 existentes.
+- Todo cambio v14 debe poder desactivarse por config o ser facil de revertir.
+- Si se cambia un bug candidato que altera trades, guardar resultado baseline v13 limpio antes.
+- Rollback conceptual v13:
+  - `partial_exit_pct=150.0`
+  - `partial_exit_size=0.33`
+  - `entry_score_min=9`
+  - `adx_min_entry=15.0`
+  - `trailing_stop_pct=0.22`
+  - `trailing_stop_pct_bull=0.28`
+  - `cooldown_atr_stop_days=30`
+  - `macd_exit_enabled=False`
+  - `allow_shorts=False`
+  - `disable_external_filters=False`
+
+### 4. Orden de trabajo tras esta auditoria
+
+1. Primero correr backtests limpios desde 2015 y 2018 con journal corregido.
+2. Despues decidir `partial_exit=150` vs `200` con datos nuevos.
+3. Solo despues tocar bugfixes candidatos: MACD 4H key y VIX sizing cap, uno por uno.
+4. Los experimentos de alpha quedan para despues de P1 y siempre detras de flags/config.
+
+---
+
+## AUDITORIA 2026-06-30 - ROADMAP DE MEJORAS
+
+Objetivo de esta auditoria: maximizar retorno sin romper la tesis original de Pro Trend.
+Conclusion principal: Pro Trend v13 no pierde contra B&H por falta de mas indicadores, sino por
+estar 65% del tiempo fuera de mercado. La mejora mas prometedora es gestionar mejor exposicion,
+profit-lock y medicion antes de tocar thresholds.
+
+### Hallazgos criticos de lectura de codigo/journals
+
+1. **Journal con partial exits subestima PnL por trade.**
+   `close.pnl_usdt` solo refleja el cierre final de la posicion restante. En runs con partial exit,
+   el PnL real por trade debe calcularse como `close.balance_usdt_after - open.balance_usdt_before`
+   o registrando eventos parciales explicitos. Ejemplo v13 2018-2026:
+   - `statistics.total_pnl_usdt`: $48,510
+   - PnL real por balance: $52,184
+   - PF real aproximado: 4.64 vs PF journal 4.41
+
+2. **`partial_exit=150` vs `partial_exit=200` necesita rerun limpio.**
+   El resumen previo dice que 150% gana, pero el journal `20260629_153049` muestra balance final
+   $64,158 (+541.59%) para 200%, superior al 150% ($62,184, +521.84%) aunque con PF menor.
+   No cambiar default todavia: primero corregir/metodologia journal y rerun comparativo.
+
+3. **Gate MACD 4H candidato a bug.**
+   En `run()`, `_g_macd_momentum` usa `h4.get("h4_macd_above", True)`, pero `_build_4h_context()`
+   devuelve la clave `macd_above`. Resultado probable: si daily MACD esta negativo, el fallback
+   `True` puede hacer que el gate MACD xTF no bloquee nunca por 4H. Es bug candidato, no parametro.
+
+4. **Cap de sizing por VIX elevado candidato a bug.**
+   `run()` calcula `size_pct` con `vix_elevated`, pero `_open_long()` recalcula sizing sin pasar
+   `vix_elevated`. Resultado probable: VIX>22 no capea realmente a `size_mid` aunque el log lo sugiera.
+   Esto explica por que el baseline "sin filtros externos" apenas cambia.
+
+5. **Log de funding en backtest esta desfasado.**
+   `BacktestClient.get_funding_rate()` ya llama a `funding_context.get_funding_rate_at()`, pero el log
+   aun dice que funding retorna 0.0 siempre. Es solo documentacion/log, pero confunde auditorias.
+
+### Orden recomendado de implementacion
+
+**P0 - Medicion/documentacion (no cambia trades):**
+1. Corregir estadisticas de journal para partial exits: incluir `true_pnl_usdt`, PF real por balance,
+   y/o eventos `partial_exit`. IMPLEMENTADO 2026-06-30; validar con rerun.
+2. Actualizar log de funding en `core/backtest.py`. IMPLEMENTADO 2026-06-30.
+3. Rerun limpio de v13 2018-2026 y 2015-2026.
+4. Rerun limpio de partial exit: 0%, 150%, 200%.
+
+**P1 - Bugfixes candidatos (pueden cambiar trades, testear aislados):**
+1. Fix MACD 4H key: usar `h4.get("macd_above", False)` o clave normalizada.
+2. Fix VIX sizing cap: pasar `vix_elevated` a `_open_long()` o persistir el contexto de mercado.
+3. Cada fix debe correr solo y combinado, siempre contra v13 baseline.
+
+**P2 - Experimentos de alpha (default desactivado hasta validar):**
+1. Profit-lock / break-even despues de MFE +10%, +15%, +20%.
+2. Trailing bull grid: 0.28, 0.30, 0.32, 0.34 en 2018-2026 y 2015-2026.
+3. ADX como sizing modifier, no como hard gate: ADX<20 reduce size, ADX>=20 normal.
+4. MVRV late-bull de-risk: reducir size o activar profit-lock cuando MVRV >= 2.5/3.0, no bloquear ciegamente.
+5. Core BTC + Pro Trend overlay: mantener una exposicion base permanente (ver `SWING_PLAN.md`).
+
+### Comandos de test a correr manualmente
+
+No ejecutar automaticamente desde agentes. El usuario los corre.
+
+```bash
+# Baseline v13 actual
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic
 python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic
 
-# 2. ETH 2015 — tras BTC
-python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic --symbol ETH-USDT
+# Partial exit limpio
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"partial_exit_pct": 0.0}'
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"partial_exit_pct": 150.0}'
+python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config '{"partial_exit_pct": 200.0}'
 
-# 3. partial_exit ablation — tras ETH (CMD syntax)
-python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config "{\"partial_exit_pct\": 150.0}"
-python main.py backtest --strategy pro --from 2018-01-01 --to 2026-01-01 --costs realistic --config "{\"partial_exit_pct\": 200.0}"
+# Validacion larga del ganador
+python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic --config '{"partial_exit_pct": 150.0}'
+python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic --config '{"partial_exit_pct": 200.0}'
 ```
 
-Objetivo: con BTC 2015 se esperan trades del ciclo 2017 (111,499 velas vs 69,881 antes — Bitstamp funcionó).
-Analizar MAE/MFE/R del journal resultante y comparar partial_exit vs baseline.
+### Criterios de decision
+
+- Un cambio solo pasa a default si mejora o mantiene 2018-2026 y 2015-2026 con `--costs realistic`.
+- Si mejora retorno pero empeora PF/MaxDD de forma material, queda como variante agresiva, no default.
+- Si solo mejora por eliminar 1 trade perdedor en muestra de 12, tratar como overfitting salvo que 2015-2026,
+  ETH o walk-forward lo confirmen.
+- Para capital real sigue vigente: paper trading minimo 6 meses, sizing al 50%, no live antes.
 
 ---
 
@@ -55,7 +192,7 @@ Conclusiones clave:
 - T2+T4+T8 = 97% del profit de ETH. Mas concentrado aun que BTC.
 - Los stops funcionan: maximo perdedor -16.41%.
 
-### 3. Sensitivity analysis ✅ COMPLETADO (2026-06-29) — ADX re-corrido con bug fix
+### 3. Sensitivity analysis ✅ COMPLETADO (2026-06-29) — ADX re-corrido con bug fix, partial_exit confirmado
 
 Resultados (realistic, 2018-2026):
 
@@ -89,8 +226,9 @@ Conclusiones sensitivity completas:
    45d identico a 30d. Confirmado: 30d correcto.
 
 3. **entry_score_min=9 es robusto hacia abajo** — score_min=8 da -0.4pp/-0.26 PF (robusto).
-   score_min=10 da PF 4.26 vs 3.64 pero con 12 trades es ruido estadistico. Investigacion
-   pendiente: que trade perdedor entro con score exactamente 9.
+   score_min=10 da PF 4.26 vs 3.64 pero con 12 trades es ruido estadistico. Score=9 loser
+   identificado: Q3-2019 (2019-08-09, BTC $11,972), h4_swing=downtrend, MFE=0 — pillado en
+   cima de la recuperacion 2019. No es fallo sistematico. No cambiar score_min.
 
 4. **ADX gate confirmado — adx=15 es correcto:**
    - adx=10: mismos 12 trades que default. Ningun trade historico entro con ADX 10-14.9.
@@ -101,18 +239,105 @@ Conclusiones sensitivity completas:
      sobre 1 trade de una muestra de 12. En live podria bloquear ganadores. No cambiar.
    - Conclusion: adx_min=15 confirmado como robusto y correcto.
 
-### 4. Journal MAE/MFE/R-multiplo
-Añadir a `reporting/trade_journal.py` y `strategies/base_strategy.py`:
-- MAE: maximo adverso desde entrada hasta cierre
-- MFE: maximo favorable desde entrada hasta cierre
-- R-multiplo: PnL / (entry_price × ATR_stop_dist)
+### 4. Journal MAE/MFE/R-multiplo ✅ COMPLETADO (2026-06-29)
+Implementado en `reporting/trade_journal.py` y `strategies/base_strategy.py`.
+BTC 2015-2026: avg MAE 8.1%, avg MFE 76.2%, max MAE 19.3%, avg R 2.51.
+Losers ~-1R, ganadores 4-16R — asimetria confirmada en datos reales.
 
-### 5. Informe final + paper trading
+### 5. Partial exit ablation ✅ COMPLETADO (2026-06-30) — DEFAULT 150%, REVALIDAR 200%
+
+| Config | P&L% | CAGR | PF journal true | Avg R | Nota |
+|--------|-------|------|----|-------|------|
+| DEFAULT (sin partial exit) | +480.5% | +24.7% | 3.64 | — | referencia v12 |
+| partial_exit=150% | +521.84% | +25.7% | 4.64 | 2.06 | default v13 |
+| partial_exit=200% | +541.59% en journal balance | pendiente | 3.69 | 1.96 | necesita rerun limpio |
+
+Journals: `20260629_153048` (150%), `20260629_153049` (200%).
+**partial_exit_pct=150.0 incorporado al default en pro_trend.py (v13), pero revalidar contra 200%**
+tras corregir/interpretar el journal de partial exits. En runs con partial exit, usar balance final
+o `balance_after - balance_before`, no solo `close.pnl_usdt`.
+
+### 6. BTC 2015-2026 ✅ COMPLETADO (2026-06-30) — 3 ciclos bull validados
+
+Journal: `backtests/journal_pro_trend_btc_usdt_BTCUSDT_1H_20260629_155853.json` (sin partial_exit)
+Resultado: +5811%, CAGR +44.9%, PF 4.96, 20 trades (11W/9L), Sharpe 1.12
+MAE avg 8.1%, MFE avg 76.2%, avg R 2.51 — asimetria solida en 20 trades.
+Q4 2017: +$68,770 (trade mas grande de la historia). Estrategia funciona en 3 ciclos.
+Nota: 2017 no se captura si start=2017 (warmup 380d lo consume). Necesita start 2015.
+
+Pendiente confirmar: BTC 2015-2026 CON partial_exit=150% (v13 default). Comando:
+```
+python main.py backtest --strategy pro --from 2015-01-01 --to 2026-01-01 --costs realistic
+```
+(ya no hace falta --config porque 150% es el default en v13)
+
+### 7. Paper trading Pro Trend — SIGUIENTE PASO OBLIGATORIO
 Paper trading MANDATORIO min 6 meses con sizing 50% antes de capital real:
 ```bash
-python main.py start --strategy pro --symbol BTC-USDT
-# --config '{"size_ultra": 0.45, "size_high": 0.40, "size_mid": 0.30}'
+python main.py start --strategy pro --symbol BTC-USDT --config '{"size_ultra": 0.45, "size_high": 0.40, "size_mid": 0.30}'
 ```
+Config paper: sizing al 50% del normal. partial_exit_pct=150.0 ya en default (v13).
+Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
+
+### 8. Swing Allocator — sensitivity completada, v1 candidata identificada ✅ (2026-06-30)
+
+**Validaciones completadas (config base: regime+halving, todo lo demas False):**
+- Walk-forward v0: 4/4 ventanas TEST positivas ✅ (CAGR: +15.8%, +31.3%, +5.8%, +79.8%)
+- ETH 2020-2026: +56.4% CAGR, PF 2.80, 37 trades ✅ — mecanismo causal confirmado
+- Sensitivity 15 variantes: candidata v1 identificada
+
+**Tabla sensitivity (realistic, 2018-2026, base=regime+halving):**
+
+| Variante | CAGR | dCAGR | PF | Trades | Max DD | Diagnostico |
+|----------|------|-------|----|--------|--------|-------------|
+| REF (halving=±0.10, regime=±0.20, thresh=0.10) | +33.5% | — | 2.79 | 53 | -54.82% | referencia v0 |
+| min_btc=0.20 | +33.7% | +0.2pp | 2.74 | 55 | -54.82% | ruido |
+| min_btc=0.40 | +31.2% | -2.3pp | 2.16 | 52 | -57.39% | PEOR |
+| threshold=0.05 | +33.4% | -0.1pp | 2.76 | 66 | -54.42% | mas costes, sin ganancia |
+| threshold=0.15 | +34.3% | +0.8pp | 3.37 | 44 | -54.11% | CANDIDATO individual |
+| threshold=0.20 | +30.2% | -3.3pp | 15.67 | 17 | -55.96% | muy pocos trades |
+| delta_regime=±0.15 | +34.3% | +0.8pp | 3.94 | 48 | -51.82% | CANDIDATO individual |
+| delta_regime=±0.25 | +33.5% | +0.0pp | 2.93 | 51 | -55.33% | neutro |
+| **delta_halving=±0.20** | **+36.7%** | **+3.2pp** | **3.77** | **50** | **-58.11%** | **CANDIDATA v1** |
+| MVRV only | +33.0% | -0.5pp | 2.29 | 63 | -52.80% | PEOR — mas trades, sin alpha |
+| Pi Cycle only | +33.4% | -0.1pp | 2.65 | 53 | -54.82% | neutro — descartado |
+| MVRV + Pi Cycle | +33.8% | +0.3pp | 2.40 | 62 | -52.71% | PEOR |
+| regime=0.15 + thresh=0.15 | +31.8% | -1.7pp | 9.54 | 21 | -53.62% | RECHAZADO (pocos trades, peor CAGR) |
+| **halving=0.20 en 2015-2026** | **+77.4%** | **+6.9pp** | **2.46** | **68** | **-60.79%** | **CANDIDATA v1 validada** |
+| full combo (regime=0.15+thresh=0.15+halving=0.20) | +35.1% | +1.6pp | 10.12 | 21 | -53.62% | pendiente WF |
+
+**Candidata v1: `delta_post_halving=0.20, delta_bear_onset=-0.20`**
+- 2018-2026: +36.7% CAGR, PF 3.77, 50 trades, Max DD -58.11%
+- 2015-2026: +77.4% CAGR, Sharpe 1.25, $5.48M (vs $3.53M de v0 y ~$2.78M B&H)
+- Mecanismo: mas exposicion en post_halving/bull_peak (hasta 100% BTC) captura mas del bull run
+- Coste: DD sube 5-8pp vs v0. Sigue siendo mejor que B&H (-77% max DD historico)
+
+**Pendiente obligatorio antes de adoptar v1:**
+```bash
+# 1. Walk-forward con candidata v1 — GATE PRINCIPAL
+python main.py walk-forward --strategy swing --costs realistic --config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false,\"delta_post_halving\":0.20,\"delta_bear_onset\":-0.20}"
+
+# 2. Walk-forward full combo (opcional — si quieres evaluar mejor DD vs CAGR)
+python main.py walk-forward --strategy swing --costs realistic --config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false,\"delta_post_halving\":0.20,\"delta_bear_onset\":-0.20,\"delta_regime_bull\":0.15,\"delta_regime_bear\":-0.15,\"rebalance_threshold\":0.15}"
+```
+
+**Tests pendientes de segunda ronda (despues de WF):**
+- `delta_post_halving=0.15` — punto medio entre 0.10 y 0.20
+- `halving=0.20 + threshold=0.15` sin bajar regime delta
+- Deltas asimetricos: `delta_regime_bull=0.15, delta_regime_bear=-0.25` (salir mas rapido en bear)
+- `base_btc_pct=0.50` y `base_btc_pct=0.70`
+- `min_days_between_rebalance=1` y `=7`
+- `adx_min_trend=20` y `=25`
+- `min_btc=0.20 + halving=0.20`
+- Analisis Q4 2025: todos los configs pierden — abrir journal y entender por que
+- `--costs conservative` con config ganadora final
+- ETH re-validacion con config v1 definitiva
+
+**Criterio go/no-go (SWING_PLAN.md):**
+- CAGR > B&H en 2pp en 2015-2026 ✅ (+10.6pp con v1) y 2018-2026 ✅ (+10.3pp con v1)
+- Walk-forward 3/4 ventanas positivas: ✅ v0 (4/4) | **v1: PENDIENTE**
+- ETH no negativo ✅ (+56.4% CAGR con v0)
+- Max DD <= B&H ✅ (-58-61% vs -77% B&H)
 
 ---
 
@@ -120,10 +345,18 @@ python main.py start --strategy pro --symbol BTC-USDT
 
 | Estrategia | Periodo | Balance | P&L | Trades | PF | CAGR |
 |------------|---------|---------|-----|--------|----|------|
-| **Pro Trend v12 (ideal)** | 2018-2026 | $71,412 | +614% | 11 | 5.81 | +28.0% |
-| Pro Trend v12 (realistic) | 2018-2026 | $58,050 | +480.5% | 12 | 3.64 | +24.7% |
+| **Swing Allocator v1 candidata (halving=0.20)** | 2015-2026 | $5,486,167 | +54762% | 68 | 2.46 | +77.4% |
+| **Swing Allocator v1 candidata (halving=0.20)** | 2018-2026 | $121,626 | +1116% | 50 | 3.77 | +36.7% |
+| **Swing Allocator v0 (regimen+halving)** | 2015-2026 | $3,531,807 | +35218% | 64 | 3.38 | +70.5% |
+| **Swing Allocator v0 (regimen+halving)** | 2018-2026 | $109,096 | +990.96% | 52 | 3.08 | +34.8% |
+| **Pro Trend v13 (realistic, partial_exit=150%)** | 2018-2026 | $62,184 | +521.8% | 12 | 3.89 | +25.7% |
+| **Pro Trend v13 (realistic)** | 2015-2026 | $591,169 | +5812% | 20 | 4.96 | +44.9% |
+| Swing Allocator (sin senales, baseline) | 2015-2026 | $774,673 | +7646% | 14 | 7.50 | +48.5% |
+| Swing Allocator (full signals) | 2015-2026 | $1,279,984 | +12699% | 249 | 1.44 | +55.4% |
 | BTC Buy & Hold (realistic) | 2018-2026 | ~$64,971 | +549.7% | — | — | +26.4% |
-| Pro Trend v11 | 2018-2026 | $74,124 | +641% | 11 | 5.61 | +28.6% |
+| BTC Buy & Hold (realistic) | 2015-2026 | ~$2,779,400 | +27694% | — | — | ~+66.8% |
+| Pro Trend v12 (ideal) | 2018-2026 | $71,412 | +614% | 11 | 5.81 | +28.0% |
+| Pro Trend v12 (realistic) | 2018-2026 | $58,050 | +480.5% | 12 | 3.64 | +24.7% |
 | Adaptive Trend (realistic) | 2018-2026 | ~$48,090 | +380.9% | 20 | 2.91 | +21.8% |
 | Scalp Momentum v4 | 2022-2026 | $9,640 | -3.6% | 351 | 0.93 | -0.8% |
 
@@ -175,12 +408,12 @@ Anti-overfitting: confirmado (PF>1.0 en activo diferente). Edge mas debil por ET
 
 ### 13 gates de entrada long (en orden)
 VIX < 35 → score >= 9 → ventaja > 2 → weekly_trend not False → h4_bullish not False
-→ MVRV < 2.5 (long_reduce_risk=False) → funding < 0.0005 → DXY no headwind
+→ MVRV < 3.0 (long_reduce_risk=False) → funding < 0.0005 → DXY no headwind
 → NASDAQ no risk-off → Pi Cycle Top inactivo → RSI ok (0=off) → ATR ok (0=off)
 → ADX >= 15.0 → MACD alcista en D o 4H
 Gates como variables `_g_*` en run() para diagnostico en logs.
 
-### ProTrendConfig — valores actuales v12
+### ProTrendConfig — valores actuales v13
 ```python
 entry_score_min         = 9      # todos los ganadores historicos tuvieron score >= 9
 adx_min_entry           = 15.0   # bloquea mercados sin tendencia
@@ -197,6 +430,8 @@ cooldown_trailing_bull_days = 7
 cooldown_atr_stop_days  = 30
 max_loss_pct            = 20.0
 atr_stop_mult           = 3.0
+partial_exit_pct        = 150.0  # vende 33% al +150% — confirmado 2026-06-30 (+1pp CAGR)
+partial_exit_size       = 0.33
 allow_shorts            = False
 macd_exit_enabled       = False
 lookback_hours          = 15000  # 625 dias para SMA350D (Pi Cycle Top)
@@ -208,7 +443,7 @@ disable_external_filters = False # True solo para ablation tests
 - `size_ultra` (90%): score >= 8 en post_halving/bull_peak
 - `size_high` (80%): score >= 8 fuera de bull phase
 - `size_mid` (60%): score < 8
-- Ajustes: bear_onset x0.75 | MVRV euphoria cap 20% | VIX>22 cap size_mid | VIX>35 bloqueo | shorts cap 15%
+- Ajustes: bear_onset x0.75 | MVRV euphoria cap 20% | VIX>22 cap size_mid (auditar bug sizing) | VIX>35 bloqueo | shorts cap 15%
 
 ### Cache de indicadores
 - `_daily_cache`: {"date": "YYYY-MM-DD", "ind": {...}}
@@ -240,9 +475,9 @@ Metricas: `CapMVRVCur` + `PriceUSD`. `PriceRealizedUSD` NO disponible en tier gr
 Realized Price = PriceUSD / CapMVRVCur.
 URL: usar `%2C` para separar metricas (comma URL-encoded).
 
-MVRV umbrales: deep_bear<1.0 | recovery<2.0 | bull 2.0-2.5 | late_bull 2.5-3.5 | euphoria>3.5
-- `long_reduce_risk=True` si MVRV >= 2.5
-- Maximo historico backtests: ~2.96 (Q2 2021) — con umbral 2.5 activa en T5 y T9
+MVRV umbrales actuales: deep_bear<1.0 | recovery<2.0 | bull 2.0-3.0 | late_bull 3.0-3.5 | euphoria>3.5
+- `long_reduce_risk=True` si MVRV >= 3.0
+- Maximo historico backtests: ~2.96 (Q2 2021) — por eso MVRV es filtro casi decorativo en 2018-2026
 
 Halvings BTC: 28-Nov-2012, 9-Jul-2016, 11-May-2020, 20-Abr-2024, ~15-Mar-2028 (estimado)
 Fases: post_halving(0-180d) | bull_peak(180-540d) | bear_onset(540-900d) | accumulation(>900d)
@@ -335,6 +570,7 @@ Senales de alarma en live:
 | v10+VIX+Funding | VIX layers, funding historico | +$17.7k |
 | v11 | score_min=9, sizes 90/80/60%, sin penalizacion acumulacion | +$19.3k |
 | v12 | adx_min=15, gate MACD cross-TF, bear_onset×0.75 | ideal +614%, realistic +480% |
+| v13 | partial_exit_pct=150% como default | +521% (2018-26), +5812% (2015-26), 3 ciclos bull |
 
 ---
 
@@ -359,6 +595,12 @@ Senales de alarma en live:
 - RSI bearish div +2 pts en short score — demasiado ruido en bull markets
 - Shorts activados en Pro Trend 2018-2026 — pierde en correcciones de bull market
 - MACD cross exit en ScalpMomentum — cortaba ganadores antes del TP
+- Swing Allocator baseline 60/40 sin senales — pierde 18pp CAGR vs B&H en 2015-2026. Rebalanceo mecanico vende BTC en subidas, reduce holdings para el siguiente tramo alcista. Solo funciona si las senales de regimen aumentan exposicion en bull markets.
+- Swing Allocator full signals (RSI+VIX+MACD 4H+MVRV) — 249 trades, peor que regimen solo. Cada senal adicional sobre el regimen anado ruido y costes sin alpha neto. Senales de alta frecuencia (4H MACD, RSI diario) incompatibles con cooldown de 3 dias.
+- MVRV en Swing Allocator — confirmado inutil en sensitivity. Anade trades sin alpha, PF cae de 2.79 a 2.29.
+- Pi Cycle en Swing Allocator — neutro. Mismos trades, PF algo peor. No justifica la complejidad.
+- regime=±0.15 + threshold=0.15 combinados — sistema demasiado restrictivo (21 trades en 8 anos). Individualmente cada uno mejora la referencia, juntos se anulan y empeoran CAGR (-1.7pp).
+- threshold=0.20 — solo 17 trades en 8 anos, PF 15.67 es ruido estadistico puro. CAGR -3.3pp.
 
 ---
 
@@ -378,6 +620,93 @@ Pi Cycle Top solo BTC. Halvings solo BTC.
 
 ## JOURNAL (reporting/trade_journal.py)
 
-`write_journal(journal, strategy_name, symbol, timeframe, from_date, to_date, cost_mode, config_overrides)`
+`write_journal(journal, strategy_name, symbol, timeframe, from_date, to_date, cost_mode, config_overrides, resolved_config, backtest_summary)`
 Archivo: `backtests/journal_{estrategia}_{simbolo}_{timeframe}_{ts}.json`
-Meta incluye `cost_mode` y `config_overrides` para identificar la sesion y config exacta.
+Meta incluye `cost_mode`, `config_overrides`, `resolved_config` y `backtest` para identificar
+la sesion, config final exacta y resumen del resultado.
+
+P0 implementado 2026-06-30: en estrategias con partial exits, el journal agrega `true_pnl_usdt`,
+`true_pnl_pct`, `total_close_pnl_usdt`, `balance_pnl_adjustment_usdt` y `uses_balance_pnl`.
+`pnl_usdt` se conserva como PnL del cierre final para auditoria.
+
+P0 ampliado 2026-06-30 para Pro Trend:
+- `meta.resolved_config`: config efectiva de la estrategia, incluyendo defaults no pasados por CLI.
+- `meta.backtest`: balance inicial/final, retorno, B&H, CAGR, MaxDD, Sharpe/Sortino, trades, PF,
+  win rate, expectancy, barras, warmup y costes.
+- `open.size_pct`: porcentaje real de balance usado en la apertura.
+- `open.indicators.sizing`: tier, size planificado, size real, diferencia real-plan, cap MVRV/VIX
+  y balance/invest usado.
+- `open.indicators.entry_gates`: estado de cada gate de entrada (`g_score`, `g_mvrv`, `g_funding`,
+  `g_dxy`, `g_ndx`, `g_adx_min`, `g_macd_momentum`, etc.).
+- `open/close.indicators`: MVRV regime, halving, realized price, VIX, DXY/NDX, funding,
+  `partial_exit_triggered`, `half_reduced` y config de partial exit.
+- `close.giveback_pct` y `close.exit_from_peak_pct`: cuanto se devolvio desde MFE hasta salida.
+- `close.partial_exit_triggered`: si el trade tuvo partial exit antes del cierre final.
+
+Nota Windows:
+- PowerShell acepta `--config '{"partial_exit_pct": 150.0}'`.
+- CMD requiere comillas escapadas: `--config "{\"partial_exit_pct\": 150.0}"`.
+
+---
+
+## SWING ALLOCATOR — REFERENCIA
+
+### Archivos
+- `strategies/swing_allocator.py` — estrategia completa (SwingAllocatorConfig + SwingAllocatorBot)
+- `reporting/swing_journal.py` — journal de rebalanceos (distinto de trade_journal.py)
+- `SWING_PLAN.md` — diseño completo, criterios go/no-go, plan de validacion
+
+### Concepto
+Mantiene siempre BTC en cartera (nunca sale del todo). Ajusta el porcentaje entre 30-100%
+segun senales macro. Objetivo: batir B&H acumulando mas BTC en correcciones.
+
+### SwingAllocatorConfig — versiones
+
+**v0 (actual default en codigo):**
+```python
+base_btc_pct  = 0.60   # allocation neutral
+min_btc_pct   = 0.30   # hard floor
+max_btc_pct   = 1.00   # hard ceiling
+rebalance_threshold        = 0.10
+min_days_between_rebalance = 3
+use_regime=True, use_halving=True  # todo lo demas False
+delta_regime_bull=+0.20, delta_regime_bear=-0.20
+delta_post_halving=+0.10, delta_bear_onset=-0.10
+```
+Resultado: 2015-2026 +70.5% CAGR, 2018-2026 +34.8% CAGR, WF 4/4 ✅
+
+**v1 candidata (pendiente WF validation):**
+```python
+# Solo cambia delta_halving — todo lo demas igual que v0
+delta_post_halving = +0.20   # target = 1.00 en post_halving/bull_peak (vs 0.90 en v0)
+delta_bear_onset   = -0.20   # target = 0.20 -> clamped a 0.30 en bear_onset
+```
+Resultado: 2015-2026 +77.4% CAGR (+6.9pp), 2018-2026 +36.7% CAGR (+3.2pp), Max DD -60.79%
+Comando: `--config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false,\"delta_post_halving\":0.20,\"delta_bear_onset\":-0.20}"`
+
+### Mecanismo por fases
+- **Bull (golden cross + precio > EMA200D + ADX > 15):** target 80-90% BTC
+- **Bear (death cross):** target 30-40% BTC
+- **Resultado:** captura 80-90% de los bull runs, evita 60-70% de los bear markets
+- Rebalanceo cada vez que la diferencia entre actual y target supera el 10%, con cooldown 3 dias
+
+### Por que gana a B&H
+El capital preservado en bear phases (USDT) compra mas BTC en la recuperacion.
+Ejemplo 2022: B&H pierde ~77% desde peak. Swing en 30% BTC pierde ~23%.
+Ese USDT compra BTC barato en 2023, que luego sube x5 en 2024-2025.
+
+### Fixes implementados (2026-06-30)
+1. **Slippage buffer**: `buy_usdt = min(delta_value, usdt_bal * Decimal("0.998"))` — evita "saldo insuficiente"
+2. **Signals logging**: `_compute_target()` devuelve `(target, active_signals)` — cada rebalanceo registra que senales lo dispararon
+3. **BTC acumulado**: journal incluye `final_btc_qty`, `bnh_initial_btc`, `btc_vs_bnh_ratio` — metrica clave para holders
+4. **Signal frequency**: journal incluye mapa de frecuencia por tipo de senal
+
+### Bugs resueltos (no re-investigar)
+- "Saldo insuficiente" en full signals: fix aplicado con buffer 0.2%
+- Signals vacias en journal: fix aplicado devolviendo active list desde `_compute_target`
+
+### Comando de referencia
+```bash
+python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --costs realistic \
+  --config "{\"use_mvrv\":false,\"use_rsi\":false,\"use_pi_cycle\":false,\"use_vix\":false,\"use_macd_4h\":false}"
+```

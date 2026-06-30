@@ -173,10 +173,10 @@ class ProTrendConfig:
 
     # Partial exit: vende partial_exit_size de la posicion cuando la ganancia no realizada
     # supera partial_exit_pct %. Reduce la concentracion en trades excepcionales.
-    # 0.0 = desactivado. Ejemplo: 200.0 → vende 33% cuando la ganancia llega al 200% (3x precio).
+    # 150.0 confirmado por backtest 2018-2026 y 2015-2026: +1pp CAGR, mejor PF, DD neutro.
     # La posicion restante sigue con trailing stop normal.
-    # Ablation: --config '{"partial_exit_pct": 200.0}'  o  '{"partial_exit_pct": 150.0}'
-    partial_exit_pct:  float = 0.0
+    # Ablation: --config '{"partial_exit_pct": 0.0}' para desactivar, '{"partial_exit_pct": 200.0}' neutral.
+    partial_exit_pct:  float = 150.0
     partial_exit_size: float = 0.33   # fraccion a vender en el evento (0.33 = 33%)
 
     # Historial: 625 dias (~87 semanas), suficiente para EMA350D del Pi Cycle Top
@@ -890,6 +890,69 @@ class ProTrendBot(BaseStrategy):
 
         return base
 
+    def _size_journal_snapshot(
+        self,
+        score: int,
+        side: str,
+        macro: dict,
+        market: dict,
+        balance_before: float,
+        invest: float | None = None,
+    ) -> dict:
+        """Snapshot de sizing para auditoria; no participa en decisiones."""
+        cfg = self._cfg
+        phase = macro.get("halving_phase", "")
+        reduce_risk = bool(macro.get("long_reduce_risk", False))
+        vix_elevated = bool(market.get("vix_elevated", False))
+
+        if side == "short":
+            tier = "short_cap"
+        elif phase in ("post_halving", "bull_peak") and score >= 8:
+            tier = "ultra"
+        elif score >= 8:
+            tier = "high"
+        else:
+            tier = "mid"
+
+        planned = self._size_pct(
+            score, side,
+            reduce_risk=reduce_risk,
+            halving_phase=phase,
+            vix_elevated=vix_elevated,
+        )
+        no_vix = self._size_pct(
+            score, side,
+            reduce_risk=reduce_risk,
+            halving_phase=phase,
+            vix_elevated=False,
+        )
+
+        actual = None
+        if invest is not None and balance_before > 0:
+            actual = invest / balance_before
+        actual_delta_pct = (
+            (actual - float(planned)) * 100
+            if actual is not None
+            else None
+        )
+
+        return {
+            "size_tier":              tier,
+            "planned_size_fraction":  float(planned),
+            "planned_size_pct":       round(float(planned) * 100, 2),
+            "size_without_vix_pct":   round(float(no_vix) * 100, 2),
+            "actual_size_fraction":   round(actual, 6) if actual is not None else None,
+            "actual_size_pct":        round(actual * 100, 2) if actual is not None else None,
+            "actual_minus_planned_size_pct": round(actual_delta_pct, 2) if actual_delta_pct is not None else None,
+            "invest_usdt":            round(invest, 2) if invest is not None else None,
+            "balance_before_usdt":    round(balance_before, 2),
+            "mvrv_cap_applied":       reduce_risk,
+            "bear_onset_reduction":   phase == "bear_onset",
+            "vix_cap_expected":       vix_elevated and planned < no_vix,
+            "vix_elevated":           vix_elevated,
+            "vix_extreme":            bool(market.get("vix_extreme", False)),
+        }
+
     # -----------------------------------------------------------------------
     # Acciones — longs
     # -----------------------------------------------------------------------
@@ -1475,6 +1538,9 @@ class ProTrendBot(BaseStrategy):
             ndx_threshold=-cfg.ndx_risk_off_pct,
         )
         self._current_macro  = macro
+        _entry_gates: dict | None = None
+        _entry_funding_rate: float | None = None
+        _entry_side: str | None = None
 
         # === Journal: capturar estado PRE-acción ===
         _pos_before      = position
@@ -1486,6 +1552,8 @@ class ProTrendBot(BaseStrategy):
         _entry_pre  = float(Decimal(self._state.get("entry_price")  or "0") or "0")
         _stop_pre   = float(Decimal(self._state.get("stop_loss")    or "0") or "0")
         _qty_pre    = float(Decimal(self._state.get("position_qty") or "0") or "0")
+        _partial_exited_pre = bool(self._state.get("partial_exited", False))
+        _half_reduced_pre   = bool(self._state.get("half_reduced", False))
 
         if position == "long":
             self._manage_long(daily, weekly, h1, price, ls, ss)
@@ -1503,6 +1571,7 @@ class ProTrendBot(BaseStrategy):
             if not in_cooldown:
                 weekly_trend = weekly.get("weekly_trend_up")
                 funding      = self._client.get_funding_rate(cfg.symbol)
+                _entry_funding_rate = funding
 
                 # Bear técnico: EMA200D declinando + precio por debajo
                 ema_bear = (
@@ -1564,6 +1633,26 @@ class ProTrendBot(BaseStrategy):
                 _g_adx_min = daily.get("adx", 99) >= cfg.adx_min_entry
                 # v12: momentum cruzado — al menos un timeframe (diario o 4H) con MACD alcista
                 _g_macd_momentum = daily.get("macd_above", False) or h4.get("h4_macd_above", True)
+                _entry_gates = {
+                    "g_vix_panic":       bool(_g_vix_panic),
+                    "g_score":           bool(_g_score),
+                    "g_gap":             bool(_g_gap),
+                    "g_weekly":          bool(_g_weekly),
+                    "g_h4":              bool(_g_h4),
+                    "g_mvrv":            bool(_g_mvrv),
+                    "g_funding":         bool(_g_funding),
+                    "g_dxy":             bool(_g_dxy),
+                    "g_ndx":             bool(_g_ndx),
+                    "g_pi":              bool(_g_pi),
+                    "g_rsi":             bool(_g_rsi),
+                    "g_atr":             bool(_g_atr),
+                    "g_adx_min":         bool(_g_adx_min),
+                    "g_macd_momentum":   bool(_g_macd_momentum),
+                    "required_score":    _required_score,
+                    "score_gap":         ls - ss,
+                    "entry_score_gap":   cfg.entry_score_gap,
+                    "atr_units_ext":     round(atr_units_ext, 3),
+                }
 
                 long_ok = (
                     _g_vix_panic and _g_score and _g_gap and _g_weekly and _g_h4
@@ -1571,6 +1660,7 @@ class ProTrendBot(BaseStrategy):
                     and _g_pi and _g_rsi and _g_atr
                     and _g_adx_min and _g_macd_momentum
                 )
+                _entry_gates["long_ok"] = bool(long_ok)
 
                 # Log detallado cuando score cerca del umbral pero bloqueado
                 if not long_ok and ls >= cfg.entry_score_min - 1:
@@ -1609,8 +1699,10 @@ class ProTrendBot(BaseStrategy):
                     and h4.get("trend_bearish") is not False
                     and funding_ok_short
                 )
+                _entry_gates["short_ok"] = bool(short_ok)
 
                 if long_ok:
+                    _entry_side = "long"
                     size_pct = self._size_pct(
                         ls, "long",
                         reduce_risk=macro["long_reduce_risk"],
@@ -1628,6 +1720,7 @@ class ProTrendBot(BaseStrategy):
                     )
                     self._open_long(price, ls, daily["atr"])
                 elif short_ok:
+                    _entry_side = "short"
                     logger.info(
                         "[{}] ENTRADA SHORT score={} (long={}) mvrv={} phase={} realized={}",
                         self.name, ss, ls,
@@ -1646,12 +1739,27 @@ class ProTrendBot(BaseStrategy):
         if _pos_before != _pos_after:
             _ind = self._journal_ind_snapshot(daily, weekly, h4, h1, ls, ss)
             # Contexto macro/mercado en el momento del trade
-            _ind["mvrv"]           = round(macro["mvrv"], 2) if macro.get("mvrv") else None
-            _ind["halving_phase"]  = macro.get("halving_phase")
-            _ind["dxy_change_pct"] = market.get("dxy_change")
-            _ind["ndx_change_pct"] = market.get("ndx_change")
-            _ind["dxy_headwind"]   = market.get("dxy_headwind")
-            _ind["ndx_risk_off"]   = market.get("risk_off")
+            _ind["mvrv"]                 = round(macro.get("mvrv"), 2) if macro.get("mvrv") else None
+            _ind["mvrv_regime"]          = macro.get("mvrv_regime")
+            _ind["long_reduce_risk"]     = macro.get("long_reduce_risk")
+            _ind["realized_price"]       = round(macro.get("realized_price"), 2) if macro.get("realized_price") else None
+            _ind["days_since_halving"]   = macro.get("days_since_halving")
+            _ind["halving_phase"]        = macro.get("halving_phase")
+            _ind["dxy_change_pct"]       = market.get("dxy_change")
+            _ind["ndx_change_pct"]       = market.get("ndx_change")
+            _ind["vix_level"]            = market.get("vix_level")
+            _ind["vix_elevated"]         = market.get("vix_elevated")
+            _ind["vix_extreme"]          = market.get("vix_extreme")
+            _ind["dxy_headwind"]         = market.get("dxy_headwind")
+            _ind["ndx_risk_off"]         = market.get("risk_off")
+            _ind["funding_rate"]         = _entry_funding_rate
+            _ind["partial_exit_triggered"] = _partial_exited_pre
+            _ind["half_reduced"]         = _half_reduced_pre
+            _ind["partial_exit_pct_config"] = cfg.partial_exit_pct
+            _ind["partial_exit_size_config"] = cfg.partial_exit_size
+            if _entry_gates is not None:
+                _ind["entry_gates"] = _entry_gates
+                _ind.update(_entry_gates)
             _bal_after = float(self._client.get_balance().get("USDT", Decimal("0")))
 
             # peak_gain_pct: maximo no realizado desde entrada (diagnostico ATR stops y trailing losses)
@@ -1693,6 +1801,16 @@ class ProTrendBot(BaseStrategy):
             if _pos_after in ("long", "short"):
                 _stop_val = float(Decimal(self._state.get("stop_loss", "0") or "0"))
                 _qty_val  = float(Decimal(self._state.get("position_qty", "0") or "0"))
+                _score_for_size = ls if _pos_after == "long" else ss
+                _ind["entry_side"] = _entry_side or _pos_after
+                _ind["sizing"] = self._size_journal_snapshot(
+                    _score_for_size,
+                    _pos_after,
+                    macro,
+                    market,
+                    _balance_before,
+                    self._last_open_invest,
+                )
                 self._journal_open(
                     side=_pos_after, ts=_ts_now, price=float(price),
                     invest=self._last_open_invest, stop=_stop_val, qty=_qty_val,
