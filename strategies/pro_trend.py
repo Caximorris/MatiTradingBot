@@ -903,7 +903,8 @@ class ProTrendBot(BaseStrategy):
         cfg = self._cfg
         phase = macro.get("halving_phase", "")
         reduce_risk = bool(macro.get("long_reduce_risk", False))
-        vix_elevated = bool(market.get("vix_elevated", False))
+        vix_elevated_raw = bool(market.get("vix_elevated", False))
+        vix_elevated_for_size = vix_elevated_raw and not cfg.disable_external_filters
 
         if side == "short":
             tier = "short_cap"
@@ -918,7 +919,7 @@ class ProTrendBot(BaseStrategy):
             score, side,
             reduce_risk=reduce_risk,
             halving_phase=phase,
-            vix_elevated=vix_elevated,
+            vix_elevated=vix_elevated_for_size,
         )
         no_vix = self._size_pct(
             score, side,
@@ -948,8 +949,10 @@ class ProTrendBot(BaseStrategy):
             "balance_before_usdt":    round(balance_before, 2),
             "mvrv_cap_applied":       reduce_risk,
             "bear_onset_reduction":   phase == "bear_onset",
-            "vix_cap_expected":       vix_elevated and planned < no_vix,
-            "vix_elevated":           vix_elevated,
+            "vix_cap_expected":       vix_elevated_for_size and planned < no_vix,
+            "vix_elevated":           vix_elevated_raw,
+            "vix_elevated_for_size":  vix_elevated_for_size,
+            "vix_cap_disabled_by_ablation": vix_elevated_raw and cfg.disable_external_filters,
             "vix_extreme":            bool(market.get("vix_extreme", False)),
         }
 
@@ -957,14 +960,26 @@ class ProTrendBot(BaseStrategy):
     # Acciones — longs
     # -----------------------------------------------------------------------
 
-    def _open_long(self, price: Decimal, score: int, atr_val: float) -> None:
+    def _open_long(
+        self,
+        price: Decimal,
+        score: int,
+        atr_val: float,
+        vix_elevated: bool | None = None,
+    ) -> None:
         cfg  = self._cfg
         usdt = self._client.get_balance().get("USDT", Decimal("0"))
         macro = getattr(self, "_current_macro", {})
+        if vix_elevated is None:
+            market = getattr(self, "_current_market", {})
+            vix_elevated = bool(market.get("vix_elevated", False))
+        if cfg.disable_external_filters:
+            vix_elevated = False
         invest = (usdt * self._size_pct(
             score, "long",
             reduce_risk=macro.get("long_reduce_risk", False),
             halving_phase=macro.get("halving_phase", ""),
+            vix_elevated=vix_elevated,
         )).quantize(Decimal("0.01"))
 
         ok, reason = self.check_risk(cfg.symbol, invest)
@@ -1538,6 +1553,9 @@ class ProTrendBot(BaseStrategy):
             ndx_threshold=-cfg.ndx_risk_off_pct,
         )
         self._current_macro  = macro
+        self._current_market = market
+        _vix_elevated_raw = bool(market.get("vix_elevated", False))
+        _vix_elevated_for_size = _vix_elevated_raw and not cfg.disable_external_filters
         _entry_gates: dict | None = None
         _entry_funding_rate: float | None = None
         _entry_side: str | None = None
@@ -1652,6 +1670,8 @@ class ProTrendBot(BaseStrategy):
                     "score_gap":         ls - ss,
                     "entry_score_gap":   cfg.entry_score_gap,
                     "atr_units_ext":     round(atr_units_ext, 3),
+                    "vix_elevated_for_size": _vix_elevated_for_size,
+                    "vix_cap_disabled_by_ablation": _vix_elevated_raw and cfg.disable_external_filters,
                 }
 
                 long_ok = (
@@ -1707,7 +1727,7 @@ class ProTrendBot(BaseStrategy):
                         ls, "long",
                         reduce_risk=macro["long_reduce_risk"],
                         halving_phase=macro["halving_phase"],
-                        vix_elevated=market.get("vix_elevated", False),
+                        vix_elevated=_vix_elevated_for_size,
                     )
                     logger.info(
                         "[{}] ENTRADA LONG score={} (short={}) size={:.0f}% "
@@ -1718,7 +1738,12 @@ class ProTrendBot(BaseStrategy):
                         f"{market['dxy_change']:+.1f}%" if market["dxy_change"] is not None else "N/D",
                         f"{market['ndx_change']:+.1f}%" if market["ndx_change"] is not None else "N/D",
                     )
-                    self._open_long(price, ls, daily["atr"])
+                    self._open_long(
+                        price,
+                        ls,
+                        daily["atr"],
+                        vix_elevated=_vix_elevated_for_size,
+                    )
                 elif short_ok:
                     _entry_side = "short"
                     logger.info(
@@ -1749,6 +1774,8 @@ class ProTrendBot(BaseStrategy):
             _ind["ndx_change_pct"]       = market.get("ndx_change")
             _ind["vix_level"]            = market.get("vix_level")
             _ind["vix_elevated"]         = market.get("vix_elevated")
+            _ind["vix_elevated_for_size"] = _vix_elevated_for_size
+            _ind["vix_cap_disabled_by_ablation"] = _vix_elevated_raw and cfg.disable_external_filters
             _ind["vix_extreme"]          = market.get("vix_extreme")
             _ind["dxy_headwind"]         = market.get("dxy_headwind")
             _ind["ndx_risk_off"]         = market.get("risk_off")

@@ -55,6 +55,13 @@ class SwingAllocatorConfig:
     # WF 4/4 TEST positivo, ETH identico a v1 (sin halvings). Estructural: bear_onset = distribucion.
     regime_off_on_bear_onset: bool = True
 
+    # -- Late-cycle DD control -- v3 DEFAULT desde 2026-07-01.
+    # En bull_peak, si BTC pierde la EMA50D del dia anterior cerrado, capea solo el target
+    # maximo a 85%. Mantiene min_btc_pct=30% y evita caps globales que destruyeron CAGR.
+    # Reversible: False vuelve a v2.
+    bull_peak_ema50_cap_enabled: bool = True
+    bull_peak_ema50_cap:         float = 0.85
+
     # -- Deltas de cada senal (cuanto mueve el target) --
     delta_regime_bull:   float =  0.20   # bull macro: EMA50D>200D + precio>200D + ADX>15
     delta_regime_bear:   float = -0.20   # bear macro: EMA50D<200D
@@ -240,17 +247,17 @@ class SwingAllocatorBot:
         # la rama regime_bull (ruido de EMA-cross al alza en lateral, causa del ping-pong Q4 2025)
         # pero se MANTIENE regime_bear (senal defensiva real en bear market — su supresion rompio
         # 2022 en la version anterior). Ver analisis sesion 13.
-        bear_onset_active = bool(
-            cfg.use_halving and macro and macro.get("halving_phase", "") == "bear_onset"
-        )
+        phase = macro.get("halving_phase", "") if macro else ""
+        bear_onset_active = bool(cfg.use_halving and phase == "bear_onset")
         suppress_bull = cfg.regime_off_on_bear_onset and bear_onset_active
+
+        price = float(self._client.get_ticker(self._cfg.symbol))
 
         # --- Regimen macro: EMA50D/200D + ADX ---
         if cfg.use_regime and ind:
             ema50  = ind.get("ema50d",  0.0)
             ema200 = ind.get("ema200d", 0.0)
             adx_v  = ind.get("adx",     0.0)
-            price  = float(self._client.get_ticker(self._cfg.symbol))
             if ema50 > ema200 and price > ema200 and adx_v > cfg.adx_min_trend:
                 if suppress_bull:
                     active.append("regime_bull_suppressed_bear_onset")
@@ -263,7 +270,6 @@ class SwingAllocatorBot:
 
         # --- Halving phase ---
         if cfg.use_halving and macro:
-            phase = macro.get("halving_phase", "")
             if phase in ("post_halving", "bull_peak"):
                 target += cfg.delta_post_halving
                 active.append(f"halving_{phase}")
@@ -332,6 +338,19 @@ class SwingAllocatorBot:
             elif dxy_change < -1.5:
                 target += cfg.delta_dxy_weak
                 active.append(f"dxy_weak_{dxy_change:.1f}")
+
+        # --- Late-cycle de-risk: cap only after losing the previous full day's EMA50D ---
+        ema50_closed = ind.get("ema50d_closed") if ind else None
+        if (
+            cfg.bull_peak_ema50_cap_enabled
+            and cfg.use_halving
+            and phase == "bull_peak"
+            and ema50_closed is not None
+            and price < float(ema50_closed)
+            and target > cfg.bull_peak_ema50_cap
+        ):
+            target = cfg.bull_peak_ema50_cap
+            active.append(f"bull_peak_ema50_cap_{target:.2f}")
 
         # Hard limits
         target = max(cfg.min_btc_pct, min(cfg.max_btc_pct, target))
@@ -446,6 +465,12 @@ class SwingAllocatorBot:
             rsi14   = rsi_fn(closes, 14)
             adx14   = adx_fn(highs, lows, closes, 14)
 
+            current_day = pd.Timestamp(current_dt.date(), tz="UTC")
+            closed_daily = daily[daily["dt"] < current_day]
+            ema50d_closed = None
+            if len(closed_daily) >= 50:
+                ema50d_closed = float(ema_fn(closed_daily["close"], 50).iloc[-1])
+
             # Pi Cycle Top: SMA111D * 2 >= SMA350D
             pi_cycle_top = False
             if self._cfg.pi_cycle_enabled and len(daily) >= 351:
@@ -459,6 +484,7 @@ class SwingAllocatorBot:
                 "rsi":          float(rsi14.iloc[-1]),
                 "adx":          float(adx14.iloc[-1]),
                 "pi_cycle_top": pi_cycle_top,
+                "ema50d_closed": ema50d_closed,
             }
 
             self._daily_cache = {"date": date_key, "ind": ind}

@@ -375,40 +375,42 @@ def _run_backtest(
 
             # Escribir journal de trades con todos los indicadores y contexto
             strat = engine.last_strategy
+            cfg_obj = getattr(strat, "_cfg", None) if strat is not None else None
+            if cfg_obj is not None and hasattr(cfg_obj, "to_dict"):
+                resolved_config = cfg_obj.to_dict()
+            else:
+                resolved_config = getattr(strat, "_config", {}) if strat is not None else {}
+                resolved_config = resolved_config or {}
+
+            backtest_summary = {
+                "initial_balance":      result.initial_balance,
+                "final_balance":        result.final_balance,
+                "total_pnl":            result.total_pnl,
+                "total_return_pct":     result.total_pnl_pct,
+                "buy_hold_return_pct":  result.buy_hold_pnl_pct,
+                "cagr_pct":             result.cagr,
+                "max_drawdown_pct":     result.max_drawdown_pct,
+                "sharpe":               result.sharpe_ratio,
+                "sortino":              result.sortino,
+                "time_in_market_pct":   result.time_in_market_pct,
+                "profit_factor":        result.profit_factor,
+                "win_rate_pct":         result.win_rate,
+                "total_trades":         result.total_trades,
+                "winning_trades":       result.winning_trades,
+                "losing_trades":        result.losing_trades,
+                "max_consec_losses":    result.max_consec_losses,
+                "expectancy":           result.expectancy,
+                "avg_win":              result.avg_win,
+                "avg_loss":             result.avg_loss,
+                "bars_tested":          result.bars_tested,
+                "warmup_bars":          engine_warmup,
+                "cost_mode":            result.cost_mode,
+                "start_date":           result.start_date,
+                "end_date":             result.end_date,
+            }
+
             if strat is not None and hasattr(strat, "_journal") and strat._journal:
                 from reporting.trade_journal import write_journal
-                cfg_obj = getattr(strat, "_cfg", None)
-                if cfg_obj is not None and hasattr(cfg_obj, "to_dict"):
-                    resolved_config = cfg_obj.to_dict()
-                else:
-                    resolved_config = getattr(strat, "_config", {}) or {}
-
-                backtest_summary = {
-                    "initial_balance":      result.initial_balance,
-                    "final_balance":        result.final_balance,
-                    "total_pnl":            result.total_pnl,
-                    "total_return_pct":     result.total_pnl_pct,
-                    "buy_hold_return_pct":  result.buy_hold_pnl_pct,
-                    "cagr_pct":             result.cagr,
-                    "max_drawdown_pct":     result.max_drawdown_pct,
-                    "sharpe":               result.sharpe_ratio,
-                    "sortino":              result.sortino,
-                    "time_in_market_pct":   result.time_in_market_pct,
-                    "profit_factor":        result.profit_factor,
-                    "win_rate_pct":         result.win_rate,
-                    "total_trades":         result.total_trades,
-                    "winning_trades":       result.winning_trades,
-                    "losing_trades":        result.losing_trades,
-                    "max_consec_losses":    result.max_consec_losses,
-                    "expectancy":           result.expectancy,
-                    "avg_win":              result.avg_win,
-                    "avg_loss":             result.avg_loss,
-                    "bars_tested":          result.bars_tested,
-                    "warmup_bars":          engine_warmup,
-                    "cost_mode":            result.cost_mode,
-                    "start_date":           result.start_date,
-                    "end_date":             result.end_date,
-                }
                 journal_path = write_journal(
                     journal=strat._journal,
                     strategy_name=strat.name,
@@ -444,6 +446,8 @@ def _run_backtest(
                     initial_balance=float(bt_client.initial_balance),
                     final_balance=float(result.final_balance),
                     final_btc_qty=_final_btc,
+                    resolved_config=resolved_config,
+                    backtest_summary=backtest_summary,
                 )
                 if journal_out is not None:
                     journal_out.append(swing_path)

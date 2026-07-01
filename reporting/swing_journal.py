@@ -21,6 +21,8 @@ def write_swing_journal(
     initial_balance: float,
     final_balance: float,
     final_btc_qty: float = 0.0,
+    resolved_config: dict | None = None,
+    backtest_summary: dict | None = None,
 ) -> str:
     """
     Escribe el journal de rebalanceos en backtests/journal_{strategy}_{symbol}_{tf}_{ts}.json.
@@ -82,6 +84,8 @@ def write_swing_journal(
             "to_date":         to_date,
             "cost_mode":       cost_mode,
             "config_overrides": config_overrides,
+            "resolved_config": resolved_config or {},
+            "backtest":        backtest_summary or {},
             "generated_at":    datetime.now(tz=timezone.utc).isoformat(),
         },
         "statistics": stats,

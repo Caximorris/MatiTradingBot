@@ -392,6 +392,30 @@ Max DD -59.02%. La supresion debe ser SOLO de la rama bull.
 el DD viene de estar 90-100% BTC en techos de ciclo (mayo 2021: 100% BTC, de-risk tardio a -36%),
 no de los bears (donde ya esta en floor 30%).
 
+### Post-v2 exposure battery (2026-07-01)
+
+Todos BTC 2015-2026 realistic, v2 default + un cambio. La candidata viva fue re-corrida con
+journal ampliado (`meta.backtest`) para obtener Max DD exacto.
+
+| Variante | Balance final | CAGR aprox | Rebalances | BTC vs B&H | Veredicto |
+|---|---:|---:|---:|---:|---|
+| v2 baseline | $6.69M | +80.7% | 118 | 0.843x | DEFAULT |
+| `min_btc_pct=0.0` | $7.56M | +82.7% | 117 | 0.516x | NO DEFAULT: mejora USDT, rompe BTC acumulado |
+| Todo-o-nada | $5.58M | +77.7% | 108 | 0.000x | DESCARTADO |
+| `max_btc_pct=0.90` | $4.08M | +72.7% | 69 | 0.515x | DESCARTADO |
+| `max_btc_pct=0.80` | $3.68M | +71.1% | 70 | 0.463x | DESCARTADO |
+| `max_btc_pct=0.70` | $1.83M | +60.6% | 51 | 0.231x | DESCARTADO |
+
+Validacion `min_btc_pct=0.0`:
+- 2015-26 realistic: $7.56M, CAGR +82.66%, Max DD -53.41%, PF 4.78, `btc_vs_bnh_ratio=0.5162`
+- 2018-26 realistic: $186k, CAGR +44.14%, Max DD -53.42%, PF 4.52, `btc_vs_bnh_ratio=0.5410`
+- 2015-26 conservative: $7.36M, CAGR +82.24%, Max DD -53.47%, PF 4.65, `btc_vs_bnh_ratio=0.5033`
+
+Lectura: capar `max_btc_pct` global reduce exposicion, pero destruye CAGR. `min_btc_pct=0.0`
+mejora USDT CAGR/DD frente a v2, pero empeora mucho la tenencia final de BTC (v2: 0.843x B&H).
+Decision del usuario: la diferencia USDT no compensa partir la estrategia ni perder BTC acumulado.
+Mantener v2 como estrategia unica y afinar desde ahi.
+
 ---
 
 ## LECCIONES APRENDIDAS (NO repetir estos experimentos)
