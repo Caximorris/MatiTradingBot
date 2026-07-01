@@ -361,10 +361,15 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 - Mecanismo: mas exposicion en post_halving/bull_peak (hasta 100% BTC) captura mas del bull run
 - Coste: DD sube 5-8pp vs v0. Sigue siendo mejor que B&H (-77% max DD historico)
 
-**Tests pendientes de segunda ronda (opcionales — v1 ya es default y validado):**
+**Tests pendientes de segunda ronda (TODOS sobre datos fijos — cache ya garantiza determinismo):**
+- **PRIORIDAD: test de fragilidad del punto de inicio.** 97105 velas daban PF 2.40 vs 96906→4.33.
+  Medir v1 con inicio 2015 vs 2016 vs 2017 sobre datos cacheados. Si PF salta mucho, parte del edge
+  documentado es artefacto del arranque, no alpha. Hacer ANTES de seguir tuneando parametros.
 - ~~Baseline realistic fresco~~ ✅ COMPLETADO: +78.4% CAGR, 65 trades, PF 4.33, Max DD -57.60%
 - ~~Analisis Q4 2025~~ ✅ COMPLETADO: causa identificada — ver seccion "Q4 2025 analisis" abajo
 - ~~`min_days_between_rebalance=7`~~ ✅ DESCARTADO: empeora Q4 2025 (-10.4% vs -3.3%) y pierde $190k vs v1
+- ~~`adx_min_regime=20` (ADX gate simetrico)~~ ✅ DESCARTADO (sesion 12): no arregla Q4 2025,
+  reubica el ping-pong a la frontera del ADX, sube trades 65→103. Revertido del codigo.
 - `delta_post_halving=0.15` — punto medio entre 0.10 y 0.20
 - `halving=0.20 + threshold=0.15` sin bajar regime delta
 - Deltas asimetricos: `delta_regime_bull=0.15, delta_regime_bear=-0.25` (salir mas rapido en bear)
@@ -372,15 +377,18 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 - `adx_min_trend=20` y `=25`
 - `min_btc=0.20 + halving=0.20`
 
-**Q4 2025 mitigacion — PENDIENTE (proxima sesion):**
+**Q4 2025 mitigacion — PENDIENTE (proxima sesion, sobre datos fijos):**
 Causa: conflicto `halving_bear_onset` (-0.20) vs `regime_bull` (+0.20) con BTC lateral $103-112k.
 EMA50D/200D cruzaba en ambas direcciones cada 3-5 dias → ping-pong 60%↔40% BTC con fees.
 Cooldown=7d descartado: no resuelve el conflicto de senales, empeora la perdida (-$280k vs -$129k).
-Dos opciones a testear:
-1. **Cap target con halving_bear_onset activo:** cuando `bear_onset` esta activo, `regime_bull` no puede subir el target por encima de `base_btc_pct` (0.60). Evita el ping-pong sin cambiar otros periodos.
-   Comando: requiere cambio de codigo en `_compute_target()` — implementar antes del test.
-2. **ADX minimo para regime signal:** si ADX < 20 (mercado lateral), `regime_bull`/`regime_bear` no mueven el target. Ataca el problema en origen.
-   Comando: requiere cambio de codigo o nuevo parametro `adx_min_regime` — implementar antes del test.
+Opcion 2 (ADX gate) DESCARTADA sesion 12: reubica el ping-pong, no lo elimina. Queda una via viva:
+1. **Cap target con halving_bear_onset activo (PROXIMO INTENTO):** cuando `bear_onset` esta activo,
+   `regime_bull` no puede subir el target por encima de `base_btc_pct` (0.60). Determinista, no depende
+   de un umbral que oscila (por eso el ADX fallo). Requiere cambio en `_compute_target()`, tras un flag
+   reversible. Testear contra baseline v1 anclado (PF 4.33) sobre datos cacheados.
+2. ~~ADX minimo para regime signal (`adx_min_regime`)~~ ✅ DESCARTADA sesion 12: probada a ADX=20,
+   no arregla Q4 2025 (sigue 4-6 rebalanceos), sube trades 65→103. El ADX oscila en lateral igual
+   que el EMA. Revertida del codigo.
 
 **Q4 2025 analisis (2026-06-30) — causa identificada, mitigacion pendiente:**
 El 12-oct-2025 son ~540 dias desde el halving de abril-2024: `halving_bear_onset` activa (-0.20).
