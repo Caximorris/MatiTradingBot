@@ -1,7 +1,34 @@
 # SESSION.md — Estado del proyecto y referencia detallada
 
 Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
-**Ultima actualizacion: 2026-07-01 (sesion 12)**
+**Ultima actualizacion: 2026-07-01 (sesion 13)**
+
+---
+
+## SESION 13 (2026-07-01) — SWING v2 ADOPTADO + Q4 2025 RESUELTO + DD diagnosticado
+
+**Fragilidad del punto de inicio — RESUELTA.** Medido v1 con inicio 2015/2016/2017 (datos cacheados):
+CAGR robusto (78.4/81.2/78.0%), Max DD robusto (-57.6/-57.2/-58.7%), pero PF fragil (4.33/2.51/3.70).
+El "PF 4.33" es propiedad de EMPEZAR EN 2015, no de la estrategia. Los pocos trades monstruo lo dominan.
+REGLA nueva: comparar candidatos por CAGR y Max DD (anclas estables), PF como rango, fijar inicio 2015.
+El susto "2.40" (sesion 12) era el extremo de esta sensibilidad, no un bug.
+
+**Swing Allocator v2 ADOPTADO como default** — `regime_off_on_bear_onset=True`. Suprime SOLO la rama
+`regime_bull` cuando `bear_onset` activo (mantiene `regime_bear`). Arregla el ping-pong de Q4 2025 y
+mejora AMBAS anclas en las dos ventanas:
+- 2015-26: +80.6% CAGR / Max DD -55.23% (v1: 78.4% / -57.60%). Q4 2025: -$130k → **+$290k**.
+- 2018-26: +41.5% CAGR / Max DD -53.42% (v1: 36.7% / -58.11%).
+- WF 4/4 TEST positivo, >= v1 en las 4 ventanas. ETH identico a v1 (sin halvings).
+Razon estructural: `bear_onset` = distribucion post-halving; perseguir breakouts alcistas ahi es trampa
+en los 3 ciclos. Reversible con `--config '{"regime_off_on_bear_onset": false}'` (vuelve a v1).
+DESCARTADO: suprimir TODO el regime (no solo bull) — rompio 2022, Q1 2023 -$274k. Ver STRATEGY_VERSIONS.
+
+**Max DD diagnosticado (pendiente de atacar).** El DD -55% NO viene de los bears (ahi ya esta en floor
+30%) sino de estar 90-100% BTC en TECHOS de ciclo. Evidencia: mayo 2021 al 100% BTC, de-risk tardio
+(vendio a -36% del top porque el cruce EMA es lagging). Causa: `halving_bull_peak`+`regime_bull` apilan
+a max_btc_pct=1.00 en euforia. Fix candidato: capar max_btc_pct en bull_peak o vol-targeting.
+ADVERTENCIA: DD y CAGR acoplados — capar el techo quita captura del final del bull. Medir, no asumir.
+NOTA: "reabrir en el minimo" descartado — imposible sin retrospectiva.
 
 ---
 
@@ -362,9 +389,15 @@ Monitorear: frecuencia de entries (<3/mes), losses >20%, cooldown activo.
 - Coste: DD sube 5-8pp vs v0. Sigue siendo mejor que B&H (-77% max DD historico)
 
 **Tests pendientes de segunda ronda (TODOS sobre datos fijos — cache ya garantiza determinismo):**
-- **PRIORIDAD: test de fragilidad del punto de inicio.** 97105 velas daban PF 2.40 vs 96906→4.33.
-  Medir v1 con inicio 2015 vs 2016 vs 2017 sobre datos cacheados. Si PF salta mucho, parte del edge
-  documentado es artefacto del arranque, no alpha. Hacer ANTES de seguir tuneando parametros.
+- ~~**PRIORIDAD: test de fragilidad del punto de inicio.**~~ ✅ COMPLETADO (2026-07-01, sesion 13).
+  Medido v1 con inicio 2015/2016/2017 sobre datos cacheados. VEREDICTO: la fragilidad es de la
+  METRICA (PF), no del edge. CAGR robusto (78.0-81.2%, varia 3pp) y Max DD robusto (-57.2% a -58.7%).
+  PF fragil (2.51/3.70/4.33) porque lo dominan los pocos trades monstruo y arrancar en 2015 deja mas
+  capital componiendo antes del bull 2017 (Q4 2017: +$157k con start 2015 vs +$51k con start 2017) y
+  sube win rate a 55.4% vs ~51%. El "PF 4.33" es propiedad de EMPEZAR EN 2015, no de la estrategia.
+  ACCION: comparar candidatos por CAGR y Max DD (anclas estables), reportar PF como rango, fijar
+  siempre inicio 2015. Los 3 baten a B&H y todos PF>2.5 → tesis intacta. Q4 2025 negativo en los 3
+  (peor 2016: -$265k, 0% win) → ping-pong estructural, independiente del arranque.
 - ~~Baseline realistic fresco~~ ✅ COMPLETADO: +78.4% CAGR, 65 trades, PF 4.33, Max DD -57.60%
 - ~~Analisis Q4 2025~~ ✅ COMPLETADO: causa identificada — ver seccion "Q4 2025 analisis" abajo
 - ~~`min_days_between_rebalance=7`~~ ✅ DESCARTADO: empeora Q4 2025 (-10.4% vs -3.3%) y pierde $190k vs v1

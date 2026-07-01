@@ -354,6 +354,46 @@ python3 main.py backtest --strategy scalp --from 2022-01-01 --to 2026-06-01 --ti
 
 ---
 
+## SWING ALLOCATOR
+
+Concepto: mantiene siempre BTC (min 30%), ajusta 30-100% segun regimen (EMA50D/200D+ADX) y
+fase de halving. Rebalancea cuando |target-actual| > threshold. Nunca sale del todo.
+
+### v0 — regime + halving deltas ±0.10 (2026-06-30)
+**Config:** `use_regime=True, use_halving=True`, resto False. `delta_post_halving=+0.10, delta_bear_onset=-0.10`.
+**Resultado:** 2015-26 +70.5% CAGR, PF 3.38, 64 trades | 2018-26 +34.8% CAGR | WF 4/4 ✅
+
+### v1 — halving deltas ±0.20 (2026-06-30) [DEFAULT hasta sesion 13]
+**Config:** igual que v0 pero `delta_post_halving=+0.20, delta_bear_onset=-0.20`.
+**Resultado (dataset canonico 96906 velas, realistic):**
+- 2015-26: +78.4% CAGR, PF 4.33, 65 trades, Max DD -57.60%, Q4 2025 **-$129,784**
+- 2018-26: +36.7% CAGR, PF 3.77, Max DD -58.11%
+- WF 4/4 ✅ | ETH +56.4% CAGR | conservative +69.8% CAGR
+**Problema:** ping-pong Q4 2025 — `regime_bull`(+0.20) vs `halving_bear_onset`(-0.20) con BTC lateral
+$103-112k → EMA50D/200D cruzaba cada 3-5d → 5 rebalanceos perdedores.
+
+### v2 — regime_off_on_bear_onset (2026-07-01, sesion 13) [DEFAULT ACTUAL]
+**Config:** igual que v1 + **`regime_off_on_bear_onset=True`**.
+**Cambio:** cuando `bear_onset` esta activo, suprime SOLO la rama `regime_bull` (mantiene `regime_bear`).
+Estructural: `bear_onset` = fase de distribucion post-halving; perseguir breakouts alcistas ahi es
+sistematicamente una trampa (2018, 2021-22, 2025). Suprimir solo la compra alinea con la tesis del halving.
+**Resultado (mismo dataset, realistic):**
+- 2015-26: **+80.6% CAGR, Max DD -55.23%**, 58 trades, Q4 2025 **+$290,232** (vs v1 78.4%/-57.60%/-$130k)
+- 2018-26: **+41.5% CAGR, Max DD -53.42%** (vs v1 36.7%/-58.11%)
+- WF 4/4 TEST positivo (+16.1/+36.4/+13.2/+82.8%), >= v1 en las 4 ventanas ✅
+- ETH: identico a v1 (sin halvings, el flag nunca dispara) ✅
+**Veredicto:** ADOPTADO. Unico candidato que mejora AMBAS anclas (CAGR y Max DD) en las dos ventanas
++ pasa WF. Reversible: `--config '{"regime_off_on_bear_onset": false}'` vuelve a v1.
+**Version DESCARTADA (no repetir):** suprimir TODO el regime en bear_onset (no solo bull) — rompio 2022
+al desactivar la defensa `regime_bear` (mantuvo 40% BTC en el bear -77% en vez de 30%): Q1 2023 -$274k,
+Max DD -59.02%. La supresion debe ser SOLO de la rama bull.
+
+**Pendiente:** reduccion de Max DD (cap `max_btc_pct` en bull_peak / vol-targeting). Diagnostico:
+el DD viene de estar 90-100% BTC en techos de ciclo (mayo 2021: 100% BTC, de-risk tardio a -36%),
+no de los bears (donde ya esta en floor 30%).
+
+---
+
 ## LECCIONES APRENDIDAS (NO repetir estos experimentos)
 
 1. **Backtest anual con reset de balance**: descartado — posiciones abiertas desaparecen

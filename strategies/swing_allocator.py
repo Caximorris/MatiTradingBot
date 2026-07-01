@@ -47,6 +47,14 @@ class SwingAllocatorConfig:
     use_funding:   bool = False   # funding rate — experimental
     use_dxy:       bool = False   # DXY direction — experimental
 
+    # -- Mitigacion Q4 2025 — v2 DEFAULT desde 2026-07-01 (reversible: False vuelve a v1) --
+    # Cuando bear_onset esta activo, suprime SOLO la rama regime_bull (ruido de EMA-cross al alza
+    # en lateral, causa del ping-pong 60%<->30% en Q4 2025). regime_bear se mantiene (defensa real
+    # en bear market). Version anterior (suprimir todo regime) rompia 2022 — ver sesion 13.
+    # Validado go/no-go completo: 2015-26 +80.6% CAGR / -55.23% DD, 2018-26 +41.5% / -53.42%,
+    # WF 4/4 TEST positivo, ETH identico a v1 (sin halvings). Estructural: bear_onset = distribucion.
+    regime_off_on_bear_onset: bool = True
+
     # -- Deltas de cada senal (cuanto mueve el target) --
     delta_regime_bull:   float =  0.20   # bull macro: EMA50D>200D + precio>200D + ADX>15
     delta_regime_bear:   float = -0.20   # bear macro: EMA50D<200D
@@ -228,6 +236,15 @@ class SwingAllocatorBot:
             logger.debug("[{}] Error al obtener indicadores: {}", self.name, exc)
             ind = h4 = macro = market = None
 
+        # Mitigacion Q4 2025 (quirurgica): si bear_onset activo y flag on, se suprime SOLO
+        # la rama regime_bull (ruido de EMA-cross al alza en lateral, causa del ping-pong Q4 2025)
+        # pero se MANTIENE regime_bear (senal defensiva real en bear market — su supresion rompio
+        # 2022 en la version anterior). Ver analisis sesion 13.
+        bear_onset_active = bool(
+            cfg.use_halving and macro and macro.get("halving_phase", "") == "bear_onset"
+        )
+        suppress_bull = cfg.regime_off_on_bear_onset and bear_onset_active
+
         # --- Regimen macro: EMA50D/200D + ADX ---
         if cfg.use_regime and ind:
             ema50  = ind.get("ema50d",  0.0)
@@ -235,8 +252,11 @@ class SwingAllocatorBot:
             adx_v  = ind.get("adx",     0.0)
             price  = float(self._client.get_ticker(self._cfg.symbol))
             if ema50 > ema200 and price > ema200 and adx_v > cfg.adx_min_trend:
-                target += cfg.delta_regime_bull
-                active.append("regime_bull")
+                if suppress_bull:
+                    active.append("regime_bull_suppressed_bear_onset")
+                else:
+                    target += cfg.delta_regime_bull
+                    active.append("regime_bull")
             elif ema50 < ema200:
                 target += cfg.delta_regime_bear
                 active.append("regime_bear")

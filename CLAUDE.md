@@ -82,12 +82,16 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
     cuando la ganancia supera 150%. Confirmado por backtest: +1pp CAGR, mejor PF, DD neutro.
     Para desactivar: `--config '{"partial_exit_pct": 0.0}'`.
 
-15. **Swing Allocator v1 adoptado como default** (2026-06-30).
+15. **Swing Allocator v2 adoptado como default** (2026-07-01, sesion 13).
     Config: `use_regime=True, use_halving=True`, todo lo demas False.
-    `delta_post_halving=0.20, delta_bear_onset=-0.20` — ya en SwingAllocatorConfig por defecto.
-    WF v1 4/4 ✅ | ETH +56.4% CAGR ✅ | Sensitivity 15 variantes ✅ | 2015-2026 +77.4% CAGR.
+    `delta_post_halving=0.20, delta_bear_onset=-0.20` + **`regime_off_on_bear_onset=True`** (v2).
+    v2 suprime SOLO la rama regime_bull cuando bear_onset esta activo (mantiene regime_bear):
+    arregla el ping-pong de Q4 2025 y mejora AMBAS anclas en las dos ventanas.
+    2015-26: +80.6% CAGR / Max DD -55.23% (vs v1 78.4% / -57.60%). 2018-26: +41.5% / -53.42%.
+    WF v2 4/4 TEST positivo ✅ | ETH identico a v1 (sin halvings, el flag nunca dispara) ✅.
+    Reversible: `--config '{"regime_off_on_bear_onset": false}'` vuelve a v1.
     MVRV, Pi Cycle, RSI, VIX, MACD 4H: descartados definitivamente (use_* = False en defaults).
-    Siguiente: tests segunda ronda (threshold=0.15, deltas asimetricos, ETH re-validacion v1). Ver SESSION.md paso 8.
+    Siguiente: investigar reduccion de Max DD (cap max_btc_pct en bull_peak / vol-targeting). Ver SESSION.md.
 
 11. **Al crear nuevos indicadores**, añadirlos a `strategies/indicators.py`.
 

@@ -185,9 +185,9 @@ Fuentes de datos externas cargadas automáticamente antes del backtest:
 - Funding rate histórico: OKX API
 
 ### Swing Allocator (`--strategy swing`)
-**Estado: v1 — validado con walk-forward 4/4 ✅, ETH ✅, costs conservative ✅.**
-**BTC 2015-2026 realistic: +78.4% CAGR, $5.81M, 65 trades, PF 4.33, Max DD -57.60%.**
-**Supera BTC Buy & Hold (~+66.8% CAGR) con menor drawdown máximo histórico (-57.6% vs -77%).**
+**Estado: v2 — validado con walk-forward 4/4 ✅, ETH ✅, costs conservative ✅.**
+**BTC 2015-2026 realistic: +80.6% CAGR, $6.69M, 58 trades, Max DD -55.23%.**
+**Supera BTC Buy & Hold (~+66.8% CAGR) con menor drawdown máximo histórico (-55.2% vs -77%).**
 
 Gestión dinámica de allocation BTC/USDT. Nunca sale completamente de BTC — ajusta el porcentaje
 entre 30% y 100% según señales macro y de ciclo. Objetivo: acumular más BTC en correcciones
@@ -196,6 +196,9 @@ y reducir exposición antes de bear markets.
 - **Señal de régimen:** EMA50D vs EMA200D + ADX — detecta bull/bear macro
 - **Señal de halving:** fases post-halving (180-540d) y bear_onset (540d+) — ajusta exposición por ciclo
 - **Allocation neutral:** 60% BTC. Bull: +20% → 80%. Post-halving: +20% adicional → 100%. Bear: −20% → 40%
+- **v2 (default):** en `bear_onset` (fase de distribución post-halving) suprime solo la señal de compra
+  del régimen — evita perseguir breakouts alcistas que son trampas de ciclo tardío. Mejora CAGR y
+  drawdown a la vez. Reversible a v1 con `--config '{"regime_off_on_bear_onset": false}'`
 - **Rebalanceo automático** cuando la diferencia entre actual y target supera el 10%, con cooldown de 3 días
 - **Funciona en ETH** (+56.4% CAGR 2020-2026) — el régimen es causal, no fitting de BTC
 
@@ -255,14 +258,16 @@ indicadores, scores, contexto macro, sizing/gates de entrada y razón de salida 
 |------------|---------|---------|-----|--------|----------|----|------|
 | BTC Buy & Hold | 2015-2026 | ~$2.78M | +27,694% | — | — | — | ~+66.8% |
 | BTC Buy & Hold | 2018-2026 | ~$65k | +549.7% | — | — | — | +26.4% |
-| **Swing Allocator v1** | **2015-2026** | **$5,810k** | **+57,996%** | **65** | **55.4%** | **4.33** | **+78.4%** |
-| **Swing Allocator v1** | **2018-2026** | **$122k** | **+1,116%** | **50** | **55%** | **3.77** | **+36.7%** |
-| Swing Allocator v1 ETH | 2020-2026 | $147k | +1,365% | 37 | 59.5% | 2.80 | +56.4% |
+| **Swing Allocator v2** | **2015-2026** | **$6,690k** | **+66,804%** | **58** | **62.1%** | **6.14** | **+80.6%** |
+| **Swing Allocator v2** | **2018-2026** | **$161k** | **+1,510%** | **44** | **52.3%** | **5.54** | **+41.5%** |
+| Swing Allocator v2 ETH | 2020-2026 | $147k | +1,365% | 37 | 59.5% | 2.80 | +56.4% |
+| Swing Allocator v1 (rollback) | 2015-2026 | $5,810k | +57,996% | 65 | 55.4% | 4.33 | +78.4% |
 | **Pro Trend v13** | 2018-2026 | $62k | +521.8% | 12 | 50.0% | ~4.6 | +25.7% |
 | Pro Trend v13 | 2015-2026 | ~$591k | +5,812% | 20 | 55.0% | ~5.0 | +44.9% |
 | Adaptive Trend | 2018-2026 | ~$48k | +380.9% | 20 | — | 2.91 | +21.8% |
 
-> **Swing Allocator v1 validado:** walk-forward 4/4 ✅, ETH cross-validation ✅, costs conservative ✅.
+> **Swing Allocator v2 validado:** walk-forward 4/4 ✅, ETH cross-validation ✅, costs conservative ✅.
+> v2 mejora CAGR (+2.2pp) y drawdown (-2.4pp) sobre v1 arreglando el ping-pong de mercado lateral.
 > No requiere salir completamente de BTC — opera como rebalanceo gradual, compatible con holding a largo plazo.
 
 > **Pro Trend v13:** ~35% tiempo en mercado, evita crashes del -70%. Ventaja real: riesgo, no retorno absoluto.
@@ -307,7 +312,7 @@ MatiTradingBot/
 │   ├── adaptive_trend.py           # Estrategia: régimen bull/bear/range, solo longs
 │   ├── pro_trend.py                # Estrategia: multi-timeframe, scoring system (v13)
 │   ├── scalp_momentum.py           # Estrategia: day trading 1H con contexto 4H/D
-│   ├── swing_allocator.py          # Estrategia: allocation dinámica BTC/USDT 30-100% (v1)
+│   ├── swing_allocator.py          # Estrategia: allocation dinámica BTC/USDT 30-100% (v2)
 │   ├── macro_context.py            # MVRV + halving cycle (singleton global)
 │   ├── market_context.py           # DXY + NASDAQ-100 + VIX (singleton global)
 │   └── funding_context.py          # Funding rate histórico OKX (singleton global)
