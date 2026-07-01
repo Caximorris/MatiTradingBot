@@ -3,6 +3,7 @@ MatiTradingBot — GUI Backtest Viewer
 Migrates the terminal CLI backtest viewer to a dedicated GUI window using Tkinter.
 Retains 100% of the behavior, style, and keyboard controls of the terminal version.
 Optimized for high-speed scrolling and dynamic window resizing.
+Integrates custom vector equity curve charts and guarantees no-overflow vertical layout.
 """
 
 import json
@@ -46,9 +47,18 @@ def parse_date(date_str):
     """Safely parse various date string formats."""
     if not date_str:
         return None
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+    # Try parsing with full timezone first
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%d%z"):
         try:
-            return datetime.strptime(date_str.split("+")[0].split(".")[0], fmt)
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+            
+    # Try parsing without timezone or after stripping it
+    clean_str = date_str.split("+")[0].split("Z")[0].split(".")[0]
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(clean_str, fmt)
         except ValueError:
             continue
     return None
@@ -137,6 +147,80 @@ class BacktestData:
             
         # Raw Trades
         self.raw_trades = data.get("trades") or data.get("rebalances") or []
+        
+        self.from_date = parse_date(meta.get("from_date"))
+        if not self.from_date and "period" in meta and "->" in meta["period"]:
+            parts = meta["period"].split("->")
+            if len(parts) == 2:
+                self.from_date = parse_date(parts[0].strip())
+                
+        self.to_date = parse_date(meta.get("to_date"))
+        if not self.to_date and "period" in meta and "->" in meta["period"]:
+            parts = meta["period"].split("->")
+            if len(parts) == 2:
+                self.to_date = parse_date(parts[1].strip())
+
+
+def get_equity_curve(bt: BacktestData) -> list[tuple[float, float, str]]:
+    """Constructs an equity curve series: (timestamp, balance_usdt, date_str) from trades/rebalances."""
+    points = []
+    
+    # Establish start datetime
+    start_dt = bt.from_date
+    if not start_dt and bt.raw_trades:
+        first_item = bt.raw_trades[0]
+        if bt.is_swing:
+            start_dt = parse_date(first_item.get("timestamp"))
+        else:
+            start_dt = parse_date(first_item.get("open", {}).get("timestamp"))
+            
+    if not start_dt:
+        start_dt = datetime(2018, 1, 1)
+        
+    start_ts = start_dt.timestamp()
+    points.append((start_ts, bt.initial_balance, start_dt.strftime("%Y-%m-%d")))
+    
+    current_bal = bt.initial_balance
+    
+    for item in bt.raw_trades:
+        if bt.is_swing:
+            ts_str = item.get("timestamp", "")
+            dt = parse_date(ts_str)
+            val = float(item.get("portfolio_usdt") or current_bal)
+            current_bal = val
+            if dt:
+                points.append((dt.timestamp(), current_bal, dt.strftime("%Y-%m-%d")))
+        else:
+            open_dt = parse_date(item.get("open", {}).get("timestamp"))
+            close_dt = parse_date(item.get("close", {}).get("timestamp"))
+            pnl_usdt = float(item.get("close", {}).get("true_pnl_usdt") or item.get("close", {}).get("pnl_usdt") or 0.0)
+            
+            # Step flat before trade closes
+            if open_dt:
+                points.append((open_dt.timestamp(), current_bal, open_dt.strftime("%Y-%m-%d")))
+            
+            current_bal += pnl_usdt
+            if close_dt:
+                points.append((close_dt.timestamp(), current_bal, close_dt.strftime("%Y-%m-%d")))
+                
+    # Sort points by timestamp to avoid rendering errors
+    points.sort(key=lambda x: x[0])
+    
+    # End flat period
+    end_dt = bt.to_date
+    if not end_dt and bt.raw_trades:
+        last_item = bt.raw_trades[-1]
+        if bt.is_swing:
+            end_dt = parse_date(last_item.get("timestamp"))
+        else:
+            end_dt = parse_date(last_item.get("close", {}).get("timestamp"))
+            
+    if end_dt:
+        end_ts = end_dt.timestamp()
+        if end_ts > points[-1][0]:
+            points.append((end_ts, current_bal, end_dt.strftime("%Y-%m-%d")))
+            
+    return points
 
 
 # Drawing helpers that write to a string buffer instead of terminal stdout
@@ -326,7 +410,7 @@ def draw_trades_table(
             
     console.print(table)
     total = len(bt.raw_trades)
-    console.print(f"[dim]Showing {scroll_offset + 1}-{end_idx} of {total} items | Press [bold yellow]Enter[/bold yellow] to view item details, [bold yellow]Esc[/bold yellow] to go back.[/dim]")
+    console.print(f"[dim]Showing {scroll_offset + 1}-{end_idx} of {total} items | Press [bold yellow]Enter[/bold yellow] to view item details, [bold yellow]C[/bold yellow] to see Equity Chart, [bold yellow]Esc[/bold yellow] to go back.[/dim]")
 
 
 def draw_trade_detail(console, bt: BacktestData, idx: int):
@@ -416,10 +500,11 @@ def draw_trade_detail(console, bt: BacktestData, idx: int):
             for skey, sval in sizing_data.items():
                 ind_table.add_row(f"Sizing: {skey.replace('_', ' ')}", str(sval), "")
                 
-        console.print(Panel(ind_table, border_style="magenta", title="Indicators & Sizing Details"))
+        ind_panel = Panel(ind_table, border_style="magenta", title="Indicators & Sizing Details")
         
         # 3. Entry Gates Checklist (if present)
         gates = open_ind.get("entry_gates")
+        gates_panel = None
         if gates:
             gates_table = Table(box=SIMPLE, border_style="dim green", expand=True)
             gates_table.add_column("Entry Gate Name", style="bold yellow")
@@ -430,7 +515,18 @@ def draw_trade_detail(console, bt: BacktestData, idx: int):
                     status = "[green][OK][/green]" if val else "[red][X][/red]"
                     gates_table.add_row(gate_name.replace("g_", "").upper(), status)
             
-            console.print(Panel(gates_table, border_style="yellow", title="Entry Gates Checklist"))
+            gates_panel = Panel(gates_table, border_style="yellow", title="Entry Gates Checklist")
+            
+        # Place Indicators & Gates side-by-side to optimize vertical space and avoid scrollbars
+        if gates_panel:
+            side_by_side = Table.grid(expand=True)
+            side_by_side.add_column(ratio=1)
+            side_by_side.add_column(width=2)  # spacer
+            side_by_side.add_column(ratio=1)
+            side_by_side.add_row(ind_panel, "", gates_panel)
+            console.print(side_by_side)
+        else:
+            console.print(ind_panel)
 
     console.print("[dim]Press [bold yellow]Esc[/bold yellow] to go back to trades list.[/dim]")
 
@@ -469,10 +565,127 @@ def draw_sort_menu(console, selected_idx: int):
     console.print(panel)
 
 
+def draw_chart_on_canvas(canvas, width, height, points, title, strategy_info):
+    """Draw a vector equity curve chart resembling a dark-themed trading chart."""
+    canvas.delete("all")
+    canvas.configure(bg="#111111", highlightthickness=0)
+    
+    if not points:
+        canvas.create_text(width // 2, height // 2, text="No equity data available", fill="#ff5555", font=("Consolas", 12, "bold"))
+        return
+        
+    x_values = [p[0] for p in points]
+    y_values = [p[1] for p in points]
+    
+    min_x = min(x_values)
+    max_x = max(x_values)
+    min_y = min(y_values)
+    max_y = max(y_values)
+    
+    # Add a safety padding margin above and below Y-axis
+    y_range = max_y - min_y
+    if y_range == 0:
+        y_range = 1000.0
+    
+    # Pad top
+    max_y += y_range * 0.05
+    
+    # Pad bottom (only if it doesn't cross below 0 when all points are positive)
+    if all(p[1] >= 0 for p in points):
+        min_y = max(0.0, min_y - y_range * 0.05)
+    else:
+        min_y -= y_range * 0.05
+        
+    y_range = max_y - min_y
+    
+    x_range = max_x - min_x
+    if x_range == 0:
+        x_range = 86400.0 # 1 day in seconds
+        
+    margin_left = 95
+    margin_right = 20
+    
+    if strategy_info:
+        margin_top = 80
+        margin_bottom = 60
+    else:
+        margin_top = 20
+        margin_bottom = 35
+        
+    plot_width = width - margin_left - margin_right
+    plot_height = height - margin_top - margin_bottom
+    
+    def scale_x(ts):
+        return margin_left + ((ts - min_x) / x_range) * plot_width
+        
+    def scale_y(val):
+        return margin_top + plot_height - ((val - min_y) / y_range) * plot_height
+        
+    # 1. Draw Grid Lines (Solid, faint gray) & Labels
+    grid_ticks = 5
+    for i in range(grid_ticks):
+        val = min_y + (i / (grid_ticks - 1)) * y_range
+        y_px = scale_y(val)
+        canvas.create_line(margin_left, y_px, width - margin_right, y_px, fill="#1c1c1c")
+        canvas.create_text(margin_left - 10, y_px, text=f"${val:,.0f}", fill="#7f7f7f", anchor="e", font=("Consolas", 9))
+        
+    if x_range > 0:
+        x_ticks = 6
+        for i in range(x_ticks):
+            ts = min_x + (i / (x_ticks - 1)) * x_range
+            x_px = scale_x(ts)
+            canvas.create_line(x_px, margin_top, x_px, height - margin_bottom, fill="#1c1c1c")
+            # Format datetime safely
+            try:
+                date_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = ""
+            canvas.create_text(x_px, height - margin_bottom + 15, text=date_str, fill="#7f7f7f", anchor="n", font=("Consolas", 9))
+            
+    # 2. Draw outer boundary box (same blue style as other panels in the app)
+    canvas.create_rectangle(
+        margin_left,
+        margin_top,
+        width - margin_right,
+        height - margin_bottom,
+        outline="#777777",
+        width=1
+    )
+    
+    # 3. Draw the Equity Line (Vibrant Green or Red)
+    is_positive = (points[-1][1] >= points[0][1])
+    line_color = "#0dbc79" if is_positive else "#cd3131"
+    line_coords = []
+    for ts, val, _ in points:
+        line_coords.append((scale_x(ts), scale_y(val)))
+        
+    flat_line = [coord for pt in line_coords for coord in pt]
+    if len(flat_line) >= 4:
+        canvas.create_line(flat_line, fill=line_color, width=1.2)
+        
+    # Draw point markers if count is small (to feel interactive)
+    if len(points) < 80:
+        for ts, val, _ in points:
+            cx = scale_x(ts)
+            cy = scale_y(val)
+            canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=line_color, outline="#111111")
+            
+    # 4. Draw Header/Metadata Info
+    if title:
+        canvas.create_text(margin_left, 30, text=title, fill="#ffffff", anchor="w", font=("Consolas", 14, "bold"))
+    if strategy_info:
+        canvas.create_text(margin_left, 55, text=strategy_info, fill=line_color, anchor="w", font=("Consolas", 10, "bold"))
+        
+    # 5. Draw Footer Controls
+    if strategy_info:
+        canvas.create_text(width // 2, height - 25, text="Controls: [Esc] Return to backtest viewer", fill="#e5e510", anchor="center", font=("Consolas", 10, "bold"))
+
+
 # Text tag parser to map ANSI codes to Tkinter text styles (re-uses preconfigured styles for speed)
-def insert_ansi_to_text_widget(text_widget, ansi_text):
+def insert_ansi_to_text_widget(text_widget, ansi_text, append=False):
     text_widget.configure(state='normal')
-    text_widget.delete('1.0', 'end')
+    if not append:
+        text_widget.delete('1.0', 'end')
     
     last_idx = 0
     current_tags = []
@@ -537,7 +750,8 @@ class BacktestViewerApp:
         self.backtests_dir = project_root / "backtests"
         
         # State variables
-        self.state = "list"  # "list", "sort_menu", "trades", "trade_detail"
+        self.state = "list"  # "list", "sort_menu", "trades", "trade_detail", "chart"
+        self.previous_state = "list"
         self.backtests: list[BacktestData] = []
         self.sort_by = "date"
         
@@ -571,14 +785,24 @@ class BacktestViewerApp:
         )
         self.text_display.pack(fill="both", expand=True)
         
+        # Disable default mousewheel scrolling so it is completely controlled and menus never shift out of view
+        self.text_display.bind("<MouseWheel>", lambda e: "break")
+        
+        # Create Vector Chart Canvas (parented to root to avoid destruction on text deletion)
+        self.chart_canvas = tk.Canvas(
+            self.root,
+            bg="#111111",
+            highlightthickness=0
+        )
+        
         # Configure fonts and measure width/height for exact window fit
         self.main_font = tkfont.Font(family="Consolas", size=10)
         self.char_width = self.main_font.measure("A")
         self.line_height = self.main_font.metrics("linespace")
         
-        # Calculate initial characters rows/columns to fit perfectly
+        # Calculate initial characters rows/columns to fit perfectly (added extra safe padding of 90px to protect footers)
         self.console_cols = max(80, (self.last_width - 30) // self.char_width)
-        self.console_rows = max(10, (self.last_height - 30) // self.line_height)
+        self.console_rows = max(10, (self.last_height - 90) // self.line_height)
         
         # Define and configure all ANSI tag configurations ONCE on startup (enormous lag reduction)
         self.preconfigure_tags()
@@ -685,8 +909,9 @@ class BacktestViewerApp:
                 self.last_height = height
                 
                 # Recalculate columns and rows exactly based on character font size
+                # Added vertical height offset of 90px to prevent menus from going off screen
                 self.console_cols = max(80, (width - 30) // self.char_width)
-                self.console_rows = max(10, (height - 30) // self.line_height)
+                self.console_rows = max(10, (height - 90) // self.line_height)
                 
                 self.rich_console.width = self.console_cols
                 self.re_render()
@@ -696,6 +921,8 @@ class BacktestViewerApp:
         char = event.char.lower()
         if char == 's':
             self.handle_key('s')
+        elif char == 'c':
+            self.handle_key('c')
         elif char in ('1', '2', '3', '4', '5', '6', '7'):
             self.handle_key(char)
             
@@ -730,18 +957,23 @@ class BacktestViewerApp:
     def handle_key(self, key: str):
         """State machine navigation matching the CLI viewer."""
         rows = self.console_rows
+        old_state = self.state
+        old_idx = (self.selected_backtest_idx if self.state == "list"
+                   else self.selected_trade_idx if self.state == "trades"
+                   else self.selected_sort_idx if self.state == "sort_menu"
+                   else 0)
         
         if self.state == "list":
             if key == 'up':
                 if self.selected_backtest_idx > 0:
                     self.selected_backtest_idx -= 1
-                    max_visible = max(5, rows - 10)
+                    max_visible = max(5, rows - 12)
                     if self.selected_backtest_idx < self.backtest_scroll_offset:
                         self.backtest_scroll_offset = self.selected_backtest_idx
             elif key == 'down':
                 if self.selected_backtest_idx < len(self.backtests) - 1:
                     self.selected_backtest_idx += 1
-                    max_visible = max(5, rows - 10)
+                    max_visible = max(5, rows - 12)
                     if self.selected_backtest_idx >= self.backtest_scroll_offset + max_visible:
                         self.backtest_scroll_offset = self.selected_backtest_idx - max_visible + 1
             elif key == 'enter':
@@ -753,6 +985,9 @@ class BacktestViewerApp:
             elif key == 's':
                 self.state = "sort_menu"
                 self.selected_sort_idx = 0
+            elif key == 'c':
+                self.previous_state = "list"
+                self.state = "chart"
             elif key == 'esc':
                 self.root.destroy()
                 return
@@ -776,17 +1011,20 @@ class BacktestViewerApp:
             if key == 'up':
                 if self.selected_trade_idx > 0:
                     self.selected_trade_idx -= 1
-                    max_visible = max(5, rows - 10)
+                    max_visible = max(5, rows - 12)
                     if self.selected_trade_idx < self.trade_scroll_offset:
                         self.trade_scroll_offset = self.selected_trade_idx
             elif key == 'down':
                 if self.selected_trade_idx < len(bt.raw_trades) - 1:
                     self.selected_trade_idx += 1
-                    max_visible = max(5, rows - 10)
+                    max_visible = max(5, rows - 12)
                     if self.selected_trade_idx >= self.trade_scroll_offset + max_visible:
                         self.trade_scroll_offset = self.selected_trade_idx - max_visible + 1
             elif key == 'enter':
                 self.state = "trade_detail"
+            elif key == 'c':
+                self.previous_state = "trades"
+                self.state = "chart"
             elif key == 'esc':
                 self.state = "list"
                 
@@ -794,7 +1032,17 @@ class BacktestViewerApp:
             if key == 'esc':
                 self.state = "trades"
                 
-        self.re_render()
+        elif self.state == "chart":
+            if key == 'esc':
+                self.state = self.previous_state
+                
+        new_idx = (self.selected_backtest_idx if self.state == "list"
+                   else self.selected_trade_idx if self.state == "trades"
+                   else self.selected_sort_idx if self.state == "sort_menu"
+                   else 0)
+                   
+        if self.state != old_state or new_idx != old_idx:
+            self.re_render()
         
     def re_render(self):
         """Schedule a render, throttling it to avoid keypress repeat congestion."""
@@ -814,17 +1062,87 @@ class BacktestViewerApp:
         self._render_job = None
         self.last_render_time = time.time()
         
+        # Ensure text display is packed
+        if not self.text_display.winfo_manager():
+            self.text_display.pack(fill="both", expand=True)
+            
+        # Ensure chart canvas is NOT packed via pack manager (it is embedded inside Text)
+        try:
+            if self.chart_canvas and self.chart_canvas.winfo_exists():
+                if self.chart_canvas.winfo_manager() == "pack":
+                    self.chart_canvas.pack_forget()
+            else:
+                self.chart_canvas = tk.Canvas(
+                    self.root,
+                    bg="#111111",
+                    highlightthickness=0
+                )
+        except Exception:
+            self.chart_canvas = tk.Canvas(
+                self.root,
+                bg="#111111",
+                highlightthickness=0
+            )
+        
         # Clear buffer
         self.string_io.seek(0)
         self.string_io.truncate(0)
         
         rows = self.console_rows
         
+        if self.state == "chart":
+            self.text_display.configure(state='normal')
+            self.text_display.delete('1.0', 'end')
+            
+            bt = self.backtests[self.selected_backtest_idx]
+            
+            # 1. Draw Header
+            draw_header(
+                self.rich_console, 
+                f"Chart for {bt.strategy} ({bt.symbol} {bt.timeframe})", 
+                f"Initial: ${bt.initial_balance:,.2f} -> Final: ${bt.final_balance:,.2f} ({bt.pnl_pct:+.2f}%) | Total: {bt.total_trades}"
+            )
+            ansi_header = self.string_io.getvalue()
+            insert_ansi_to_text_widget(self.text_display, ansi_header, append=True)
+            
+            self.text_display.configure(state='normal')
+            self.text_display.insert('end', '\n\n')
+            
+            # 2. Configure & Embed Canvas
+            canvas_w = max(500, self.last_width - 60)
+            canvas_h = max(200, (self.console_rows - 10) * self.line_height)
+            self.chart_canvas.configure(width=canvas_w, height=canvas_h)
+            self.text_display.window_create('end', window=self.chart_canvas)
+            
+            self.text_display.insert('end', '\n\n')
+            
+            # 3. Draw Footer (matching controls menu styling)
+            self.string_io.seek(0)
+            self.string_io.truncate(0)
+            
+            back_lbl = "Back to Trades" if self.previous_state == "trades" else "Back to List"
+            self.rich_console.print(f"[dim]Showing Equity Chart | Press Esc to go back.[/dim]")
+            self.rich_console.print(f"\n[bold yellow]Controls:[/bold yellow] [Esc] {back_lbl}")
+            ansi_footer = self.string_io.getvalue()
+            insert_ansi_to_text_widget(self.text_display, ansi_footer, append=True)
+            
+            # 4. Render Vector lines on Canvas
+            points = get_equity_curve(bt)
+            draw_chart_on_canvas(
+                self.chart_canvas,
+                canvas_w,
+                canvas_h,
+                points,
+                "", # No title on canvas
+                ""  # No metadata info on canvas
+            )
+            return
+        
         if self.state == "list":
             draw_header(self.rich_console, "MATI TRADING BOT — BACKTEST JOURNAL VIEWER", f"Total Backtests: {len(self.backtests)} | Folder: {self.backtests_dir.name}")
-            max_visible = max(5, rows - 10)
+            max_visible = max(5, rows - 12)
             draw_backtests_table(self.rich_console, self.backtests, self.selected_backtest_idx, self.backtest_scroll_offset, max_visible, self.sort_by)
-            self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] View Trades | [S] Sort Menu | [Esc] Exit")
+            self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] View Trades | [S] Sort Menu | [C] Equity Chart | [Esc] Exit")
             
         elif self.state == "sort_menu":
             draw_header(self.rich_console, "SORT BACKTEST RUNS")
@@ -832,9 +1150,9 @@ class BacktestViewerApp:
             
         elif self.state == "trades":
             bt = self.backtests[self.selected_backtest_idx]
-            max_visible = max(5, rows - 10)
+            max_visible = max(5, rows - 12)
             draw_trades_table(self.rich_console, bt, self.selected_trade_idx, self.trade_scroll_offset, max_visible)
-            self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] Trade Details | [Esc] Back to List")
+            self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] Trade Details | [C] Equity Chart | [Esc] Back to List")
             
         elif self.state == "trade_detail":
             bt = self.backtests[self.selected_backtest_idx]
