@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import statistics
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,7 +18,13 @@ from typing import Any, Callable
 from loguru import logger
 
 from core.exchange import OrderResult
+from data import ohlcv_cache
 from data.market_data import OHLCVBar
+
+# Reintentos de paginacion OKX: evita truncar el dataset en silencio ante un
+# transitorio (una pagina perdida = 300 velas = backtest no reproducible).
+_OKX_MAX_RETRIES = 4
+_OKX_BACKOFF_S   = 1.5
 
 _PAPER_FEE_RATE = Decimal("0.001")  # 0.1% taker fee OKX por defecto
 
@@ -873,13 +880,24 @@ def fetch_historical_bars(
     from_dt: datetime,
     to_dt: datetime,
     on_page: Callable[[int], None] | None = None,
+    use_cache: bool = True,
 ) -> list[OHLCVBar]:
     """
     Descarga datos OHLCV históricos desde la API pública de OKX.
     No requiere autenticación. Pagina automáticamente si el rango es grande.
 
     on_page(n_bars): callback opcional llamado tras cada página descargada.
+    use_cache: sirve desde cache en disco si el rango esta cubierto (deterministico).
+               Las descargas se persisten para que runs futuros sean reproducibles.
     """
+    from_ms = int(from_dt.timestamp() * 1000)
+    to_ms   = int(to_dt.timestamp() * 1000)
+
+    if use_cache:
+        cached = ohlcv_cache.try_serve(symbol, bar, from_ms, to_ms)
+        if cached is not None:
+            return cached
+
     try:
         from okx.MarketData import MarketAPI
     except ImportError:
@@ -890,24 +908,47 @@ def fetch_historical_bars(
     bars: list[OHLCVBar] = []
     before_ts = str(int(to_dt.timestamp() * 1000))
     after_ts  = str(int(from_dt.timestamp() * 1000))
+    complete  = True  # se pone False si una pagina no se recupera tras reintentos
 
     logger.info("Descargando {}/{} desde {} hasta {}", symbol, bar, from_dt.date(), to_dt.date())
 
     while True:
-        try:
-            resp = api.get_history_candlesticks(
-                instId=symbol,
-                bar=bar,
-                before=after_ts,
-                after=before_ts,
-                limit="300",
+        resp = None
+        for attempt in range(_OKX_MAX_RETRIES):
+            try:
+                resp = api.get_history_candlesticks(
+                    instId=symbol,
+                    bar=bar,
+                    before=after_ts,
+                    after=before_ts,
+                    limit="300",
+                )
+                if resp.get("code") == "0" and resp.get("data") is not None:
+                    break
+                # code != "0" (rate limit, etc.) — reintentar con backoff
+                logger.warning(
+                    "OKX pagina code={} (intento {}/{})",
+                    resp.get("code"), attempt + 1, _OKX_MAX_RETRIES,
+                )
+                resp = None
+            except Exception as exc:
+                logger.warning(
+                    "OKX pagina fallo (intento {}/{}): {}",
+                    attempt + 1, _OKX_MAX_RETRIES, exc,
+                )
+                resp = None
+            time.sleep(_OKX_BACKOFF_S * (attempt + 1))
+
+        if resp is None:
+            logger.error(
+                "OKX: pagina no recuperable tras {} intentos — descarga INCOMPLETA, no se cachea",
+                _OKX_MAX_RETRIES,
             )
-        except Exception as exc:
-            logger.error("Error descargando datos: {}", exc)
+            complete = False
             break
 
-        if resp.get("code") != "0" or not resp.get("data"):
-            break
+        if not resp.get("data"):
+            break  # fin normal de datos
 
         chunk = resp["data"]
         for row in chunk:
@@ -955,5 +996,14 @@ def fetch_historical_bars(
         bitstamp_bars = _fetch_bitstamp_bars(symbol, bar, from_dt, _gap_end, on_page)
         if bitstamp_bars:
             bars = _merge_bars(bars, bitstamp_bars)
+
+    if use_cache and bars:
+        # Persistir y servir el slice desde el dataset canonico mergeado, de forma
+        # que este run y los futuros vean exactamente las mismas velas.
+        merged = ohlcv_cache.merge_and_save(
+            symbol, bar, bars, from_ms, to_ms, complete=complete,
+        )
+        if complete:
+            return ohlcv_cache.slice_range(merged, from_ms, to_ms)
 
     return bars

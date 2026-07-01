@@ -37,3 +37,7 @@ build/
 
 # Informes generados
 reports/
+
+# Cache OHLCV en disco (generado, ~7MB por par, crece). Cada maquina lo puebla
+# en la primera descarga. Da determinismo por-maquina, no se versiona.
+data/cache/
