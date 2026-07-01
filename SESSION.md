@@ -1,7 +1,42 @@
 # SESSION.md — Estado del proyecto y referencia detallada
 
 Complemento de CLAUDE.md. Actualizar al cerrar cada sesion.
-**Ultima actualizacion: 2026-06-30 (decima sesion)**
+**Ultima actualizacion: 2026-07-01 (sesion 12)**
+
+---
+
+## SESION 12 (2026-07-01) — DETERMINISMO DE DATOS + Q4 2025
+
+**Hallazgo critico: los backtests NO eran reproducibles.** Dos runs de la misma ventana
+(BTC 2015-2026) daban conteos de velas distintos (96805 / 96906 / 97105) y por tanto metricas
+distintas (PF 2.40 vs 4.33). Causa: `fetch_historical_bars` truncaba la paginacion OKX en
+silencio ante cualquier transitorio (una pagina = 300 velas = la diferencia exacta observada).
+El gap-fill de Bitstamp amplificaba el desfase moviendo la frontera 2015→inicio-OKX.
+
+**Fix (commit 12f8630):** cache OHLCV en disco (`data/ohlcv_cache.py`) + reintentos 4x con
+backoff en la paginacion. Cache-first sirve slices deterministas; no cachea descargas
+incompletas. Validado: re-run da 96906 velas / PF 4.33 identico, cache sin reescribir (cero red).
+
+**Baseline v1 ANCLADO (dataset canonico 96906 velas):** PF 4.33, +78.4% CAGR, Max DD -57.60%,
+65 trades, Q4 2025 -$129,784. Coincide con el doc — los numeros de v1 eran correctos, venian de
+una descarga completa. Journal canonico: `journal_swing_allocator_..._20260701_072040.json`.
+
+**FRAGILIDAD PENDIENTE:** el resultado es sensible al punto de inicio del historico. El run de
+97105 velas (mas relleno Bitstamp 2015-16) daba PF 2.40, no 4.33. Parte del edge documentado
+podria ser artefacto del arranque. TODO: medir v1 con inicio 2015 vs 2016 vs 2017 sobre datos fijos.
+
+**adx_min_regime — DESCARTADO.** Hipotesis: gate ADX simetrico en ambas ramas regime elimina el
+ping-pong Q4 2025. Resultado (adx=20): NO arregla Q4 2025 (sigue 4-6 rebalanceos perdedores) y
+SUBE trades (65→103). El ADX oscila alrededor de 20 en lateral igual que el EMA cruzaba — reubica
+el ping-pong, no lo elimina. Revertido del codigo. NOTA: el veredicto inicial "PF se derrumba"
+era invalido (comparaba contra baseline no reproducible); con datos fijos la candidata es neutra
+en top-line pero falla su objetivo (Q4 2025) y ensucia el PF.
+
+**Q4 2025 sigue PENDIENTE.** Proximo intento sobre datos fijos: Opcion 1 (cap-target cuando
+`bear_onset` activo, determinista, no depende de umbral oscilante). Ver "Q4 2025 mitigacion" abajo.
+
+**Regla cambiada:** ahora SI se pueden ejecutar backtests (hasta 5 en paralelo, background,
+mostrar resultados). Live/paper sigue requiriendo confirmacion.
 
 ---
 

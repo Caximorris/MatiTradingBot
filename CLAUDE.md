@@ -35,6 +35,11 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 - Logs con `loguru`. Nunca `print()` para logs
 - `OrderResult` siempre requiere `size` y `limit_price` — no omitir (errores silenciosos)
 - Backtests CONTINUOS — nunca reiniciar balance en frontera de año/mes
+- Backtests DETERMINISTAS (desde 2026-07-01): `fetch_historical_bars` cachea OHLCV en
+  `data/cache/{symbol}_{bar}.json` (gitignored). Runs con rango cubierto se sirven del cache
+  sin red → velas identicas. Para forzar re-descarga: borrar el archivo del cache.
+  El resultado es SENSIBLE al punto de inicio del histórico (97105 velas daban PF 2.40 vs
+  96906 → PF 4.33): el cache da reproducibilidad, no corrección. No mezclar caches entre maquinas.
 - Maximo 800 lineas por archivo
 - `transient=True` en Rich Progress. Evitar Unicode en Windows (cp1252)
 
@@ -42,7 +47,7 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 
 ## REGLAS DE COMPORTAMIENTO
 
-1. **No ejecutar `python main.py ...` automaticamente.** Mostrar el comando exacto y dejar que el usuario lo corra.
+1. **Backtests: SI ejecutar** (cambio 2026-07-01). Se pueden correr hasta 5 en paralelo, en background. SIEMPRE mostrar los resultados al terminar. Live/paper (`start`) sigue requiriendo confirmacion.
 
 2. **No tocar parametros de Pro Trend** hasta completar paper trading 6 meses. Todo el framework de validacion completado (baselines, ETH, sensitivity, MAE/MFE/R, partial_exit, BTC 2015-2026). Version actual: v13 con partial_exit_pct=150.0 por defecto. Siguiente: paper trading.
 
