@@ -41,3 +41,8 @@ reports/
 # Cache OHLCV en disco (generado, ~7MB por par, crece). Cada maquina lo puebla
 # en la primera descarga. Da determinismo por-maquina, no se versiona.
 data/cache/
+
+# Journals de backtest: reproducibles desde el cache determinista y pesados (hasta
+# ~10MB). Por defecto NO se versionan para no inflar el repo. Los journals canonicos
+# citados en la doc se trackean explicitamente con `git add -f`.
+backtests/journal_*.json

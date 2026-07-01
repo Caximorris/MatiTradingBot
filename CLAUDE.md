@@ -2,6 +2,8 @@
 
 Bot de trading automatizado para OKX. Python 3.12+. Windows 10, PowerShell.
 Leer este archivo Y `SESSION.md` antes de tocar cualquier archivo.
+`SESSION.md` es corto (estado vivo + reglas invariantes). El detalle historico completo esta en
+`SESSION_ARCHIVE.md` — leerlo SOLO bajo demanda, no por defecto (ahorro de tokens).
 
 ---
 
@@ -42,6 +44,10 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
   96906 → PF 4.33): el cache da reproducibilidad, no corrección. No mezclar caches entre maquinas.
 - Maximo 800 lineas por archivo
 - `transient=True` en Rich Progress. Evitar Unicode en Windows (cp1252)
+- EFICIENCIA DE TOKENS: NUNCA hacer `Read` de un journal crudo (`backtests/journal_*.json`, hasta
+  ~10 MB). Un hook (`.claude/hooks/read_guard.py`) lo bloquea. Usar `/journal-summary` o
+  `python tools/journal_summary.py <ruta>`. El mismo hook bloquea cualquier `Read` de archivos >150 KB;
+  para esos, leer un slice (offset/limit) o usar `Grep`.
 
 ---
 
