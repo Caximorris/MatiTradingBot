@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import time
+import math
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -86,6 +87,70 @@ def format_datetime_to_dmy(ts_str) -> str:
     return str(ts_str)
 
 
+def calculate_max_drawdown(equity_points: list[tuple[float, float, str]]) -> float:
+    """Calculate the maximum drawdown percentage from an equity curve."""
+    if not equity_points:
+        return 0.0
+    max_dd = 0.0
+    peak = -float('inf')
+    for _, balance, _ in equity_points:
+        if balance > peak:
+            peak = balance
+        if peak > 0:
+            dd = (peak - balance) / peak * 100.0
+            if dd > max_dd:
+                max_dd = dd
+    return max_dd
+
+
+def calculate_profit_factor_from_equity(equity_points: list[tuple[float, float, str]]) -> float:
+    """Calculate the profit factor from changes in the equity curve."""
+    if len(equity_points) < 2:
+        return 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    for i in range(1, len(equity_points)):
+        diff = equity_points[i][1] - equity_points[i-1][1]
+        if diff > 0:
+            gross_profit += diff
+        elif diff < 0:
+            gross_loss += abs(diff)
+    return gross_profit / gross_loss if gross_loss > 0 else 0.0
+
+
+class StrategySummaryData:
+    def __init__(self, strategy: str, symbol: str, bts: list[BacktestData]):
+        self.strategy = strategy
+        self.symbol = symbol
+        self.backtests = bts
+        self.count = len(bts)
+        
+        pnls = [bt.pnl_pct for bt in bts]
+        self.mean_pnl = sum(pnls) / len(pnls) if pnls else 0.0
+        self.median_pnl = sorted(pnls)[len(pnls) // 2] if pnls else 0.0
+        self.min_pnl = min(pnls) if pnls else 0.0
+        self.max_pnl = max(pnls) if pnls else 0.0
+        
+        cagrs = [bt.cagr for bt in bts]
+        self.mean_cagr = sum(cagrs) / len(cagrs) if cagrs else 0.0
+        self.median_cagr = sorted(cagrs)[len(cagrs) // 2] if cagrs else 0.0
+        
+        win_rates = [bt.win_rate for bt in bts if bt.win_rate > 0 or not bt.is_swing]
+        self.mean_win_rate = sum(win_rates) / len(win_rates) if win_rates else 0.0
+        self.median_win_rate = sorted(win_rates)[len(win_rates) // 2] if win_rates else 0.0
+        
+        max_dds = [bt.max_dd for bt in bts]
+        self.mean_max_dd = sum(max_dds) / len(max_dds) if max_dds else 0.0
+        self.median_max_dd = sorted(max_dds)[len(max_dds) // 2] if max_dds else 0.0
+        
+        pfs = [bt.profit_factor for bt in bts if bt.profit_factor > 0]
+        self.mean_pf = sum(pfs) / len(pfs) if pfs else 0.0
+        self.median_pf = sorted(pfs)[len(pfs) // 2] if pfs else 0.0
+        
+        trades = [bt.total_trades for bt in bts]
+        self.mean_trades = sum(trades) / len(trades) if trades else 0.0
+
+
 class BacktestData:
     def __init__(self, filepath: Path, data: dict):
         self.filepath = filepath
@@ -122,12 +187,24 @@ class BacktestData:
         
         # Initial & Final Balance
         self.initial_balance = float(backtest.get("initial_balance") or stats.get("initial_balance_usdt") or 10000.0)
-        self.final_balance = float(backtest.get("final_balance") or stats.get("final_balance_usdt") or 10000.0)
         
+        # Determine final balance: try to get final_balance, fallback to initial_balance + total_pnl_usdt
+        total_pnl = float(stats.get("total_pnl_usdt") or 0.0)
+        final_bal_val = backtest.get("final_balance") or stats.get("final_balance_usdt")
+        if final_bal_val is not None:
+            self.final_balance = float(final_bal_val)
+        else:
+            self.final_balance = self.initial_balance + total_pnl
+            
         # PnL %
-        self.pnl_pct = float(backtest.get("total_return_pct") or stats.get("pnl_pct") or 0.0)
-        if self.pnl_pct == 0.0 and self.initial_balance > 0:
-            self.pnl_pct = ((self.final_balance - self.initial_balance) / self.initial_balance) * 100.0
+        self.pnl_pct = backtest.get("total_return_pct") or stats.get("pnl_pct")
+        if self.pnl_pct is not None:
+            self.pnl_pct = float(self.pnl_pct)
+        else:
+            if self.initial_balance > 0:
+                self.pnl_pct = ((self.final_balance - self.initial_balance) / self.initial_balance) * 100.0
+            else:
+                self.pnl_pct = 0.0
             
         # CAGR %
         self.cagr = backtest.get("cagr_pct")
@@ -150,8 +227,11 @@ class BacktestData:
                 td = parse_date(to_date)
                 if fd and td:
                     years = (td - fd).days / 365.25
-                    if years > 0 and self.initial_balance > 0 and self.final_balance > 0:
-                        self.cagr = ((self.final_balance / self.initial_balance) ** (1 / years) - 1) * 100.0
+                    if years > 0 and self.initial_balance > 0:
+                        if self.final_balance > 0:
+                            self.cagr = ((self.final_balance / self.initial_balance) ** (1 / years) - 1) * 100.0
+                        else:
+                            self.cagr = -100.0
             if self.cagr is None:
                 self.cagr = 0.0
                 
@@ -166,7 +246,22 @@ class BacktestData:
         # Trades / Rebalances Count
         if self.is_swing:
             self.total_trades = int(stats.get("total_rebalances") or len(data.get("rebalances", [])))
+            # Compute a proxy win rate based on rebalances that increased portfolio value
             self.win_rate = 0.0
+            rebs = data.get("rebalances", [])
+            if len(rebs) > 1:
+                wins_count = 0
+                valid_count = 0
+                prev_val = self.initial_balance
+                for r in rebs:
+                    val = float(r.get("portfolio_usdt") or prev_val)
+                    if r.get("direction") != "INIT":
+                        valid_count += 1
+                        if val > prev_val:
+                            wins_count += 1
+                    prev_val = val
+                if valid_count > 0:
+                    self.win_rate = (wins_count / valid_count) * 100.0
         else:
             self.total_trades = int(backtest.get("total_trades") or stats.get("total_trades") or len(data.get("trades", [])))
             self.win_rate = float(backtest.get("win_rate_pct") or stats.get("win_rate_pct") or 0.0)
@@ -185,6 +280,14 @@ class BacktestData:
             parts = meta["period"].split("->")
             if len(parts) == 2:
                 self.to_date = parse_date(parts[1].strip())
+
+        # If metrics are missing/0.0, dynamically compute them using the equity curve
+        if self.max_dd == 0.0 or self.profit_factor == 0.0:
+            pts = get_equity_curve(self)
+            if self.max_dd == 0.0:
+                self.max_dd = calculate_max_drawdown(pts)
+            if self.profit_factor == 0.0:
+                self.profit_factor = calculate_profit_factor_from_equity(pts)
 
 
 def get_equity_curve(bt: BacktestData) -> list[tuple[float, float, str]]:
@@ -303,7 +406,7 @@ def draw_backtests_table(
         cagr_str = f"[{cagr_color}]{bt.cagr:+.2f}%[/{cagr_color}]"
         dd_str = f"[red]-{abs(bt.max_dd):.2f}%[/red]" if bt.max_dd != 0.0 else "N/A"
         pf_str = f"{bt.profit_factor:.2f}" if bt.profit_factor > 0 else "N/A"
-        win_str = f"{bt.win_rate:.1f}%" if not bt.is_swing else "N/A"
+        win_str = f"{bt.win_rate:.1f}%" if (bt.win_rate > 0 or not bt.is_swing) else "N/A"
         
         table.add_row(
             marker,
@@ -326,6 +429,81 @@ def draw_backtests_table(
     # Scroll / count indicator
     total = len(backtests)
     console.print(f"[dim]Showing {scroll_offset + 1}-{end_idx} of {total} backtests | Sorted by: [bold yellow]{sort_by.upper()}[/bold yellow] (descending)[/dim]")
+
+
+def draw_strategy_summaries_table(
+    console,
+    summaries: list[StrategySummaryData],
+    selected_idx: int,
+    scroll_offset: int,
+    max_visible: int
+):
+    """Draw the table containing aggregated metrics for all strategies."""
+    table = Table(box=ROUNDED, border_style="dim cyan", expand=True)
+    table.add_column("", justify="center", width=2)
+    table.add_column("Strategy", style="bold white")
+    table.add_column("Symbol", justify="center")
+    table.add_column("Runs", justify="right")
+    table.add_column("Mean PnL", justify="right")
+    table.add_column("Median PnL", justify="right")
+    table.add_column("Mean CAGR", justify="right")
+    table.add_column("Mean Win %", justify="right")
+    table.add_column("Median Win %", justify="right")
+    table.add_column("Mean Max DD", justify="right")
+    table.add_column("Median Max DD", justify="right")
+    table.add_column("Mean PF", justify="right")
+    table.add_column("Median PF", justify="right")
+    table.add_column("Mean Trades", justify="right")
+    
+    end_idx = min(len(summaries), scroll_offset + max_visible)
+    for i in range(scroll_offset, end_idx):
+        s = summaries[i]
+        is_selected = (i == selected_idx)
+        marker = ">" if is_selected else " "
+        row_style = "bold yellow on cyan" if is_selected else ""
+        
+        # Colors based on performance
+        pnl_color = "green" if s.mean_pnl > 0 else ("red" if s.mean_pnl < 0 else "white")
+        med_pnl_color = "green" if s.median_pnl > 0 else ("red" if s.median_pnl < 0 else "white")
+        cagr_color = "green" if s.mean_cagr > 0 else ("red" if s.mean_cagr < 0 else "white")
+        
+        pnl_str = f"[{pnl_color}]{s.mean_pnl:+.2f}%[/{pnl_color}]"
+        med_pnl_str = f"[{med_pnl_color}]{s.median_pnl:+.2f}%[/{med_pnl_color}]"
+        cagr_str = f"[{cagr_color}]{s.mean_cagr:+.2f}%[/{cagr_color}]"
+        
+        # Win Rate
+        win_str = f"{s.mean_win_rate:.1f}%" if s.mean_win_rate > 0 else "N/A"
+        med_win_str = f"{s.median_win_rate:.1f}%" if s.median_win_rate > 0 else "N/A"
+        
+        # Max DD
+        dd_str = f"[red]-{abs(s.mean_max_dd):.2f}%[/red]" if s.mean_max_dd != 0.0 else "N/A"
+        med_dd_str = f"[red]-{abs(s.median_max_dd):.2f}%[/red]" if s.median_max_dd != 0.0 else "N/A"
+        
+        # Profit Factor
+        pf_str = f"{s.mean_pf:.2f}" if s.mean_pf > 0 else "N/A"
+        med_pf_str = f"{s.median_pf:.2f}" if s.median_pf > 0 else "N/A"
+        
+        table.add_row(
+            marker,
+            s.strategy,
+            s.symbol,
+            str(s.count),
+            pnl_str,
+            med_pnl_str,
+            cagr_str,
+            win_str,
+            med_win_str,
+            dd_str,
+            med_dd_str,
+            pf_str,
+            med_pf_str,
+            f"{s.mean_trades:.1f}",
+            style=row_style
+        )
+        
+    console.print(table)
+    total = len(summaries)
+    console.print(f"[dim]Showing {scroll_offset + 1}-{end_idx} of {total} strategies | Press [bold yellow]Esc[/bold yellow] to return to the list.[/dim]")
 
 
 def draw_trades_table(
@@ -591,8 +769,8 @@ def draw_sort_menu(console, selected_idx: int):
     console.print(panel)
 
 
-def draw_chart_on_canvas(canvas, width, height, points, title, strategy_info, selected_idx=None):
-    """Draw a vector equity curve chart resembling a dark-themed trading chart."""
+def draw_chart_on_canvas(canvas, width, height, points, title, strategy_info, selected_idx=None, log_x_enabled=False, log_y_enabled=False, show_log_menu=False, selected_log_item=0, is_aggregated=False):
+    """Draw a vector equity curve chart resembling a dark-themed trading chart with optional log scales."""
     canvas.delete("all")
     canvas.configure(bg="#111111", highlightthickness=0)
     
@@ -600,33 +778,67 @@ def draw_chart_on_canvas(canvas, width, height, points, title, strategy_info, se
         canvas.create_text(width // 2, height // 2, text="No equity data available", fill="#ff5555", font=("Consolas", 12, "bold"))
         return
         
-    x_values = [p[0] for p in points]
-    y_values = [p[1] for p in points]
-    
+    if is_aggregated:
+        all_pts = [p for curve in points for p in curve]
+        x_values = [p[0] for p in all_pts]
+        y_values = [p[1] for p in all_pts]
+    else:
+        x_values = [p[0] for p in points]
+        y_values = [p[1] for p in points]
+        
+    if not x_values or not y_values:
+        canvas.create_text(width // 2, height // 2, text="No equity data available", fill="#ff5555", font=("Consolas", 12, "bold"))
+        return
+        
     min_x = min(x_values)
     max_x = max(x_values)
-    min_y = min(y_values)
-    max_y = max(y_values)
+    
+    # Scale functions
+    if log_y_enabled:
+        def scale_y_val(v):
+            return math.log10(max(1.0, float(v)))
+    else:
+        def scale_y_val(v):
+            return float(v)
+            
+    if log_x_enabled:
+        min_ts = min(x_values)
+        def scale_x_val(ts):
+            return math.log10(max(1.0, float(ts) - float(min_ts) + 1.0))
+    else:
+        def scale_x_val(ts):
+            return float(ts)
+            
+    if is_aggregated:
+        x_scaled = [scale_x_val(p[0]) for curve in points for p in curve]
+        y_scaled = [scale_y_val(p[1]) for curve in points for p in curve]
+    else:
+        x_scaled = [scale_x_val(p[0]) for p in points]
+        y_scaled = [scale_y_val(p[1]) for p in points]
+        
+    min_x_scaled = min(x_scaled)
+    max_x_scaled = max(x_scaled)
+    min_y_scaled = min(y_scaled)
+    max_y_scaled = max(y_scaled)
+    
+    y_range_scaled = max_y_scaled - min_y_scaled
+    if y_range_scaled == 0:
+        y_range_scaled = 1.0
     
     # Add a safety padding margin above and below Y-axis
-    y_range = max_y - min_y
-    if y_range == 0:
-        y_range = 1000.0
-    
-    # Pad top
-    max_y += y_range * 0.05
-    
-    # Pad bottom (only if it doesn't cross below 0 when all points are positive)
-    if all(p[1] >= 0 for p in points):
-        min_y = max(0.0, min_y - y_range * 0.05)
+    max_y_scaled += y_range_scaled * 0.05
+    if not log_y_enabled and all(y >= 0 for y in y_values):
+        min_y_scaled = max(0.0, min_y_scaled - y_range_scaled * 0.05)
+    elif log_y_enabled:
+        min_y_scaled = max(0.0, min_y_scaled - y_range_scaled * 0.05)
     else:
-        min_y -= y_range * 0.05
+        min_y_scaled -= y_range_scaled * 0.05
         
-    y_range = max_y - min_y
+    y_range_scaled = max_y_scaled - min_y_scaled
     
-    x_range = max_x - min_x
-    if x_range == 0:
-        x_range = 86400.0 # 1 day in seconds
+    x_range_scaled = max_x_scaled - min_x_scaled
+    if x_range_scaled == 0:
+        x_range_scaled = 1.0
         
     margin_left = 95
     margin_right = 20
@@ -641,29 +853,72 @@ def draw_chart_on_canvas(canvas, width, height, points, title, strategy_info, se
     plot_width = width - margin_left - margin_right
     plot_height = height - margin_top - margin_bottom
     
-    def scale_x(ts):
-        return margin_left + ((ts - min_x) / x_range) * plot_width
+    def scale_x_to_px(ts):
+        val_scaled = scale_x_val(ts)
+        return margin_left + ((val_scaled - min_x_scaled) / x_range_scaled) * plot_width
         
-    def scale_y(val):
-        return margin_top + plot_height - ((val - min_y) / y_range) * plot_height
+    def scale_y_to_px(val):
+        val_scaled = scale_y_val(val)
+        return margin_top + plot_height - ((val_scaled - min_y_scaled) / y_range_scaled) * plot_height
         
     # 1. Draw Grid Lines (Solid, faint gray) & Labels
-    grid_ticks = 5
-    for i in range(grid_ticks):
-        val = min_y + (i / (grid_ticks - 1)) * y_range
-        y_px = scale_y(val)
-        canvas.create_line(margin_left, y_px, width - margin_right, y_px, fill="#1c1c1c")
-        canvas.create_text(margin_left - 10, y_px, text=f"${val:,.0f}", fill="#7f7f7f", anchor="e", font=("Consolas", 9))
+    # Must include the initial value (10000 here) and be spaced evenly
+    initial_val = 10000.0
+    if is_aggregated:
+        if points and points[0] and len(points[0]) > 0:
+            initial_val = float(points[0][0][1])
+    else:
+        if points and len(points) > 0:
+            initial_val = float(points[0][1])
+            
+    initial_val_scaled = scale_y_val(initial_val)
+    span = max_y_scaled - min_y_scaled
+    step = span / 5.0
+    if step == 0:
+        step = 1.0
         
-    if x_range > 0:
+    n_below = math.ceil((initial_val_scaled - min_y_scaled) / step) if min_y_scaled < initial_val_scaled else 0
+    n_above = math.ceil((max_y_scaled - initial_val_scaled) / step) if max_y_scaled > initial_val_scaled else 0
+    
+    ticks_scaled = []
+    for j in range(1, n_below + 1):
+        ticks_scaled.append(initial_val_scaled - j * step)
+    ticks_scaled.append(initial_val_scaled)
+    for k in range(1, n_above + 1):
+        ticks_scaled.append(initial_val_scaled + k * step)
+        
+    ticks_scaled.sort()
+    
+    for val_scaled in ticks_scaled:
+        y_px = margin_top + plot_height - ((val_scaled - min_y_scaled) / y_range_scaled) * plot_height
+        
+        # Safety check: don't draw outside boundary
+        if not (margin_top - 2 <= y_px <= margin_top + plot_height + 2):
+            continue
+            
+        if log_y_enabled:
+            val_linear = 10 ** val_scaled
+        else:
+            val_linear = val_scaled
+            
+        canvas.create_line(margin_left, y_px, width - margin_right, y_px, fill="#1c1c1c")
+        canvas.create_text(margin_left - 10, y_px, text=f"${val_linear:,.0f}", fill="#7f7f7f", anchor="e", font=("Consolas", 9))
+        
+    if x_range_scaled > 0:
         x_ticks = 6
+        min_ts = min(x_values)
         for i in range(x_ticks):
-            ts = min_x + (i / (x_ticks - 1)) * x_range
-            x_px = scale_x(ts)
+            ts_scaled = min_x_scaled + (i / (x_ticks - 1)) * x_range_scaled
+            x_px = margin_left + ((ts_scaled - min_x_scaled) / x_range_scaled) * plot_width
             canvas.create_line(x_px, margin_top, x_px, height - margin_bottom, fill="#1c1c1c")
-            # Format datetime safely to DD-MM-YYYY
+            
+            if log_x_enabled:
+                ts_linear = min_ts + (10 ** ts_scaled) - 1.0
+            else:
+                ts_linear = ts_scaled
+                
             try:
-                date_str = datetime.fromtimestamp(ts).strftime("%d-%m-%Y")
+                date_str = datetime.fromtimestamp(ts_linear).strftime("%d-%m-%Y")
             except Exception:
                 date_str = ""
             canvas.create_text(x_px, height - margin_bottom + 15, text=date_str, fill="#7f7f7f", anchor="n", font=("Consolas", 9))
@@ -679,29 +934,69 @@ def draw_chart_on_canvas(canvas, width, height, points, title, strategy_info, se
     )
     
     # 3. Draw the Equity Line (Vibrant Green or Red)
-    is_positive = (points[-1][1] >= points[0][1])
-    line_color = "#0dbc79" if is_positive else "#cd3131"
-    line_coords = []
-    for ts, val, _ in points:
-        line_coords.append((scale_x(ts), scale_y(val)))
-        
-    flat_line = [coord for pt in line_coords for coord in pt]
-    if len(flat_line) >= 4:
-        canvas.create_line(flat_line, fill=line_color, width=1.2)
-        
-    # Draw point markers if count is small (to feel interactive)
-    if len(points) < 80:
+    if is_aggregated:
+        for curve in points:
+            if not curve:
+                continue
+            is_positive = (curve[-1][1] >= curve[0][1])
+            line_color = "#0dbc79" if is_positive else "#cd3131"
+            line_coords = []
+            for ts, val, _ in curve:
+                line_coords.append((scale_x_to_px(ts), scale_y_to_px(val)))
+            flat_line = [coord for pt in line_coords for coord in pt]
+            if len(flat_line) >= 4:
+                canvas.create_line(flat_line, fill=line_color, width=1.0)
+    else:
+        is_positive = (points[-1][1] >= points[0][1])
+        line_color = "#0dbc79" if is_positive else "#cd3131"
+        line_coords = []
         for ts, val, _ in points:
-            cx = scale_x(ts)
-            cy = scale_y(val)
-            canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=line_color, outline="#111111")
+            line_coords.append((scale_x_to_px(ts), scale_y_to_px(val)))
             
-    # Draw selected point marker (White Dot)
-    if selected_idx is not None and 0 <= selected_idx < len(points):
-        sel_point = points[selected_idx]
-        cx = scale_x(sel_point[0])
-        cy = scale_y(sel_point[1])
-        canvas.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill="#ffffff", outline="#111111", width=1.5)
+        flat_line = [coord for pt in line_coords for coord in pt]
+        if len(flat_line) >= 4:
+            canvas.create_line(flat_line, fill=line_color, width=1.2)
+            
+        # Draw point markers if count is small (to feel interactive)
+        if len(points) < 80:
+            for ts, val, _ in points:
+                cx = scale_x_to_px(ts)
+                cy = scale_y_to_px(val)
+                canvas.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=line_color, outline="#111111")
+                
+        # Draw selected point marker (White Dot)
+        if selected_idx is not None and 0 <= selected_idx < len(points):
+            sel_point = points[selected_idx]
+            cx = scale_x_to_px(sel_point[0])
+            cy = scale_y_to_px(sel_point[1])
+            canvas.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill="#ffffff", outline="#111111", width=1.5)
+        
+    # 5. Draw Logarithmic Scale Menu Overlay
+    if show_log_menu:
+        cx = width // 2
+        cy = height // 2
+        menu_w = 320
+        menu_h = 160
+        x0 = cx - menu_w // 2
+        y0 = cy - menu_h // 2
+        x1 = cx + menu_w // 2
+        y1 = cy + menu_h // 2
+        
+        canvas.create_rectangle(x0, y0, x1, y1, fill="#181818", outline="#e5e510", width=2)
+        canvas.create_text(cx, y0 + 25, text="LOGARITHMIC SCALE SETTINGS", fill="#e5e510", font=("Consolas", 11, "bold"), anchor="center")
+        canvas.create_line(x0 + 15, y0 + 45, x1 - 15, y0 + 45, fill="#333333")
+        
+        y_text = "Log Y-Axis (Equity): " + ("[ON]" if log_y_enabled else "[OFF]")
+        x_text = "Log X-Axis (Time):   " + ("[ON]" if log_x_enabled else "[OFF]")
+        
+        pointer_y = "> " if selected_log_item == 0 else "  "
+        pointer_x = "> " if selected_log_item == 1 else "  "
+        color_y = "#ffffff" if selected_log_item == 0 else "#888888"
+        color_x = "#ffffff" if selected_log_item == 1 else "#888888"
+        
+        canvas.create_text(x0 + 30, y0 + 65, text=pointer_y + y_text, fill=color_y, font=("Consolas", 10, "bold" if selected_log_item == 0 else "normal"), anchor="w")
+        canvas.create_text(x0 + 30, y0 + 95, text=pointer_x + x_text, fill=color_x, font=("Consolas", 10, "bold" if selected_log_item == 1 else "normal"), anchor="w")
+        canvas.create_text(cx, y1 - 20, text="[Enter] Toggle Scale  |  [Esc] Return to Chart", fill="#666666", font=("Consolas", 8), anchor="center")
             
     # 4. Draw Header/Metadata Info
     if title:
@@ -783,9 +1078,13 @@ class BacktestViewerApp:
         self.backtests_dir = project_root / "backtests"
         
         # State variables
-        self.state = "list"  # "list", "sort_menu", "trades", "trade_detail", "chart"
+        self.state = "list"  # "list", "sort_menu", "trades", "trade_detail", "chart", "strategy_summary"
         self.previous_state = "list"
         self.backtests: list[BacktestData] = []
+        self.visible_backtests: list[BacktestData] = []
+        self.strategy_summaries: list[StrategySummaryData] = []
+        self.filter_strategy = None
+        self.filter_symbol = None
         self.sort_by = "date"
         
         # Offsets
@@ -796,6 +1095,11 @@ class BacktestViewerApp:
         self.trade_scroll_offset = 0
         self.selected_chart_idx = 0
         self.chart_points = []
+        self.log_x_enabled = False
+        self.log_y_enabled = False
+        self.selected_log_item = 0 # 0: Log Y-Axis, 1: Log X-Axis
+        self.selected_strat_summary_idx = 0
+        self.strat_summary_scroll_offset = 0
         
         # Console dimension trackers
         self.last_width = 1150
@@ -901,6 +1205,16 @@ class BacktestViewerApp:
         self.text_display.tag_configure('bold', font=("Consolas", 10, "bold"))
         self.text_display.tag_configure('dim', foreground='#7f7f7f')
         
+    def update_visible_backtests(self):
+        """Update the list of backtests currently shown based on active filter."""
+        if self.filter_strategy and self.filter_symbol:
+            self.visible_backtests = [
+                bt for bt in self.backtests
+                if bt.strategy == self.filter_strategy and bt.symbol == self.filter_symbol
+            ]
+        else:
+            self.visible_backtests = list(self.backtests)
+
     def load_journals(self):
         """Scan and load all journals from backtests folder."""
         if not self.backtests_dir.exists():
@@ -931,6 +1245,23 @@ class BacktestViewerApp:
         # Default sort by date descending
         self.backtests.sort(key=lambda x: x.generated_at or "", reverse=True)
         
+        # Group by (strategy, symbol) and create summaries
+        groups = {}
+        for bt in self.backtests:
+            key = (bt.strategy, bt.symbol)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(bt)
+            
+        self.strategy_summaries = []
+        for (strategy, symbol), bts in groups.items():
+            self.strategy_summaries.append(StrategySummaryData(strategy, symbol, bts))
+            
+        # Default sort by strategy name
+        self.strategy_summaries.sort(key=lambda x: x.strategy)
+        
+        self.update_visible_backtests()
+        
         # Trigger initial draw
         self.re_render()
         
@@ -960,6 +1291,10 @@ class BacktestViewerApp:
             self.handle_key('s')
         elif char == 'c':
             self.handle_key('c')
+        elif char == 'l':
+            self.handle_key('l')
+        elif char == 'g':
+            self.handle_key('g')
         elif char in ('1', '2', '3', '4', '5', '6', '7'):
             self.handle_key(char)
             
@@ -989,6 +1324,7 @@ class BacktestViewerApp:
             
         self.selected_backtest_idx = 0
         self.backtest_scroll_offset = 0
+        self.update_visible_backtests()
         self.state = "list"
         
     def handle_key(self, key: str):
@@ -999,6 +1335,8 @@ class BacktestViewerApp:
                    else self.selected_trade_idx if self.state == "trades"
                    else self.selected_sort_idx if self.state == "sort_menu"
                    else self.selected_chart_idx if self.state == "chart"
+                   else self.selected_log_item if self.state == "log_menu"
+                   else self.selected_strat_summary_idx if self.state == "strategy_summary"
                    else 0)
         
         if self.state == "list":
@@ -1009,29 +1347,43 @@ class BacktestViewerApp:
                     if self.selected_backtest_idx < self.backtest_scroll_offset:
                         self.backtest_scroll_offset = self.selected_backtest_idx
             elif key == 'down':
-                if self.selected_backtest_idx < len(self.backtests) - 1:
+                if self.selected_backtest_idx < len(self.visible_backtests) - 1:
                     self.selected_backtest_idx += 1
                     max_visible = max(5, rows - 12)
                     if self.selected_backtest_idx >= self.backtest_scroll_offset + max_visible:
                         self.backtest_scroll_offset = self.selected_backtest_idx - max_visible + 1
             elif key == 'enter':
-                bt = self.backtests[self.selected_backtest_idx]
-                if bt.raw_trades:
-                    self.state = "trades"
-                    self.selected_trade_idx = 0
-                    self.trade_scroll_offset = 0
+                if self.visible_backtests:
+                    bt = self.visible_backtests[self.selected_backtest_idx]
+                    if bt.raw_trades:
+                        self.state = "trades"
+                        self.selected_trade_idx = 0
+                        self.trade_scroll_offset = 0
             elif key == 's':
                 self.state = "sort_menu"
                 self.selected_sort_idx = 0
             elif key == 'c':
-                self.previous_state = "list"
-                self.state = "chart"
-                self.selected_chart_idx = 0
-                bt = self.backtests[self.selected_backtest_idx]
-                self.chart_points = get_equity_curve(bt)
+                if self.visible_backtests:
+                    self.previous_state = "list"
+                    self.state = "chart"
+                    self.selected_chart_idx = 0
+                    bt = self.visible_backtests[self.selected_backtest_idx]
+                    self.chart_points = get_equity_curve(bt)
+            elif key == 'g':
+                self.state = "strategy_summary"
+                self.selected_strat_summary_idx = 0
+                self.strat_summary_scroll_offset = 0
             elif key == 'esc':
-                self.root.destroy()
-                return
+                if self.filter_strategy is not None:
+                    self.filter_strategy = None
+                    self.filter_symbol = None
+                    self.update_visible_backtests()
+                    self.selected_backtest_idx = 0
+                    self.backtest_scroll_offset = 0
+                    self.state = "strategy_summary"
+                else:
+                    self.root.destroy()
+                    return
                 
         elif self.state == "sort_menu":
             if key == 'esc':
@@ -1048,7 +1400,9 @@ class BacktestViewerApp:
                 self.apply_sort(int(key) - 1)
                 
         elif self.state == "trades":
-            bt = self.backtests[self.selected_backtest_idx]
+            if not self.visible_backtests:
+                return
+            bt = self.visible_backtests[self.selected_backtest_idx]
             if key == 'up':
                 if self.selected_trade_idx > 0:
                     self.selected_trade_idx -= 1
@@ -1067,7 +1421,7 @@ class BacktestViewerApp:
                 self.previous_state = "trades"
                 self.state = "chart"
                 self.selected_chart_idx = 0
-                bt = self.backtests[self.selected_backtest_idx]
+                bt = self.visible_backtests[self.selected_backtest_idx]
                 self.chart_points = get_equity_curve(bt)
             elif key == 'esc':
                 self.state = "list"
@@ -1080,16 +1434,67 @@ class BacktestViewerApp:
             if key == 'esc':
                 self.state = self.previous_state
             elif key == 'left':
-                if self.chart_points and self.selected_chart_idx > 0:
-                    self.selected_chart_idx -= 1
+                if self.previous_state != "strategy_summary":
+                    if self.chart_points and self.selected_chart_idx > 0:
+                        self.selected_chart_idx -= 1
             elif key == 'right':
-                if self.chart_points and self.selected_chart_idx < len(self.chart_points) - 1:
-                    self.selected_chart_idx += 1
-                    
+                if self.previous_state != "strategy_summary":
+                    if self.chart_points and self.selected_chart_idx < len(self.chart_points) - 1:
+                        self.selected_chart_idx += 1
+            elif key == 'l':
+                self.state = "log_menu"
+                self.selected_log_item = 0 # Default Y-Axis Log
+                
+        elif self.state == "log_menu":
+            if key == 'esc':
+                self.state = "chart"
+            elif key in ('up', 'down'):
+                self.selected_log_item = 1 - self.selected_log_item
+            elif key == 'enter':
+                if self.selected_log_item == 0:
+                    self.log_y_enabled = not self.log_y_enabled
+                else:
+                    self.log_x_enabled = not self.log_x_enabled
+                self.re_render()
+                
+        elif self.state == "strategy_summary":
+            if key == 'esc':
+                self.state = "list"
+            elif key == 'up':
+                if self.selected_strat_summary_idx > 0:
+                    self.selected_strat_summary_idx -= 1
+                    max_visible = max(5, rows - 12)
+                    if self.selected_strat_summary_idx < self.strat_summary_scroll_offset:
+                        self.strat_summary_scroll_offset = self.selected_strat_summary_idx
+            elif key == 'down':
+                if self.selected_strat_summary_idx < len(self.strategy_summaries) - 1:
+                    self.selected_strat_summary_idx += 1
+                    max_visible = max(5, rows - 12)
+                    if self.selected_strat_summary_idx >= self.strat_summary_scroll_offset + max_visible:
+                        self.strat_summary_scroll_offset = self.selected_strat_summary_idx - max_visible + 1
+            elif key == 'enter':
+                if self.strategy_summaries:
+                    s = self.strategy_summaries[self.selected_strat_summary_idx]
+                    self.filter_strategy = s.strategy
+                    self.filter_symbol = s.symbol
+                    self.update_visible_backtests()
+                    self.selected_backtest_idx = 0
+                    self.backtest_scroll_offset = 0
+                    self.state = "list"
+            elif key == 'c':
+                if self.strategy_summaries:
+                    self.previous_state = "strategy_summary"
+                    self.state = "chart"
+                    self.selected_chart_idx = 0
+                    s = self.strategy_summaries[self.selected_strat_summary_idx]
+                    self.chart_points = [get_equity_curve(bt) for bt in s.backtests]
+                     
         new_idx = (self.selected_backtest_idx if self.state == "list"
                    else self.selected_trade_idx if self.state == "trades"
                    else self.selected_sort_idx if self.state == "sort_menu"
                    else self.selected_chart_idx if self.state == "chart"
+                   else self.selected_log_item if self.state == "log_menu"
+                   else self.selected_strat_summary_idx if self.state == "strategy_summary"
                    else 0)
                    
         if self.state != old_state or new_idx != old_idx:
@@ -1116,7 +1521,7 @@ class BacktestViewerApp:
             self.text_display.pack(fill="both", expand=True)
             
         # Clean up chart canvas when not in chart state
-        if self.state != "chart":
+        if self.state not in ("chart", "log_menu"):
             try:
                 if hasattr(self, 'chart_canvas') and self.chart_canvas:
                     self.chart_canvas.destroy()
@@ -1129,7 +1534,7 @@ class BacktestViewerApp:
         
         rows = self.console_rows
         
-        if self.state == "chart":
+        if self.state in ("chart", "log_menu"):
             self.text_display.configure(state='normal')
             self.text_display.delete('1.0', 'end')
             
@@ -1146,14 +1551,21 @@ class BacktestViewerApp:
                 highlightthickness=0
             )
             
-            bt = self.backtests[self.selected_backtest_idx]
-            
-            # 1. Draw Header
-            draw_header(
-                self.rich_console, 
-                f"Chart for {bt.strategy} ({bt.symbol} {bt.timeframe})", 
-                f"Initial: ${bt.initial_balance:,.2f} -> Final: ${bt.final_balance:,.2f} ({bt.pnl_pct:+.2f}%) | Total: {bt.total_trades}"
-            )
+            is_agg = (self.previous_state == "strategy_summary")
+            if is_agg:
+                s = self.strategy_summaries[self.selected_strat_summary_idx]
+                draw_header(
+                    self.rich_console, 
+                    f"Aggregated Chart for {s.strategy} ({s.symbol})", 
+                    f"Runs: {s.count} | Mean PnL: {s.mean_pnl:+.2f}% | Mean CAGR: {s.mean_cagr:+.2f}%"
+                )
+            else:
+                bt = self.visible_backtests[self.selected_backtest_idx]
+                draw_header(
+                    self.rich_console, 
+                    f"Chart for {bt.strategy} ({bt.symbol} {bt.timeframe})", 
+                    f"Initial: ${bt.initial_balance:,.2f} -> Final: ${bt.final_balance:,.2f} ({bt.pnl_pct:+.2f}%) | Total: {bt.total_trades}"
+                )
             ansi_header = self.string_io.getvalue()
             insert_ansi_to_text_widget(self.text_display, ansi_header, append=True)
             
@@ -1172,27 +1584,34 @@ class BacktestViewerApp:
             self.string_io.seek(0)
             self.string_io.truncate(0)
             
-            if not self.chart_points:
-                self.chart_points = get_equity_curve(bt)
+            if is_agg:
+                if not self.chart_points or not isinstance(self.chart_points[0][0], (list, tuple)):
+                    s = self.strategy_summaries[self.selected_strat_summary_idx]
+                    self.chart_points = [get_equity_curve(bt) for bt in s.backtests]
                 
-            if self.chart_points:
+                left_text = "Showing Aggregated Equity Chart | Press Esc to go back"
+                right_text = ""
+                back_lbl = "Back to Strategy Metrics"
+            else:
+                if not self.chart_points or isinstance(self.chart_points[0][0], (list, tuple)):
+                    bt = self.visible_backtests[self.selected_backtest_idx]
+                    self.chart_points = get_equity_curve(bt)
+                    
                 if self.selected_chart_idx >= len(self.chart_points):
                     self.selected_chart_idx = len(self.chart_points) - 1
                 if self.selected_chart_idx < 0:
                     self.selected_chart_idx = 0
                 sel_pt = self.chart_points[self.selected_chart_idx]
                 pt_ts, pt_bal, pt_date = sel_pt
-            else:
-                self.selected_chart_idx = 0
-                pt_ts, pt_bal, pt_date = 0.0, bt.initial_balance, "Unknown"
-            
-            if self.selected_chart_idx == 0:
-                trade_lbl = "Initial"
-            else:
-                trade_lbl = f"Trade {self.selected_chart_idx}"
                 
-            left_text = "Showing Equity Chart | Press Esc to go back"
-            right_text = f"{trade_lbl} | {pt_date} | ${pt_bal:,.2f}"
+                if self.selected_chart_idx == 0:
+                    trade_lbl = "Initial"
+                else:
+                    trade_lbl = f"Trade {self.selected_chart_idx}"
+                    
+                left_text = "Showing Equity Chart | Press Esc to go back"
+                right_text = f"{trade_lbl} | {pt_date} | ${pt_bal:,.2f}"
+                back_lbl = "Back to Trades" if self.previous_state == "trades" else "Back to List"
             
             # Align right text to the far right of the console width
             available_width = max(80, self.console_cols)
@@ -1202,9 +1621,16 @@ class BacktestViewerApp:
             padding = " " * padding_len
             combined_line = f"{left_text}{padding}{right_text}"
             
-            back_lbl = "Back to Trades" if self.previous_state == "trades" else "Back to List"
             self.rich_console.print(f"[dim]{combined_line}[/dim]")
-            self.rich_console.print(f"\n[bold yellow]Controls:[/bold yellow] [←/→] Navigate Trades | [Esc] {back_lbl}")
+            
+            if self.state == "log_menu":
+                self.rich_console.print(f"\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate Options | [Enter] Toggle Scale | [Esc] Return to Chart")
+            else:
+                if is_agg:
+                    self.rich_console.print(f"\n[bold yellow]Controls:[/bold yellow] [L] Log Scale Menu | [Esc] {back_lbl}")
+                else:
+                    self.rich_console.print(f"\n[bold yellow]Controls:[/bold yellow] [←/→] Navigate Trades | [L] Log Scale Menu | [Esc] {back_lbl}")
+                
             ansi_footer = self.string_io.getvalue()
             insert_ansi_to_text_widget(self.text_display, ansi_footer, append=True)
             
@@ -1216,29 +1642,46 @@ class BacktestViewerApp:
                 self.chart_points,
                 "", # No title on canvas
                 "", # No metadata info on canvas
-                self.selected_chart_idx
+                None if is_agg else self.selected_chart_idx,
+                self.log_x_enabled,
+                self.log_y_enabled,
+                (self.state == "log_menu"),
+                self.selected_log_item,
+                is_aggregated=is_agg
             )
             return
         
         if self.state == "list":
-            draw_header(self.rich_console, "MATI TRADING BOT — BACKTEST JOURNAL VIEWER", f"Total Backtests: {len(self.backtests)} | Folder: {self.backtests_dir.name}")
-            max_visible = max(5, rows - 12)
-            draw_backtests_table(self.rich_console, self.backtests, self.selected_backtest_idx, self.backtest_scroll_offset, max_visible, self.sort_by)
-            self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] View Trades | [S] Sort Menu | [C] Equity Chart | [Esc] Exit")
+            if self.filter_strategy is not None:
+                draw_header(self.rich_console, "STRATEGY RUNS - FILTERED", f"Strategy: {self.filter_strategy} | Symbol: {self.filter_symbol} | Runs: {len(self.visible_backtests)} / {len(self.backtests)}")
+                max_visible = max(5, rows - 12)
+                draw_backtests_table(self.rich_console, self.visible_backtests, self.selected_backtest_idx, self.backtest_scroll_offset, max_visible, self.sort_by)
+                self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] View Trades | [S] Sort Menu | [C] Equity Chart | [Esc] Back to Strategy Metrics")
+            else:
+                draw_header(self.rich_console, "MATI TRADING BOT — BACKTEST JOURNAL VIEWER", f"Total Backtests: {len(self.backtests)} | Folder: {self.backtests_dir.name}")
+                max_visible = max(5, rows - 12)
+                draw_backtests_table(self.rich_console, self.visible_backtests, self.selected_backtest_idx, self.backtest_scroll_offset, max_visible, self.sort_by)
+                self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] View Trades | [S] Sort Menu | [C] Equity Chart | [G] Strategy Metrics | [Esc] Exit")
             
         elif self.state == "sort_menu":
             draw_header(self.rich_console, "SORT BACKTEST RUNS")
             draw_sort_menu(self.rich_console, self.selected_sort_idx)
             
         elif self.state == "trades":
-            bt = self.backtests[self.selected_backtest_idx]
+            bt = self.visible_backtests[self.selected_backtest_idx]
             max_visible = max(5, rows - 12)
             draw_trades_table(self.rich_console, bt, self.selected_trade_idx, self.trade_scroll_offset, max_visible)
             self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] Trade Details | [C] Equity Chart | [Esc] Back to List")
             
         elif self.state == "trade_detail":
-            bt = self.backtests[self.selected_backtest_idx]
+            bt = self.visible_backtests[self.selected_backtest_idx]
             draw_trade_detail(self.rich_console, bt, self.selected_trade_idx)
+            
+        elif self.state == "strategy_summary":
+            draw_header(self.rich_console, "STRATEGIES PERFORMANCE SUMMARY", f"Grouped by Strategy & Symbol | Total Groups: {len(self.strategy_summaries)}")
+            max_visible = max(5, rows - 12)
+            draw_strategy_summaries_table(self.rich_console, self.strategy_summaries, self.selected_strat_summary_idx, self.strat_summary_scroll_offset, max_visible)
+            self.rich_console.print("\n[bold yellow]Controls:[/bold yellow] [↑/↓] Navigate | [Enter] View Backtests | [C] Aggregated Chart | [Esc] Back to List")
             
         # Get ANSI text
         ansi_text = self.string_io.getvalue()
