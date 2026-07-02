@@ -5,10 +5,10 @@ argument-hint: <journal o resultado del candidato>
 
 Compara el candidato contra el **baseline v1 ANCLADO** sin mezclar metricas: $ARGUMENTS
 
-**Baseline v2 ANCLADO — DEFAULT actual (dataset canonico 96906 velas, BTC 2015-2026 realistic):**
-- CAGR +80.6% | Max DD -55.23% | PF 6.14 | 58 trades | Q4 2025 +$290,232
-- 2018-2026: +41.5% CAGR / Max DD -53.42% (referencia secundaria)
-- v2 = v1 + `regime_off_on_bear_onset=True`. Para comparar contra v1 (rollback): PF 4.33, +78.4% CAGR, -57.60% DD.
+**Baseline v4 ANCLADO — DEFAULT actual (dataset canonico 102931 velas / 96930 analizadas, BTC 2015-2026 realistic):**
+- CAGR +86.2% | Max DD -52.71% | PF 4.43 | 68 trades | Calmar 1.63 | Sharpe 1.38 | Sortino 1.57
+- 2018-2026: +47.6% CAGR / Max DD -53.42% (referencia secundaria)
+- v4 = v3 + `min_btc_pct=0.20` + `delta_bear_onset=-0.30`. Rollback v3: `{"min_btc_pct":0.30,"delta_bear_onset":-0.20}`.
 - RECORDAR: anclas de comparacion = CAGR y Max DD (estables). PF es FRAGIL al punto de inicio, usar como rango.
 
 Reglas de comparacion honesta:
@@ -26,4 +26,4 @@ Reglas de comparacion honesta:
    perdedor, es overfitting salvo que ETH/walk-forward lo confirmen.
 5. **Da un veredicto claro:** ADOPTAR / DESCARTAR / NECESITA WALK-FORWARD. Sin ambiguedad.
 
-Recuerda: el resultado es sensible al punto de inicio (97105 velas daban PF 2.40). Reproducibilidad != correccion.
+Recuerda: el resultado es sensible al punto de inicio (leccion historica: 97105 velas de relleno parcial daban PF 2.40 vs 96906 → 4.33; el canonico 102931 continuo da 4.43). Reproducibilidad != correccion.

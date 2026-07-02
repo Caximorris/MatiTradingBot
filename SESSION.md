@@ -4,7 +4,7 @@ Complemento de CLAUDE.md. **Este archivo es deliberadamente corto** para no gast
 cada arranque. El detalle historico completo (logs de sesion, tablas de backtests, referencia de
 cada modulo) vive en **`SESSION_ARCHIVE.md`** — leelo SOLO cuando lo necesites, no por defecto.
 
-**Ultima actualizacion: 2026-07-01 (sesion 13)**
+**Ultima actualizacion: 2026-07-02 (sesion 15)**
 
 Punteros a referencia (leer bajo demanda, NO precargar):
 - `SESSION_ARCHIVE.md` — logs sesiones 12/13, auditoria 2026-06-30, resultados backtest, referencia
@@ -18,21 +18,42 @@ Punteros a referencia (leer bajo demanda, NO precargar):
 
 ## ESTADO ACTUAL
 
-**Pro Trend v13** (en codigo). Framework de validacion COMPLETADO. Siguiente: paper trading 6 meses.
+**FOCO UNICO: Swing Allocator.** Pro Trend queda PAUSADO INDEFINIDAMENTE (decision 2026-07-01,
+sesion 14). No se continua ni paper trading ni optimizacion por ahora. El codigo queda como esta
+(v13, congelado y reversible). Retomable en el futuro, pero fuera del roadmap activo.
+
+**Pro Trend v13** (CONGELADO — no se continua). Framework de validacion estaba COMPLETADO.
 - 2018-2026 realistic: +521.84% / CAGR +25.7% (partial_exit=150%) vs B&H +550% / +26.4%.
 - 2015-2026 realistic: +5812% / CAGR +44.9% — 3 ciclos bull validados.
 - Ventaja real: riesgo, no retorno. 35% tiempo en mercado, evita crashes -70%.
 
-**Swing Allocator v3 ADOPTADO como default** (2026-07-01). Validacion 100% COMPLETADA. Lista para operar.
-- Config default: `use_regime=True`, `use_halving=True`, `regime_off_on_bear_onset=True`,
-  `bull_peak_ema50_cap_enabled=True`, `bull_peak_ema50_cap=0.85`, resto False.
-- 2015-2026 realistic: $6.998M, CAGR +81.39%, PF 6.10, Max DD -53.64%, `btc_vs_bnh_ratio=0.8531`.
-- 2018-2026 realistic: $174.8k, CAGR +42.99%, PF 5.55, Max DD -53.42%, `btc_vs_bnh_ratio=0.9140`.
-- 2015-2026 conservative: $6.806M, CAGR +80.93%, PF 5.84, Max DD -53.69%, `btc_vs_bnh_ratio=0.8301`.
-- Rollback: `--config '{"bull_peak_ema50_cap_enabled": false}'` (→v2), `{"regime_off_on_bear_onset": false}'` (→v1).
+**Swing Allocator v4 ADOPTADO como default** (2026-07-01, sesion 14). Pasa go/no-go completo.
+- Cambio v3->v4: `min_btc_pct` 0.30->0.20 y `delta_bear_onset` -0.20->-0.30. Resto de v3 intacto
+  (regime_off_on_bear_onset=True, bull_peak_ema50_cap=0.85). Mejora AMBAS anclas a la vez.
+- Mecanismo estructural: el floor 0.30 clampeaba y bloqueaba el estado de bear profundo (las senales
+  nunca calculan <0.20). Bajarlo desbloquea "mas USDT en bear -> recompra mas barata" = la tesis central.
+- 2015-2026 realistic: CAGR +86.2% / Max DD -52.71% (v3: 82.4% / -53.64%) → +3.8pp / -0.9pp.
+- 2015-2026 conservative: +85.7% / -52.86%. 2018-2026 realistic: +47.6% / -53.42% (+4.6pp CAGR).
+- WF 4/4 TEST positivo (CAGR 21.5/41.5/20.8/82.4%, PF>1.8). ETH inerte (cambios BTC-especificos) ✅.
+- Rollback: `--config '{"min_btc_pct": 0.30, "delta_bear_onset": -0.20}'` vuelve a v3.
+- DD residual reordenado: max ahora 2019->COVID (-53%) y flash-crash mayo-2021 (-50%). ~50-52% es el
+  suelo estructural de long-only 100% en mercado — NO perseguir (rompe tesis o cuesta CAGR, ver latch).
 
-**Proximo foco Swing:** auditar eventos `bull_peak_ema50_cap_*` por ciclo antes de anadir otro flag;
-reducir Max DD sin romper BTC acumulado. (Detalle y candidatas descartadas: SESSION_ARCHIVE.md.)
+**HECHO (sesion 15, 2026-07-02):**
+- **Smoke-verify v4 OK**: `backtest --strategy swing 2015-2026 realistic` reproduce CAGR +86.2% /
+  Max DD -52.71% / PF 4.43 / 68 trades / 96930 velas analizadas. Las 5 metricas nuevas se muestran
+  (Median trade +602, Calmar 1.63, DD duracion 260d, Sharpe 1.38, Sortino 1.57).
+- **Cache 102931 ADOPTADO como canonico** (decision 2026-07-02): BTC-USDT_1H 2014-04-25 → 2026-01-01,
+  continuo, cero huecos >24h. Reemplaza al viejo de 96906. v4 validado sobre el (WF 4/4, ETH inerte,
+  smoke OK). El PF 4.43 es sano pese a mas relleno Bitstamp que el 97105 sospechoso, porque el 102931
+  es relleno COMPLETO/continuo, no parcial. Anclas siguen siendo CAGR/DD, no PF.
+
+**PENDIENTE (sesion 15):**
+- **Commitear v4 + metricas** (sin commitear aun): 5 archivos. Sugerido 2 commits (metricas backtest /
+  swing v4 default) y push a origin/main.
+
+**Descartado sesion 14 (no reintentar):** latch del cap (`bull_peak_cap_latch`), regime_delta 0.15,
+VIX, MVRV (wash), Pi Cycle (inerte), floor <0.20 (inerte, senales nunca bajan de 0.20).
 
 ---
 
@@ -69,18 +90,32 @@ un backtest puntual.
 
 ### 4. Determinismo de datos
 - Backtests deterministas via cache OHLCV (`data/cache/`). Runs con rango cacheado = velas identicas.
-- Resultado SENSIBLE al punto de inicio (dataset canonico v1: 96906 velas). No mezclar caches entre maquinas.
+- Resultado SENSIBLE al punto de inicio (dataset canonico: 102931 velas, adoptado 2026-07-02; viejo 96906). No mezclar caches entre maquinas.
 - Backtests CONTINUOS — nunca reiniciar balance en frontera de año/mes.
 
 ---
 
-## SIGUIENTE PASO OBLIGATORIO — Pro Trend
+## SIGUIENTE PASO — Swing Allocator (foco unico)
 
-Paper trading MANDATORIO min 6 meses, sizing 50%, antes de capital real:
-```bash
-python main.py start --strategy pro --symbol BTC-USDT --config '{"size_ultra": 0.45, "size_high": 0.40, "size_mid": 0.30}'
-```
-Monitorear: entries <3/mes, losses >20%, cooldown activo. (`start` requiere confirmacion explicita.)
+Pro Trend pausado; toda la energia va a mejorar Swing v3.
+
+**HECHO (sesion 14):**
+- Auditoria del cap `bull_peak_ema50_cap_*`: 24 disparos en 2015-26, TODOS SELL 100%->85%, en los 3
+  techos (2017:9, 2021:5, 2024-25:10). Estructural, NO overfit a un evento. PERO casi todos en PARES
+  (btc_pct_before=0.9997 siempre) => es ping-pong sell-85%/rebuy-100% en el techo. Feb y Ago 2025 =
+  3 ventas cada uno. El cap solo aporta 1.6pp de Max DD (v2 -55.23 -> v3 -53.64).
+- **Latch del cap PROBADO Y DESCARTADO.** `bull_peak_cap_latch` mantiene el cap hasta cambio de fase.
+  Mecanismo OK (24->3 disparos) pero PEOR: dispara early y handcuffea a 85% todo el rally
+  (2017 $827->$19k). 2015 realistic CAGR 81.39->76.8% (-4.6pp), DD ni mejora (-53.64->-54.02).
+  Conservative 80.93->76.5%. El rebuy-a-100% de v3 era CORRECTO. Q4 2025 mejora aislado = overfit.
+
+**Candidatas vivas para Max DD (cada una AISLADA vs baseline v3, ventana 2015 principal):**
+- Cap-target cuando `bear_onset` activo (distinto de bull_peak; ataca la transicion de techo).
+- NO extender el cap EMA50D a `post_halving`: la auditoria sugiere que anadiria mas whipsaw.
+- Combinar y re-validar WF 4/4 + ETH solo si una candidata aporta aislada.
+
+Regla dura: candidato nuevo se compara por CAGR y Max DD (anclas), PF como rango, inicio 2015 fijo.
+`start` en vivo sigue requiriendo confirmacion — pero Swing NO va a paper aun, primero backtests.
 
 ---
 

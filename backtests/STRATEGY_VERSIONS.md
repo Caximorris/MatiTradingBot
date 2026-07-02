@@ -365,7 +365,7 @@ fase de halving. Rebalancea cuando |target-actual| > threshold. Nunca sale del t
 
 ### v1 — halving deltas ±0.20 (2026-06-30) [DEFAULT hasta sesion 13]
 **Config:** igual que v0 pero `delta_post_halving=+0.20, delta_bear_onset=-0.20`.
-**Resultado (dataset canonico 96906 velas, realistic):**
+**Resultado (cache viejo 96906 velas, realistic; canonico actual = 102931 desde 2026-07-02):**
 - 2015-26: +78.4% CAGR, PF 4.33, 65 trades, Max DD -57.60%, Q4 2025 **-$129,784**
 - 2018-26: +36.7% CAGR, PF 3.77, Max DD -58.11%
 - WF 4/4 ✅ | ETH +56.4% CAGR | conservative +69.8% CAGR

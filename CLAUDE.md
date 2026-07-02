@@ -40,8 +40,13 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 - Backtests DETERMINISTAS (desde 2026-07-01): `fetch_historical_bars` cachea OHLCV en
   `data/cache/{symbol}_{bar}.json` (gitignored). Runs con rango cubierto se sirven del cache
   sin red → velas identicas. Para forzar re-descarga: borrar el archivo del cache.
-  El resultado es SENSIBLE al punto de inicio del histórico (97105 velas daban PF 2.40 vs
-  96906 → PF 4.33): el cache da reproducibilidad, no corrección. No mezclar caches entre maquinas.
+  DATASET CANONICO (2026-07-02): `BTC-USDT_1H` = 102931 velas (2014-04-25 → 2026-01-01, continuo,
+  cero huecos >24h, gap-fill Bitstamp completo). Reemplaza al viejo de 96906 velas. Ventana
+  2015-2026 = 96930 velas analizadas tras warmup.
+  El resultado es SENSIBLE al punto de inicio del histórico (leccion historica: 97105 velas de
+  relleno PARCIAL daban PF 2.40 vs 96906 → PF 4.33; el 102931 continuo da PF 4.43): el cache da
+  reproducibilidad, no corrección. PF es fragil al arranque — usar CAGR y Max DD como anclas. No
+  mezclar caches entre maquinas.
 - Maximo 800 lineas por archivo
 - `transient=True` en Rich Progress. Evitar Unicode en Windows (cp1252)
 - EFICIENCIA DE TOKENS: NUNCA hacer `Read` de un journal crudo (`backtests/journal_*.json`, hasta
@@ -55,7 +60,10 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 
 1. **Backtests: SI ejecutar** (cambio 2026-07-01). Se pueden correr hasta 5 en paralelo, en background. SIEMPRE mostrar los resultados al terminar. Live/paper (`start`) sigue requiriendo confirmacion.
 
-2. **No tocar parametros de Pro Trend** hasta completar paper trading 6 meses. Todo el framework de validacion completado (baselines, ETH, sensitivity, MAE/MFE/R, partial_exit, BTC 2015-2026). Version actual: v13 con partial_exit_pct=150.0 por defecto. Siguiente: paper trading.
+2. **Pro Trend PAUSADO INDEFINIDAMENTE** (decision 2026-07-01, sesion 14). No se continua paper
+   trading ni optimizacion. NO tocar sus parametros — el codigo queda CONGELADO en v13
+   (partial_exit_pct=150.0). Framework de validacion estaba completo (baselines, ETH, sensitivity,
+   MAE/MFE/R, partial_exit, BTC 2015-2026). Foco 100% en Swing Allocator. Retomable en el futuro.
 
 3. **Lookahead fixes aplicados — no revertir:**
    - `macro_context._lookup`: offset empieza en 1 (MVRV = dia anterior)

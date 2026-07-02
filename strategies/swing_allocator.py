@@ -29,7 +29,11 @@ class SwingAllocatorConfig:
 
     # -- Limites de allocation --
     base_btc_pct:  float = 0.60   # punto neutral (sin senales)
-    min_btc_pct:   float = 0.30   # hard floor — nunca menos del 30%
+    # v4 DEFAULT (2026-07-01, sesion 14): floor bajado 0.30->0.20. Las senales nunca calculan por
+    # debajo de 0.20 (0.60-0.20regime-0.30bear_onset), asi que 0.30 clampeaba y bloqueaba el estado
+    # de mas defensa en bear profundo. Bajarlo desbloquea "mas USDT en bear -> recompra mas barata".
+    # Mejora AMBAS anclas: 2015 real +3.8pp CAGR / -0.9pp DD. WF 4/4, ETH inerte. Rollback: 0.30.
+    min_btc_pct:   float = 0.20   # hard floor
     max_btc_pct:   float = 1.00   # hard ceiling — hasta 100%
 
     # -- Control de rebalanceo --
@@ -62,6 +66,16 @@ class SwingAllocatorConfig:
     bull_peak_ema50_cap_enabled: bool = True
     bull_peak_ema50_cap:         float = 0.85
 
+    # -- Latch del cap (PROBADO Y DESCARTADO 2026-07-01, sesion 14. default False = v3 intacto) --
+    # Idea: una vez que el cap dispara en bull_peak, mantener target <= cap hasta que la fase cambie,
+    # para matar el ping-pong sell-85%/rebuy-100% (24 disparos -> 3 con el latch, mecanismo OK).
+    # RESULTADO: PEOR. El latch dispara EARLY (2017-01-07 @$827, 2021-04-18 @$55k, 2024-12-30 @$92k)
+    # y te deja en 85% durante TODO el rally parabolico posterior (BTC $827->$19k en 2017). Sacrifica
+    # 15% del mayor tramo alcista de cada ciclo. 2015 realistic: CAGR 81.39%->76.8% (-4.6pp), Max DD
+    # -53.64%->-54.02% (ni mejora el DD). conservative 80.93%->76.5%. El rebuy-a-100% del v3 era
+    # CORRECTO: reentra antes de la siguiente pierna. Q4 2025 mejora aislado = overfit, no adoptar.
+    bull_peak_cap_latch: bool = False
+
     # -- Deltas de cada senal (cuanto mueve el target) --
     delta_regime_bull:   float =  0.20   # bull macro: EMA50D>200D + precio>200D + ADX>15
     delta_regime_bear:   float = -0.20   # bear macro: EMA50D<200D
@@ -74,7 +88,7 @@ class SwingAllocatorConfig:
     delta_macd_4h_bull:  float =  0.05   # 4H MACD por encima de signal line
     delta_macd_4h_bear:  float = -0.05   # 4H MACD por debajo de signal line
     delta_post_halving:  float =  0.20   # fase post_halving / bull_peak — v1 validado WF 4/4
-    delta_bear_onset:    float = -0.20   # fase bear_onset — v1 validado WF 4/4
+    delta_bear_onset:    float = -0.30   # fase bear_onset — v4 (era -0.20 en v1-v3). Rollback: -0.20
     delta_funding_high:  float = -0.05   # funding > funding_high (mercado muy largo)
     delta_funding_neg:   float =  0.05   # funding negativo (shorts excesivos)
     delta_dxy_strong:    float = -0.05   # DXY subio > 1.5% en 10 dias
@@ -137,6 +151,7 @@ class SwingAllocatorBot:
         self._initialized     = False
         self._last_rebalance: datetime | None = None
         self._bar_count       = 0
+        self._cap_latched     = False   # trinquete del cap dentro de una fase bull_peak
 
         # Caches de indicadores (mismo patron que Pro Trend)
         self._daily_cache: dict = {}   # {"date": "YYYY-MM-DD", "ind": {...}}
@@ -339,18 +354,22 @@ class SwingAllocatorBot:
                 target += cfg.delta_dxy_weak
                 active.append(f"dxy_weak_{dxy_change:.1f}")
 
-        # --- Late-cycle de-risk: cap only after losing the previous full day's EMA50D ---
+        # --- Late-cycle de-risk: cap after losing the previous full day's EMA50D ---
+        # Con bull_peak_cap_latch=True, el cap se mantiene aunque el precio recupere la EMA50D,
+        # hasta que la fase deje de ser bull_peak (evita el ping-pong sell-85%/rebuy-100%).
         ema50_closed = ind.get("ema50d_closed") if ind else None
-        if (
-            cfg.bull_peak_ema50_cap_enabled
-            and cfg.use_halving
-            and phase == "bull_peak"
-            and ema50_closed is not None
-            and price < float(ema50_closed)
-            and target > cfg.bull_peak_ema50_cap
-        ):
-            target = cfg.bull_peak_ema50_cap
-            active.append(f"bull_peak_ema50_cap_{target:.2f}")
+        if phase != "bull_peak":
+            self._cap_latched = False   # reset al salir de bull_peak
+
+        if cfg.bull_peak_ema50_cap_enabled and cfg.use_halving and phase == "bull_peak":
+            lost_ema50 = ema50_closed is not None and price < float(ema50_closed)
+            if lost_ema50 and cfg.bull_peak_cap_latch:
+                self._cap_latched = True
+            apply_cap = lost_ema50 or (cfg.bull_peak_cap_latch and self._cap_latched)
+            if apply_cap and target > cfg.bull_peak_ema50_cap:
+                target = cfg.bull_peak_ema50_cap
+                tag = "bull_peak_ema50_cap" if lost_ema50 else "bull_peak_cap_hold"
+                active.append(f"{tag}_{target:.2f}")
 
         # Hard limits
         target = max(cfg.min_btc_pct, min(cfg.max_btc_pct, target))

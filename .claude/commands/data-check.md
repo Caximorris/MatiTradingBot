@@ -18,8 +18,10 @@ Comprueba:
    exchange (aceptable) de descarga incompleta (bug).
 4. **Fuentes/fallback:** OKX principal, Binance si OKX vacio, Bitstamp para gap pre-2017 (BTC 2015-16).
    Bitstamp trata USD como USDT. Confirma que el merge deduplica por timestamp.
-5. **Fragilidad del punto de inicio (PENDIENTE):** el resultado varia segun donde arranca el historico
-   (97105 velas -> PF 2.40 vs 96906 -> 4.33). Si auditas v1, mide inicio 2015 vs 2016 vs 2017.
+5. **Fragilidad del punto de inicio:** el resultado varia segun donde arranca el historico
+   (leccion historica: 97105 velas de relleno PARCIAL -> PF 2.40 vs 96906 -> 4.33). El canonico
+   actual (2026-07-02) = 102931 velas, relleno COMPLETO/continuo (cero huecos >24h) -> PF 4.43.
+   Si auditas, mide inicio 2015 vs 2016 vs 2017 y confirma PF como rango, no ancla.
 6. **API viva:** si algo falla, ¿degrada en silencio? (market_context/macro_context lo hacen). Reporta
    si un contexto externo esta devolviendo defaults en vez de datos reales.
 
