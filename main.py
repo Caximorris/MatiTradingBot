@@ -449,10 +449,20 @@ def _run_backtest(
                     resolved_config=resolved_config,
                     backtest_summary=backtest_summary,
                 )
+                # BTC vs B&H — metrica fundacional del Swing (SWING_PLAN): <1.0 = tienes menos BTC que B&H
+                _init_ev = next((r for r in strat._rebalance_log if r["direction"] == "INIT"), None)
+                _init_px = _init_ev["price"] if _init_ev else 0.0
+                _bnh_btc = (float(bt_client.initial_balance) / _init_px) if _init_px > 0 else 0.0
+                _ratio   = (_final_btc / _bnh_btc) if _bnh_btc > 0 else 0.0
                 if journal_out is not None:
                     journal_out.append(swing_path)
                 else:
                     console.print(f"[dim]Swing journal -> {swing_path}[/dim]")
+                    _rc = "green" if _ratio >= 1.0 else "red"
+                    console.print(
+                        f"[bold]BTC vs B&H:[/bold] [{_rc}]{_ratio:.4f}[/{_rc}]  "
+                        f"(final {_final_btc:.4f} BTC vs B&H {_bnh_btc:.4f})"
+                    )
 
             return result
         except Exception as exc:

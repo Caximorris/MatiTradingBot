@@ -78,8 +78,11 @@ class BacktestResult:
     equity_curve: list[tuple[datetime, Decimal]] = field(default_factory=list)
     # Métricas adicionales (con defaults para compatibilidad)
     cagr: Decimal = Decimal("0")
+    calmar: Decimal = Decimal("0")          # CAGR / MaxDD — trade-off riesgo/retorno en un numero
+    max_dd_duration_days: int = 0           # dias bajo el agua del peor drawdown (peak->trough)
     sortino: Decimal = Decimal("0")
     expectancy: Decimal = Decimal("0")
+    median_trade: Decimal = Decimal("0")   # mediana del P&L por trade — robusta a monstruos/outliers
     avg_win: Decimal = Decimal("0")
     avg_loss: Decimal = Decimal("0")
     max_consec_losses: int = 0
@@ -104,9 +107,12 @@ class BacktestResult:
             ("Win rate", f"{self.win_rate:.1f}%"),
             ("Avg Win / Avg Loss", f"+{self.avg_win:.0f} / -{self.avg_loss:.0f} USDT"),
             ("Expectancy/trade", f"{self.expectancy:+.2f} USDT"),
+            ("Median trade", f"{self.median_trade:+.2f} USDT"),
             ("Profit Factor", f"{self.profit_factor:.2f}"),
             ("Max Drawdown", f"[red]-{self.max_drawdown_pct:.2f}%[/red]"),
+            ("Max DD duracion", f"{self.max_dd_duration_days} dias"),
             ("Max racha perdedoras", str(self.max_consec_losses)),
+            ("Calmar (CAGR/MaxDD)", f"{self.calmar:.2f}"),
             ("Sharpe Ratio", f"{self.sharpe_ratio:.2f}"),
             ("Sortino Ratio", f"{self.sortino:.2f}"),
             ("Tiempo en mercado", f"{self.time_in_market_pct:.1f}%"),
@@ -537,6 +543,13 @@ class BacktestEngine:
         lr_d   = Decimal("1") - wr_d
         expectancy = (wr_d * avg_win - lr_d * avg_loss).quantize(Decimal("0.01"))
 
+        # Mediana del P&L por trade: menos sensible a los pocos trades monstruo que la media/PF
+        all_pnls = sorted(t.pnl for t in pnl_trades if t.pnl is not None)
+        median_trade = (
+            Decimal(str(statistics.median(all_pnls))).quantize(Decimal("0.01"))
+            if all_pnls else Decimal("0")
+        )
+
         max_consec = 0
         cur_consec  = 0
         for t in pnl_trades:
@@ -558,6 +571,11 @@ class BacktestEngine:
         start_dt = datetime.fromtimestamp(bars[self._warmup].timestamp / 1000, tz=timezone.utc)
         end_dt   = datetime.fromtimestamp(bars[-1].timestamp / 1000, tz=timezone.utc)
 
+        _maxdd  = self._max_drawdown(equity_values)
+        _cagr   = self._cagr(equity_values, start_dt, end_dt, self._client.initial_balance)
+        _calmar = (_cagr / _maxdd).quantize(Decimal("0.01")) if _maxdd > 0 else Decimal("0")
+        _dd_dur = self._max_dd_duration(equity_curve)
+
         return BacktestResult(
             symbol=symbol,
             strategy_name=strategy.name,
@@ -574,14 +592,17 @@ class BacktestEngine:
             losing_trades=len(losses),
             win_rate=win_rate,
             profit_factor=profit_factor,
-            max_drawdown_pct=self._max_drawdown(equity_values),
+            max_drawdown_pct=_maxdd,
             sharpe_ratio=self._sharpe(equity_values, bars_per_year=bars_per_year),
             buy_hold_pnl_pct=buy_hold_pct,
             trades=pnl_trades,
             equity_curve=equity_curve,
-            cagr=self._cagr(equity_values, start_dt, end_dt, self._client.initial_balance),
+            cagr=_cagr,
+            calmar=_calmar,
+            max_dd_duration_days=_dd_dur,
             sortino=self._sortino(equity_values, bars_per_year=bars_per_year),
             expectancy=expectancy,
+            median_trade=median_trade,
             avg_win=avg_win,
             avg_loss=avg_loss,
             max_consec_losses=max_consec,
@@ -630,6 +651,25 @@ class BacktestEngine:
             if dd > max_dd:
                 max_dd = dd
         return max_dd.quantize(Decimal("0.01"))
+
+    @staticmethod
+    def _max_dd_duration(curve: list[tuple[datetime, Decimal]]) -> int:
+        """Dias bajo el agua del peor drawdown: de su peak a su trough (no la recuperacion)."""
+        if len(curve) < 2:
+            return 0
+        peak_v = curve[0][1]
+        peak_dt = curve[0][0]
+        worst_dd = Decimal("0")
+        worst_days = 0
+        for dt, v in curve:
+            if v > peak_v:
+                peak_v = v
+                peak_dt = dt
+            dd = (peak_v - v) / peak_v if peak_v > 0 else Decimal("0")
+            if dd > worst_dd:
+                worst_dd = dd
+                worst_days = (dt - peak_dt).days
+        return worst_days
 
     @staticmethod
     def _sharpe(
