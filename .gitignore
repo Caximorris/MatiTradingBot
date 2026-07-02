@@ -52,3 +52,9 @@ backtests/journal_*.json
 # Estado runtime paper/live (VM y local) — nunca versionar
 data/runtime/
 trading.db
+
+# Graficos HTML generados por tools/swing_chart.py — regenerables desde el journal
+backtests/chart_*.html
+
+# macOS
+.DS_Store
