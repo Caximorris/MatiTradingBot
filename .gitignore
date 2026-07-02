@@ -38,9 +38,11 @@ build/
 # Informes generados
 reports/
 
-# Cache OHLCV en disco (generado, ~7MB por par, crece). Cada maquina lo puebla
-# en la primera descarga. Da determinismo por-maquina, no se versiona.
-data/cache/
+# Cache OHLCV en disco (~7MB por par). SI se versiona a proposito: es el dataset
+# CANONICO (102931 velas BTC). Versionarlo da determinismo ENTRE maquinas — sin esto,
+# re-descargar en otro PC cambia el conteo de velas y rompe la reproducibilidad de v4.
+# Son datos de precio publicos, sin secretos. (Repo privado.)
+# data/cache/  <- intencionadamente NO ignorado
 
 # Journals de backtest: reproducibles desde el cache determinista y pesados (hasta
 # ~10MB). Por defecto NO se versionan para no inflar el repo. Los journals canonicos
