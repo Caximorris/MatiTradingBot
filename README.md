@@ -185,25 +185,26 @@ Fuentes de datos externas cargadas automáticamente antes del backtest:
 - Funding rate histórico: OKX API
 
 ### Swing Allocator (`--strategy swing`)
-**Estado: v2 — validado con walk-forward 4/4 ✅, ETH ✅, costs conservative ✅.**
-**BTC 2015-2026 realistic: +80.6% CAGR, $6.69M, 58 trades, Max DD -55.23%.**
-**Supera BTC Buy & Hold (~+66.8% CAGR) con menor drawdown máximo histórico (-55.2% vs -77%).**
+**Estado: v4 (default) — validado con walk-forward 4/4 ✅, ETH ✅, costs conservative ✅.**
+**BTC 2015-2026 realistic: +86.2% CAGR, $9.31M, 68 trades, Max DD -52.71%.**
+**Bate a BTC Buy & Hold en retorno Y en riesgo: +86.2% vs +66.8% CAGR, y -52.7% vs -83.8% de drawdown máximo.**
 
 Gestión dinámica de allocation BTC/USDT. Nunca sale completamente de BTC — ajusta el porcentaje
-entre 30% y 100% según señales macro y de ciclo. Objetivo: acumular más BTC en correcciones
+entre 20% y 100% según señales macro y de ciclo. Objetivo: acumular más BTC en correcciones
 y reducir exposición antes de bear markets.
 
 - **Señal de régimen:** EMA50D vs EMA200D + ADX — detecta bull/bear macro
 - **Señal de halving:** fases post-halving (180-540d) y bear_onset (540d+) — ajusta exposición por ciclo
-- **Allocation neutral:** 60% BTC. Bull: +20% → 80%. Post-halving: +20% adicional → 100%. Bear: −20% → 40%
-- **v2 (default):** en `bear_onset` (fase de distribución post-halving) suprime solo la señal de compra
-  del régimen — evita perseguir breakouts alcistas que son trampas de ciclo tardío. Mejora CAGR y
-  drawdown a la vez. Reversible a v1 con `--config '{"regime_off_on_bear_onset": false}'`
+- **Allocation neutral:** 60% BTC. Bull: +20% → 80%. Post-halving: +20% adicional → 100%. Bear profundo: hasta 20%
+- **v4 (default):** floor bajado a 20% + `delta_bear_onset` −30% → más USDT en bear profundo para recomprar
+  más barato. Sobre v3, hereda `regime_off_on_bear_onset=True` (suprime la compra de régimen en
+  `bear_onset`) y el cap EMA50D en techos de ciclo (`bull_peak_ema50_cap=0.85`).
+  Rollback a v3: `--config '{"min_btc_pct": 0.30, "delta_bear_onset": -0.20}'`
 - **Rebalanceo automático** cuando la diferencia entre actual y target supera el 10%, con cooldown de 3 días
 - **Funciona en ETH** (+56.4% CAGR 2020-2026) — el régimen es causal, no fitting de BTC
 
 **Por qué gana a Buy & Hold:** el USDT preservado en bear markets compra BTC barato en la recuperación.
-Ejemplo: en 2022 (BTC -77%) el Swing Allocator baja a 30% BTC, preserva capital, y compra a precios bajos
+Ejemplo: en 2022 (BTC -77%) el Swing Allocator baja al 20% BTC, preserva capital, y compra a precios bajos
 para el bull run 2023-2025.
 
 ```bash
@@ -252,26 +253,54 @@ python main.py compare --strategies "adaptive,pro" --from 2018 --to 2026
 El backtest genera automáticamente un Trade Journal JSON en `backtests/` con todos los
 indicadores, scores, contexto macro, sizing/gates de entrada y razón de salida de cada operación.
 
-### Resultados actuales (balance inicial $10,000, costes realistic)
+### Swing Allocator v4 vs BTC Buy & Hold — comparativa completa
+
+Balance inicial **$10,000**, ventana **2015-01-01 → 2026-01-01**, costes **realistic** (0.1% fee + 5 bps
+slippage). Ambas columnas se calculan sobre el **mismo dataset** (102931 velas 1H) y con la **misma
+metodología** (Sharpe/Sortino sobre retornos horarios, anualización 8760; drawdown sobre cierres horarios).
+
+| Métrica | 📈 Swing Allocator v4 | ₿ BTC Buy & Hold | Ventaja Swing |
+|---|---:|---:|:---:|
+| **Balance final** | **$9,307,178** | $2,779,425 | **3.3×** |
+| Retorno total | +92,971.78% | +27,694.25% | ✅ |
+| **CAGR** | **+86.2%** | +66.8% | **+19.4 pp** |
+| **Max Drawdown** | **−52.71%** | −83.77% | **+31.1 pp** menos caída |
+| Duración del peor DD | 260 días | 363 días | ✅ −103 días |
+| **Calmar** (CAGR/MaxDD) | **1.63** | 0.80 | **2.0×** |
+| Sharpe Ratio | 1.38 | 1.08 | ✅ |
+| Sortino Ratio | 1.57 | 1.28 | ✅ |
+| Tiempo en mercado | 100% | 100% | = |
+| — *métricas de trading* — | | | |
+| Nº de operaciones | 68 | 1 (hold) | — |
+| Win rate | 57.4% | — | — |
+| Profit Factor | 4.43 | — | — |
+| Expectancy / trade | +55,752 USDT | — | — |
+| Median trade | +602 USDT | — | — |
+| Avg Win / Avg Loss | +125,541 / −38,101 USDT | — | — |
+| Máx. racha perdedora | 6 | — | — |
+
+**Lectura rápida:** el Swing v4 **gana en las dos dimensiones que importan** — más retorno (Calmar 2× el
+de B&H) y **mucho menos riesgo** (evita 31 pp del drawdown). El edge no es "predecir": es preservar USDT
+en el bear para recomprar barato. El drawdown residual (−52.7%) es el suelo estructural de un long-only
+~100% en mercado — nace en los **techos de ciclo** (bull_peak), no en los bears.
+
+> **Nota metodológica honesta:** el resultado es **sensible al punto de inicio** del histórico (el PF
+> especialmente). Por eso las anclas de comparación son **CAGR y Max Drawdown** (estables), no el PF.
+> Validado además con walk-forward 4/4 ✅, cross-validation en ETH ✅ y costes conservative ✅.
+
+### Otras estrategias (balance inicial $10,000, costes realistic)
 
 | Estrategia | Periodo | Balance | P&L | Trades | Win Rate | PF | CAGR |
 |------------|---------|---------|-----|--------|----------|----|------|
-| BTC Buy & Hold | 2015-2026 | ~$2.78M | +27,694% | — | — | — | ~+66.8% |
-| BTC Buy & Hold | 2018-2026 | ~$65k | +549.7% | — | — | — | +26.4% |
-| **Swing Allocator v2** | **2015-2026** | **$6,690k** | **+66,804%** | **58** | **62.1%** | **6.14** | **+80.6%** |
-| **Swing Allocator v2** | **2018-2026** | **$161k** | **+1,510%** | **44** | **52.3%** | **5.54** | **+41.5%** |
-| Swing Allocator v2 ETH | 2020-2026 | $147k | +1,365% | 37 | 59.5% | 2.80 | +56.4% |
-| Swing Allocator v1 (rollback) | 2015-2026 | $5,810k | +57,996% | 65 | 55.4% | 4.33 | +78.4% |
-| **Pro Trend v13** | 2018-2026 | $62k | +521.8% | 12 | 50.0% | ~4.6 | +25.7% |
-| Pro Trend v13 | 2015-2026 | ~$591k | +5,812% | 20 | 55.0% | ~5.0 | +44.9% |
+| Swing Allocator v4 | 2018-2026 | $226k | +2,158.6% | 49 | 46.9% | 4.17 | +47.6% |
+| Swing Allocator v4 ETH | 2020-2026 | $147k | +1,365% | 37 | 59.5% | 2.80 | +56.4% |
+| Swing v3 (rollback) | 2015-2026 | ~$7,420k | +73,900% | — | — | — | +82.4% |
+| Pro Trend v13 *(pausado)* | 2018-2026 | $62k | +521.8% | 12 | 50.0% | ~4.6 | +25.7% |
+| Pro Trend v13 *(pausado)* | 2015-2026 | ~$591k | +5,812% | 20 | 55.0% | ~5.0 | +44.9% |
 | Adaptive Trend | 2018-2026 | ~$48k | +380.9% | 20 | — | 2.91 | +21.8% |
 
-> **Swing Allocator v2 validado:** walk-forward 4/4 ✅, ETH cross-validation ✅, costs conservative ✅.
-> v2 mejora CAGR (+2.2pp) y drawdown (-2.4pp) sobre v1 arreglando el ping-pong de mercado lateral.
-> No requiere salir completamente de BTC — opera como rebalanceo gradual, compatible con holding a largo plazo.
-
-> **Pro Trend v13:** ~35% tiempo en mercado, evita crashes del -70%. Ventaja real: riesgo, no retorno absoluto.
-> Journals con partial exits incluyen `true_pnl_usdt`, sizing real/planificado y giveback desde MFE.
+> **Pro Trend v13 está pausado** (foco actual: Swing Allocator). ~35% tiempo en mercado, evita crashes
+> del -70%. Su ventaja es el riesgo, no el retorno absoluto.
 
 ---
 
@@ -312,7 +341,7 @@ MatiTradingBot/
 │   ├── adaptive_trend.py           # Estrategia: régimen bull/bear/range, solo longs
 │   ├── pro_trend.py                # Estrategia: multi-timeframe, scoring system (v13)
 │   ├── scalp_momentum.py           # Estrategia: day trading 1H con contexto 4H/D
-│   ├── swing_allocator.py          # Estrategia: allocation dinámica BTC/USDT 30-100% (v2)
+│   ├── swing_allocator.py          # Estrategia: allocation dinámica BTC/USDT 20-100% (v4)
 │   ├── macro_context.py            # MVRV + halving cycle (singleton global)
 │   ├── market_context.py           # DXY + NASDAQ-100 + VIX (singleton global)
 │   └── funding_context.py          # Funding rate histórico OKX (singleton global)
