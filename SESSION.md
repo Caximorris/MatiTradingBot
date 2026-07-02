@@ -32,8 +32,8 @@ del plan F1-F19 son motor/metricas/operativa live). Anclas v5 (dataset canonico 
 - 2015-26 conservative: $8.897M | CAGR +85.40% | Max DD -52.88% | 70 | btc_vs_bnh 0.7961
 Coste del fix anti-lookahead vs v4: -0.27pp CAGR / -0.02pp DD — adoptado por higiene, no resultado.
 Rollback exacto a v4 congelado: `--config '{"daily_on_closed_only": false}'`. Tests 88/88 verde.
-Auditoria post-implementacion: `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`. Tag de freeze v5
-pendiente de commit (git requiere OK explicito).
+Auditoria post-implementacion: `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`. CONGELADO en tag
+`swing-v5-frozen` @ 4c955fb (2026-07-02).
 
 **FOCO UNICO: Swing Allocator.** Pro Trend queda PAUSADO INDEFINIDAMENTE (decision 2026-07-01,
 sesion 14). No se continua ni paper trading ni optimizacion por ahora. El codigo queda como esta
