@@ -55,6 +55,20 @@ sesion 14). No se continua ni paper trading ni optimizacion por ahora. El codigo
 **Descartado sesion 14 (no reintentar):** latch del cap (`bull_peak_cap_latch`), regime_delta 0.15,
 VIX, MVRV (wash), Pi Cycle (inerte), floor <0.20 (inerte, senales nunca bajan de 0.20).
 
+**Descartado sesion 15 (no reintentar): cap-target con `bear_onset` activo.** Ataca la fase
+equivocada. Evidencia empirica (journal v4 2015-26, target medio por fase temporal del halving):
+post_halving 0.89 | **bull_peak 0.91** | **bear_onset 0.30** | accumulation 0.63. El Max DD nace en
+bull_peak (techos 2013/17/21-abr/25 + flash-crash mayo-21) y accumulation (COVID @0.63), NO en
+bear_onset — que dispara a 540d, cuando el crash del techo ya paso y el delta -0.30 ya bajo el target
+a 0.30. Un cap sobre bear_onset ataria en 1 de 8 rebalanceos = overfit de 1 evento.
+
+**FRENTE DE MAX DD CERRADO (sesion 15).** El -52.71% (v4) es el suelo estructural de long-only ~100%
+en mercado. Todo lever probado o agota CAGR o es inerte: global max_btc_pct cap (mata CAGR), latch
+(-4.6pp CAGR), floor<0.20 (inerte), bear_onset cap (inerte). Unico lever no explorado = de-risk
+intradia por spike ATR para crash tipo-COVID; DESCARTADO por diseno (rediseno mayor, overfit sobre 1
+evento, probable coste de CAGR en whipsaws). No perseguir mas DD. Proximo hito Swing = validacion
+forward / paper trading, no mas optimizacion de backtest.
+
 ---
 
 ## REGLAS INVARIANTES ANTES DE TOCAR CODIGO
@@ -97,7 +111,9 @@ un backtest puntual.
 
 ## SIGUIENTE PASO — Swing Allocator (foco unico)
 
-Pro Trend pausado; toda la energia va a mejorar Swing v3.
+Pro Trend pausado. **Optimizacion de backtest del Swing = CERRADA** (v4 default, frente de Max DD
+agotado, ver arriba). El proximo hito NO es mas backtest: es **validacion forward / paper trading**
+del Swing v4. `start` en vivo requiere confirmacion explicita.
 
 **HECHO (sesion 14):**
 - Auditoria del cap `bull_peak_ema50_cap_*`: 24 disparos en 2015-26, TODOS SELL 100%->85%, en los 3
@@ -109,22 +125,22 @@ Pro Trend pausado; toda la energia va a mejorar Swing v3.
   (2017 $827->$19k). 2015 realistic CAGR 81.39->76.8% (-4.6pp), DD ni mejora (-53.64->-54.02).
   Conservative 80.93->76.5%. El rebuy-a-100% de v3 era CORRECTO. Q4 2025 mejora aislado = overfit.
 
-**Candidatas vivas para Max DD (cada una AISLADA vs baseline v3, ventana 2015 principal):**
-- Cap-target cuando `bear_onset` activo (distinto de bull_peak; ataca la transicion de techo).
-- NO extender el cap EMA50D a `post_halving`: la auditoria sugiere que anadiria mas whipsaw.
-- Combinar y re-validar WF 4/4 + ETH solo si una candidata aporta aislada.
+**Candidatas para Max DD: TODAS descartadas (frente cerrado sesion 15).** Ver bloque "FRENTE DE
+MAX DD CERRADO" arriba. cap-target-on-bear_onset (inerte, fase equivocada), latch, floor<0.20,
+global caps, ATR intradia — todas agotan CAGR o son inertes. NO reabrir sin evidencia nueva.
 
-Regla dura: candidato nuevo se compara por CAGR y Max DD (anclas), PF como rango, inicio 2015 fijo.
-`start` en vivo sigue requiriendo confirmacion — pero Swing NO va a paper aun, primero backtests.
+Regla dura (si algun dia se reabre): candidato se compara por CAGR y Max DD (anclas), PF como rango,
+inicio 2015 fijo, AISLADO vs baseline v4.
 
 ---
 
 ## PENDIENTES ABIERTOS
 
-- **Q4 2025 (Swing):** ping-pong estructural residual. Via viva: cap-target con `bear_onset` activo.
-  Descartados: cooldown=7d, ADX gate. Detalle en SESSION_ARCHIVE.md ("Q4 2025 mitigacion").
-- **Max DD Swing (-55%):** viene de estar 90-100% BTC en TECHOS de ciclo, no de los bears.
-  Caps globales de `max_btc_pct` descartados (destruyen CAGR). v3 ataca el techo quirurgicamente.
+- **Q4 2025 (Swing):** ping-pong estructural residual. Sin via viva (cap-bear_onset descartado sesion 15).
+  Descartados: cooldown=7d, ADX gate. Detalle en SESSION_ARCHIVE.md ("Q4 2025 mitigacion"). NO reabrir.
+- **Max DD Swing (-52.71% v4):** FRENTE CERRADO (sesion 15). Es el suelo estructural de long-only.
+  Nace en bull_peak (target medio 0.91) y accumulation/COVID (0.63), NO en bear_onset. Ver bloque
+  "FRENTE DE MAX DD CERRADO". No perseguir.
 - **Pro Trend bugfixes candidatos** (P1, sin backtest aislado aun): fix MACD 4H key,
   fix VIX sizing cap (ya en codigo, pendiente validar). Ver auditoria en SESSION_ARCHIVE.md.
 
