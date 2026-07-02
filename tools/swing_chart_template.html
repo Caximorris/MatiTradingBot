@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg:#0d1017; --panel:#14171f; --border:#262b36; --text:#d6dae3;
+    --muted:#9aa0ab; --dim:#6f7582; --up:#26a69a; --down:#ef5350;
+    --accent:#5b8dee; --gold:#e6b34d;
+  }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--text);
+               font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
+  #header { padding:12px 24px 8px; border-bottom:1px solid var(--border); }
+  .row1 { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .row1 h1 { font-size:16px; margin:0; font-weight:600; color:#eceff4; }
+  .anchor-cards { display:flex; gap:8px; flex-wrap:wrap; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:6px;
+          padding:4px 12px; text-align:center; }
+  .card .lbl { font-size:10px; color:var(--dim); text-transform:uppercase;
+               letter-spacing:0.5px; }
+  .card .val { font-size:14px; font-weight:600; }
+  .pos { color:var(--up); } .neg { color:var(--down); } .neu { color:var(--text); }
+  .row2 { margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;
+          font-size:12px; color:var(--muted); }
+  .row2 .sec b { color:var(--text); font-weight:600; }
+  .row3 { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .grp { font-size:11px; color:var(--dim); }
+  .preset, #helpbtn { cursor:pointer; background:var(--panel); color:var(--muted);
+          border:1px solid var(--border); border-radius:5px; padding:3px 12px;
+          font-size:12px; transition: all .12s; }
+  .preset:hover, #helpbtn:hover { color:var(--text); border-color:var(--accent); }
+  .preset.active { color:#fff; background:var(--accent); border-color:var(--accent); }
+  #helpbtn { margin-left:auto; }
+  .mk { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); }
+  #help { display:none; position:fixed; top:70px; right:20px; width:480px; max-height:76vh;
+          overflow-y:auto; background:var(--panel); border:1px solid var(--border);
+          border-radius:8px; padding:16px 20px; font-size:12.5px; line-height:1.55;
+          z-index:100; box-shadow:0 8px 30px rgba(0,0,0,0.6); }
+  #help .close { position:sticky; top:0; float:right; cursor:pointer; color:var(--dim);
+                 font-size:18px; line-height:1; background:var(--panel); padding:0 2px; }
+  #help .close:hover { color:var(--text); }
+  #help h3 { margin:12px 0 4px; font-size:13px; color:#eceff4; }
+  #help h3:first-of-type { margin-top:0; }
+  #help code { background:#1d222c; padding:1px 5px; border-radius:3px; color:var(--gold);
+               font-size:11.5px; }
+  #help p { margin:3px 0; color:var(--muted); }
+  #chart { width:100vw; height:calc(100vh - 118px); }
+</style>
+</head>
+<body>
+<div id="header">
+  <div class="row1">
+    <h1>__TITLE__</h1>
+    <div class="anchor-cards">__ANCHORS__</div>
+  </div>
+  <div class="row2">__SECONDARY__</div>
+  <div class="row3">
+    <span class="grp">RANGO:</span>
+    __PRESETS__
+    <span style="color:var(--border)">|</span>
+    <span class="grp">VELAS:</span>
+    <button class="preset tf active" onclick="setTF('1D',this)">1D</button>
+    <button class="preset tf" onclick="setTF('1S',this)">1S</button>
+    <button class="preset tf" onclick="setTF('1M',this)">1M</button>
+    <button class="preset tf" onclick="setTF('6M',this)">6M</button>
+    <span style="color:var(--border)">|</span>
+    <button class="preset" id="scalebtn" onclick="toggleScale()">Escala: Log</button>
+    <button class="preset active" id="bhbtn" onclick="toggleBH()">B&amp;H</button>
+    <button class="preset active" id="mkbtn" onclick="toggleMarkers()">Marcadores</button>
+    <button class="preset" onclick="resetView()">&#8634; Reset</button>
+    <button class="preset" onclick="exportPNG()">&#8681; PNG</button>
+    <span class="mk" style="margin-left:12px"><span style="color:var(--up)">&#9650;</span> compra</span>
+    <span class="mk"><span style="color:var(--down)">&#9660;</span> venta</span>
+    <span class="mk"><span style="color:var(--accent)">&#9670;</span> inicio</span>
+    <button id="helpbtn" onclick="toggleHelp()">? Ayuda y glosario</button>
+  </div>
+</div>
+<div id="help">
+  <span class="close" onclick="toggleHelp()">&times;</span>
+  <h3>Los 4 paneles</h3>
+  <p><b>1 &middot; Precio</b> — velas en el timeframe elegido (1D/1S/1M/6M), escala log. El fondo
+     sombreado marca la fase del ciclo de halving (verde=post_halving, &aacute;mbar=bull_peak,
+     rojo=bear_onset, sin color=accumulation). Cada marcador es un rebalanceo real; su tooltip
+     muestra el cambio de allocation y las se&ntilde;ales que lo dispararon.</p>
+  <p><b>2 &middot; Allocation</b> — % del portfolio en __BASE__ (el resto en __QUOTE__). Las
+     l&iacute;neas de referencia marcan el suelo (20%), el punto neutral (60%) y el techo (100%).
+     Esta curva ES la estrategia — todo lo dem&aacute;s es consecuencia.</p>
+  <p><b>3 &middot; Equity</b> — valor del portfolio contra Buy &amp; Hold, escala log. La tesis:
+     acumular m&aacute;s __BASE__ comprando barato en bear con el __QUOTE__ reservado.</p>
+  <p><b>4 &middot; Drawdown</b> — ca&iacute;da desde el &uacute;ltimo m&aacute;ximo de equity (en
+     timeframes altos se muestra el peor valor del periodo). El suelo estructural de long-only
+     ~100% en mercado es ~50-53%.</p>
+  <h3>Controles</h3>
+  <p><b>Rueda del rat&oacute;n</b> — zoom horizontal (tiempo) en los 4 paneles a la vez.</p>
+  <p><b>Arrastrar</b> — pan horizontal. Tambi&eacute;n con el slider inferior.</p>
+  <p><b>Shift + rueda</b> — zoom vertical sobre el panel de precio o el de equity.</p>
+  <p><b>Shift + arrastrar</b> — pan vertical sobre esos mismos paneles.</p>
+  <p><b>VELAS 1D/1S/1M/6M</b> — reagrega precio y series al timeframe elegido. 4H queda fuera
+     a prop&oacute;sito: exigir&iacute;a embeber ~97k velas horarias y la p&aacute;gina dejar&iacute;a
+     de ser fluida.</p>
+  <p><b>Escala Log/Lineal</b> — cambia los ejes de precio y equity. Log muestra crecimiento
+     relativo (un x2 mide igual en 2015 que en 2025); lineal muestra magnitudes absolutas.</p>
+  <p><b>B&amp;H / Marcadores</b> — muestra u oculta la l&iacute;nea de Buy &amp; Hold y los
+     marcadores de rebalanceo. <b>Reset</b> — vista completa. <b>PNG</b> — captura.</p>
+  <h3>Glosario de se&ntilde;ales <span style="color:var(--dim);font-weight:normal">
+      (las de halving solo aplican a BTC)</span></h3>
+  <p><code>regime_bull</code> — EMA50D &gt; EMA200D, precio &gt; EMA200D y ADX &gt; 15. Target +20pp.</p>
+  <p><code>regime_bear</code> — EMA50D &lt; EMA200D. Target -20pp.</p>
+  <p><code>halving_post_halving</code> / <code>halving_bull_peak</code> — 0-180d / 180-540d tras
+     el halving. Target +20pp.</p>
+  <p><code>halving_bear_onset</code> — 540-900d tras el halving (distribuci&oacute;n y techo de ciclo).
+     Target -30pp y suprime <code>regime_bull</code> (anti ping-pong en lateral).</p>
+  <p><code>halving_accumulation</code> — &gt;900d tras el halving. Sin ajuste.</p>
+  <p><code>bull_peak_ema50_cap</code> — en bull_peak, si el precio pierde la EMA50D del d&iacute;a
+     anterior, el target m&aacute;ximo se capa al 85% (defensa de techo).</p>
+  <p><code>init</code> — primera asignaci&oacute;n al arrancar (target neutral 60%).</p>
+  <h3>C&oacute;mo funciona el target</h3>
+  <p>Base 60% BTC + deltas de las se&ntilde;ales activas, recortado a [20%, 100%]. Solo se
+     rebalancea si la diferencia supera 10pp y pasaron &gt;3 d&iacute;as del anterior.</p>
+  <h3>C&oacute;mo leer las m&eacute;tricas</h3>
+  <p>Anclas de decisi&oacute;n: <b>CAGR</b>, <b>Max DD</b>, <b>Calmar</b> y <b>__BASE__ vs B&amp;H</b>
+     (&lt;1.0 = acabas con menos __BASE__ que holdeando). PF y win-rate son m&eacute;tricas contables
+     de rebalanceos parciales, NO indicadores de calidad en un allocator.</p>
+  <p>Costes: fee 0.1% por fill + slippage seg&uacute;n modo (realistic = 5bps).</p>
+</div>
+<div id="chart"></div>
+<script>
+const D = __DATA__;   // base diaria: dates, candles [o,c,l,h], alloc, equity, bnh, dd, markers, phases
+
+function toggleHelp(){
+  const h = document.getElementById('help');
+  h.style.display = h.style.display === 'block' ? 'none' : 'block';
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.getElementById('help').style.display = 'none';
+});
+
+const chart = echarts.init(document.getElementById('chart'), null, {renderer:'canvas'});
+window.addEventListener('resize', () => chart.resize());
+
+const UP='#26a69a', DOWN='#ef5350', ACCENT='#5b8dee', GOLD='#e6b34d';
+const GRID_LINE='#1d222c', AXIS_TEXT='#9aa0ab', TITLE_TEXT='#6f7582';
+const markerColor = {BUY:UP, SELL:DOWN, INIT:ACCENT};
+const PHASE_STYLE = {
+  post_halving: 'rgba(38,166,154,0.07)',
+  bull_peak:    'rgba(230,179,77,0.08)',
+  bear_onset:   'rgba(239,83,80,0.07)',
+};
+
+// ---------------------------------------------------------------------------
+// Vista por timeframe: reagrega la base diaria a 1D/1S/1M/6M
+// ---------------------------------------------------------------------------
+let TF='1D', logScale=true, showBH=true, showMk=true;
+let V = null;  // vista actual: {dates, candles, alloc, equity, bnh, dd}
+
+function bucketKey(dateStr, tf){
+  if (tf==='1D') return dateStr;
+  if (tf==='1M') return dateStr.slice(0,7);
+  if (tf==='6M') return dateStr.slice(0,4) + (dateStr.slice(5,7) <= '06' ? 'H1' : 'H2');
+  // 1S: lunes ISO de la semana
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7);
+  return d.toISOString().slice(0,10);
+}
+
+function buildView(tf){
+  const dates=[], candles=[], alloc=[], equity=[], bnh=[], dd=[];
+  let key=null;
+  for (let i=0; i<D.dates.length; i++){
+    const k = bucketKey(D.dates[i], tf);
+    const c = D.candles[i];  // [open, close, low, high]
+    if (k !== key){
+      key = k;
+      dates.push(D.dates[i]); candles.push([c[0], c[1], c[2], c[3]]);
+      alloc.push(D.alloc[i]); equity.push(D.equity[i]); bnh.push(D.bnh[i]); dd.push(D.dd[i]);
+    } else {
+      const j = candles.length - 1, cc = candles[j];
+      cc[1] = c[1];                       // close = ultimo
+      cc[2] = Math.min(cc[2], c[2]);      // low
+      cc[3] = Math.max(cc[3], c[3]);      // high
+      dates[j] = D.dates[i];              // etiqueta = ultimo dia del bucket
+      alloc[j] = D.alloc[i]; equity[j] = D.equity[i]; bnh[j] = D.bnh[i];
+      dd[j] = Math.min(dd[j], D.dd[i]);   // peor DD del bucket
+    }
+  }
+  return {dates, candles, alloc, equity, bnh, dd};
+}
+
+function idxOf(dateStr){
+  let lo=0, hi=V.dates.length-1;
+  while (lo < hi){ const m=(lo+hi)>>1; if (V.dates[m] < dateStr) lo=m+1; else hi=m; }
+  return lo;
+}
+
+function mkPoints(){
+  return D.markers.map(m => ({
+    value: [V.dates[Math.min(idxOf(m.date), V.dates.length-1)], m.price],
+    itemStyle: {color: markerColor[m.dir] || GOLD, borderColor:'#0d1017', borderWidth:1},
+    symbol: m.dir==='INIT' ? 'diamond' : 'triangle',
+    symbolRotate: m.dir==='SELL' ? 180 : 0,
+    meta: m,
+  }));
+}
+
+function phaseAreas(){
+  return D.phases.filter(p => p.name !== 'accumulation').map(p => [
+    {name: p.name, xAxis: V.dates[idxOf(p.from)],
+     itemStyle: {color: PHASE_STYLE[p.name]},
+     label: {show:true, position:'insideTop', color:TITLE_TEXT, fontSize:10}},
+    {xAxis: V.dates[Math.min(idxOf(p.to), V.dates.length-1)]},
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Data window unificado
+// ---------------------------------------------------------------------------
+function fmtMoney(v){
+  if (v >= 1e6) return '$' + (v/1e6).toFixed(2) + 'M';
+  if (v >= 1e3) return '$' + (v/1e3).toFixed(1) + 'k';
+  return '$' + v.toFixed(0);
+}
+function dataWindow(params){
+  const p0 = Array.isArray(params) ? params[0] : params;
+  const i = p0.dataIndex;
+  if (i == null || !V.dates[i]) return '';
+  const c = V.candles[i];
+  const chg = ((c[1]-c[0])/c[0]*100);
+  const chgCls = chg >= 0 ? UP : DOWN;
+  const ratio = V.bnh[i] > 0 ? (V.equity[i]/V.bnh[i]) : 0;
+  return `<div style="min-width:230px">
+    <div style="font-weight:600;margin-bottom:6px">${V.dates[i]}
+      <span style="color:#6f7582;font-weight:normal">(${TF})</span></div>
+    <div style="display:grid;grid-template-columns:auto auto;gap:2px 18px;font-size:12px">
+      <span style="color:#9aa0ab">Open / Close</span>
+      <span>${fmtMoney(c[0])} / <b style="color:${chgCls}">${fmtMoney(c[1])}</b>
+        <span style="color:${chgCls}">(${chg>=0?'+':''}${chg.toFixed(1)}%)</span></span>
+      <span style="color:#9aa0ab">High / Low</span><span>${fmtMoney(c[3])} / ${fmtMoney(c[2])}</span>
+      <span style="color:#9aa0ab">Allocation ${D.base}</span><b style="color:${GOLD}">${V.alloc[i]}%</b>
+      <span style="color:#9aa0ab">Equity Swing</span><b style="color:${ACCENT}">${fmtMoney(V.equity[i])}</b>
+      <span style="color:#9aa0ab">Buy &amp; Hold</span><span>${fmtMoney(V.bnh[i])} (x${ratio.toFixed(2)})</span>
+      <span style="color:#9aa0ab">Drawdown</span><b style="color:${DOWN}">${V.dd[i]}%</b>
+    </div></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Opcion base
+// ---------------------------------------------------------------------------
+V = buildView(TF);
+
+const option = {
+  backgroundColor: '#0d1017',
+  animation: false,
+  title: [
+    {text:'PRECIO ' + D.symbol + ' — escala log'
+          + (D.phases.length ? ' · fondo = fase de halving' : ''), top:6},
+    {text:'ALLOCATION — % del portfolio en ' + D.base, top:'43.5%'},
+    {text:'EQUITY — Swing vs Buy & Hold, escala log', top:'59.5%'},
+    {text:'DRAWDOWN — caida desde maximo', top:'83.5%'},
+  ].map(t => ({...t, left:70,
+               textStyle:{color:TITLE_TEXT, fontSize:10.5, fontWeight:'normal'}})),
+  axisPointer: {link: [{xAxisIndex: 'all'}], lineStyle:{color:'#565b66'},
+                label: {backgroundColor:'#2a2e39'}},
+  tooltip: {
+    trigger:'axis', axisPointer:{type:'cross'},
+    backgroundColor:'rgba(17,20,28,0.96)', borderColor:'#2a2e39',
+    textStyle:{color:'#d6dae3', fontSize:12},
+    formatter: dataWindow,
+  },
+  grid: [
+    {left:70, right:80, top:26,      height:'36%'},
+    {left:70, right:80, top:'47.5%', height:'10%'},
+    {left:70, right:80, top:'63.5%', height:'18%'},
+    {left:70, right:80, top:'87.5%', height:'8%'},
+  ],
+  xAxis: [0,1,2,3].map(i => ({
+    type:'category', data:V.dates, gridIndex:i, boundaryGap:i===0,
+    axisLine:{lineStyle:{color:'#262b36'}}, axisLabel:{show:i===3, color:AXIS_TEXT},
+    axisTick:{show:false}, splitLine:{show:false},
+  })),
+  yAxis: [
+    {gridIndex:0, scale:true, type:'log', logBase:10, position:'right',
+     axisLabel:{color:AXIS_TEXT, formatter: v => fmtMoney(v)},
+     splitLine:{lineStyle:{color:GRID_LINE}}},
+    {gridIndex:1, min:0, max:100, position:'right', interval:20,
+     axisLabel:{color:AXIS_TEXT, formatter:'{value}%'},
+     splitLine:{lineStyle:{color:GRID_LINE}}},
+    {gridIndex:2, scale:true, type:'log', logBase:10, position:'right',
+     axisLabel:{color:AXIS_TEXT, formatter: v => fmtMoney(v)},
+     splitLine:{lineStyle:{color:GRID_LINE}}},
+    {gridIndex:3, max:0, position:'right',
+     axisLabel:{color:AXIS_TEXT, formatter:'{value}%'}, splitLine:{show:false}},
+  ],
+  dataZoom: [
+    {type:'inside', xAxisIndex:[0,1,2,3]},
+    {type:'slider', xAxisIndex:[0,1,2,3], bottom:4, height:20, left:70, right:80,
+     backgroundColor:'#12151d', fillerColor:'rgba(91,141,238,0.14)',
+     borderColor:'#262b36', handleStyle:{color:ACCENT},
+     textStyle:{color:AXIS_TEXT, fontSize:10},
+     dataBackground:{lineStyle:{color:'#3a3f4b'}, areaStyle:{color:'#1a1e27'}}},
+  ],
+  series: [
+    {name:'Precio', type:'candlestick', data:V.candles, xAxisIndex:0, yAxisIndex:0,
+     itemStyle:{color:UP, color0:DOWN, borderColor:UP, borderColor0:DOWN},
+     markArea:{silent:true, data:phaseAreas()}},
+    {name:'Rebalanceos', type:'scatter', data:mkPoints(), xAxisIndex:0, yAxisIndex:0,
+     symbolSize:10, z:10,
+     tooltip:{trigger:'item', formatter: p => {
+       const m = p.data.meta;
+       const dirColor = markerColor[m.dir] || GOLD;
+       return `<div style="min-width:220px">
+         <div style="margin-bottom:4px"><b style="color:${dirColor}">${m.dir}</b>
+           <span style="color:#9aa0ab">— ${m.ts} UTC</span></div>
+         Precio: <b>${fmtMoney(m.price)}</b><br/>
+         Allocation: ${m.before}% &rarr; <b>${m.after}%</b>
+           <span style="color:#9aa0ab">(target ${m.target}%)</span><br/>
+         Portfolio: ${fmtMoney(m.portfolio)}<br/>
+         <span style="color:#9aa0ab;font-size:11px">${m.signals}</span></div>`;
+     }}},
+    {name:'% ' + D.base, type:'line', data:V.alloc, xAxisIndex:1, yAxisIndex:1,
+     step:'end', symbol:'none', lineStyle:{color:GOLD, width:1.5},
+     areaStyle:{color:'rgba(230,179,77,0.10)'},
+     markLine:{silent:true, symbol:'none',
+       lineStyle:{color:'#4a4f5c', type:'dashed', width:1},
+       label:{color:TITLE_TEXT, fontSize:10, position:'insideStartTop'},
+       data:[{yAxis:20, label:{formatter:'suelo 20%'}},
+             {yAxis:60, label:{formatter:'base 60%'}}]}},
+    {name:'Swing', type:'line', data:V.equity, xAxisIndex:2, yAxisIndex:2,
+     symbol:'none', lineStyle:{color:ACCENT, width:1.8},
+     endLabel:{show:true, formatter:'Swing', color:ACCENT, fontSize:11,
+               fontWeight:600, distance:4}},
+    {name:'Buy & Hold', type:'line', data:V.bnh, xAxisIndex:2, yAxisIndex:2,
+     symbol:'none', lineStyle:{color:'#8b93a3', width:1.3, type:'dashed'},
+     endLabel:{show:true, formatter:'B&H', color:'#8b93a3', fontSize:11, distance:4}},
+    {name:'Drawdown', type:'line', data:V.dd, xAxisIndex:3, yAxisIndex:3,
+     symbol:'none', lineStyle:{color:DOWN, width:1},
+     areaStyle:{color:'rgba(239,83,80,0.22)'},
+     markLine:{silent:true, symbol:'none',
+       lineStyle:{color:DOWN, type:'dotted', width:1},
+       label:{color:DOWN, fontSize:10, position:'insideStartBottom',
+              formatter: p => p.value + '%'},
+       data:[{type:'min'}]}},
+  ],
+};
+chart.setOption(option);
+
+// ---------------------------------------------------------------------------
+// Timeframe de velas
+// ---------------------------------------------------------------------------
+function setTF(tf, btn){
+  TF = tf;
+  V = buildView(tf);
+  chart.setOption({
+    xAxis: [{data:V.dates},{data:V.dates},{data:V.dates},{data:V.dates}],
+    series: [
+      {data:V.candles, markArea:{silent:true, data:phaseAreas()}},
+      {data: showMk ? mkPoints() : []},
+      {data:V.alloc},
+      {data:V.equity},
+      {data: showBH ? V.bnh : []},
+      {data:V.dd},
+    ],
+  });
+  document.querySelectorAll('.tf').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+// ---------------------------------------------------------------------------
+// Zoom/pan VERTICAL manual (dataZoom de ECharts no soporta ejes log)
+// Shift+rueda = zoom | Shift+arrastrar = pan. Paneles: precio (0) y equity (2).
+// ---------------------------------------------------------------------------
+const yLock = {0:null, 2:null};   // {min,max} o null = auto
+
+function gridRect(i){
+  try { return chart.getModel().getComponent('grid', i).coordinateSystem.getRect(); }
+  catch (e) { return null; }
+}
+function panelAt(x, y){
+  for (const [gi, ai] of [[0,0],[2,2]]){
+    const r = gridRect(gi);
+    if (r && x>=r.x && x<=r.x+r.width && y>=r.y && y<=r.y+r.height)
+      return {axis:ai, rect:r};
+  }
+  return null;
+}
+function spanOf(h){
+  const top = chart.convertFromPixel({yAxisIndex:h.axis}, h.rect.y);
+  const bot = chart.convertFromPixel({yAxisIndex:h.axis}, h.rect.y + h.rect.height);
+  return [bot, top];  // [min, max]
+}
+const toS   = v => logScale ? Math.log10(Math.max(v, 1e-9)) : v;
+const fromS = v => logScale ? Math.pow(10, v) : v;
+
+function setYLock(axis, mn, mx){
+  yLock[axis] = {min:mn, max:mx};
+  const patch = [{},{},{},{}];
+  patch[axis] = {min:mn, max:mx};
+  chart.setOption({yAxis: patch});
+}
+function clearYLocks(){
+  yLock[0] = yLock[2] = null;
+  chart.setOption({yAxis: [{min:null,max:null},{},{min:null,max:null},{}]});
+}
+
+const dom = chart.getDom();
+dom.addEventListener('wheel', e => {
+  if (!e.shiftKey) return;
+  const h = panelAt(e.offsetX, e.offsetY);
+  if (!h) return;
+  e.preventDefault(); e.stopPropagation();
+  const [mn, mx] = spanOf(h);
+  const cv = chart.convertFromPixel({yAxisIndex:h.axis}, e.offsetY);
+  const f = e.deltaY > 0 ? 1.2 : 1/1.2;
+  const a = toS(mn), b = toS(mx), c = toS(cv);
+  setYLock(h.axis, fromS(c + (a-c)*f), fromS(c + (b-c)*f));
+}, {passive:false, capture:true});
+
+let drag = null;
+dom.addEventListener('mousedown', e => {
+  if (!e.shiftKey) return;
+  const h = panelAt(e.offsetX, e.offsetY);
+  if (!h) return;
+  e.preventDefault(); e.stopPropagation();
+  const [mn, mx] = spanOf(h);
+  drag = {h, y0:e.clientY, a:toS(mn), b:toS(mx), perPix:(toS(mx)-toS(mn))/h.rect.height};
+}, {capture:true});
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  const d = (e.clientY - drag.y0) * drag.perPix;   // pixel abajo = valor abajo
+  setYLock(drag.h.axis, fromS(drag.a + d), fromS(drag.b + d));
+});
+window.addEventListener('mouseup', () => { drag = null; });
+
+// ---------------------------------------------------------------------------
+// Controles de la barra
+// ---------------------------------------------------------------------------
+function zoomTo(fromDate, toDate, btn){
+  const s = fromDate ? idxOf(fromDate) : 0;
+  const e = toDate ? idxOf(toDate) : V.dates.length - 1;
+  chart.dispatchAction({type:'dataZoom', dataZoomIndex:0, startValue:s, endValue:e});
+  document.querySelectorAll('.row3 .preset').forEach(b => {
+    const oc = b.getAttribute('onclick') || '';
+    if (oc.startsWith('zoomTo')) b.classList.remove('active');
+  });
+  if (btn) btn.classList.add('active');
+}
+
+function toggleScale(){
+  logScale = !logScale;
+  const t = logScale ? 'log' : 'value';
+  const lbl = logScale ? 'log' : 'lineal';
+  yLock[0] = yLock[2] = null;
+  chart.setOption({
+    yAxis: [{type:t, min:null, max:null}, {}, {type:t, min:null, max:null}, {}],
+    title: [
+      {text:'PRECIO ' + D.symbol + ' — escala ' + lbl
+            + (D.phases.length ? ' · fondo = fase de halving' : '')},
+      {}, {text:'EQUITY — Swing vs Buy & Hold, escala ' + lbl}, {},
+    ],
+  });
+  document.getElementById('scalebtn').textContent = 'Escala: ' + (logScale ? 'Log' : 'Lineal');
+}
+
+function toggleBH(){
+  showBH = !showBH;
+  chart.setOption({series: [{}, {}, {}, {}, {data: showBH ? V.bnh : []}, {}]});
+  document.getElementById('bhbtn').classList.toggle('active', showBH);
+}
+function toggleMarkers(){
+  showMk = !showMk;
+  chart.setOption({series: [{}, {data: showMk ? mkPoints() : []}, {}, {}, {}, {}]});
+  document.getElementById('mkbtn').classList.toggle('active', showMk);
+}
+
+function resetView(){
+  chart.dispatchAction({type:'dataZoom', dataZoomIndex:0, start:0, end:100});
+  clearYLocks();
+  document.querySelectorAll('.row3 .preset').forEach(b => {
+    const oc = b.getAttribute('onclick') || '';
+    if (oc.startsWith('zoomTo')) b.classList.toggle('active', b.textContent === 'Todo');
+  });
+}
+
+function exportPNG(){
+  const url = chart.getDataURL({pixelRatio:2, backgroundColor:'#0d1017'});
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'swing_' + D.symbol.replace('-','') + '_' + TF + '_'
+             + V.dates[0] + '_' + V.dates[V.dates.length-1] + '.png';
+  a.click();
+}
+</script>
+</body>
+</html>
