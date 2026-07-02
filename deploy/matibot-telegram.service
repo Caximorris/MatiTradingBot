@@ -1,0 +1,16 @@
+# Plantilla systemd — control remoto Telegram. install_vm.sh sustituye __APP_DIR__ y __RUN_USER__.
+[Unit]
+Description=MatiTradingBot - control remoto Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python tools/telegram_remote.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

@@ -48,3 +48,7 @@ reports/
 # ~10MB). Por defecto NO se versionan para no inflar el repo. Los journals canonicos
 # citados en la doc se trackean explicitamente con `git add -f`.
 backtests/journal_*.json
+
+# Estado runtime paper/live (VM y local) — nunca versionar
+data/runtime/
+trading.db

@@ -14,7 +14,7 @@ from decimal import Decimal
 
 import pandas as pd
 
-ROOT = r"C:\Users\Matias\Documents\Mati\matiproyects\MatiTradingBot"
+ROOT = str(__import__("pathlib").Path(__file__).resolve().parents[1])  # portable (VM Linux / Windows)
 sys.path.insert(0, ROOT)
 
 from loguru import logger

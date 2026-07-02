@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from bisect import bisect_right
 
-ROOT = r"C:\Users\Matias\Documents\Mati\matiproyects\MatiTradingBot"
+ROOT = str(__import__("pathlib").Path(__file__).resolve().parents[1])  # portable (VM Linux / Windows)
 JOURNAL = ROOT + r"\backtests\journal_swing_allocator_btc_usdt_BTCUSDT_1H_20260702_064622.json"
 CACHE = ROOT + r"\data\cache\BTC-USDT_1H.json"
 

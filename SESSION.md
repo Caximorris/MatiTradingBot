@@ -206,6 +206,17 @@ y `bot add` no aceptaba swing. Fixes aplicados:
 Paper listo para arrancar: `python main.py bot enable swing_allocator_btc_usdt BTC-USDT` +
 `python main.py start` (requiere OK explicito y proceso vivo; reinicios ya no pierden estado).
 
+**HECHO (sesion 16 ter, 2026-07-02): infra cloud para el paper — plan aprobado por Matias.**
+El paper correra en VM gratuita (Oracle Free / GCP e2-micro) con control remoto por Telegram.
+**Runbook completo y ESTADO DEL DESPLIEGUE en `DEPLOY_PAPER.md`** (ese doc es el punto de
+reanudacion si esto se pausa). Piezas: `tools/telegram_remote.py` (/status /report /pause
+/resume + alertas de rebalanceo, long-polling sin puertos), `tools/tg_send.py`,
+`deploy/install_vm.sh` + units systemd (Restart=always) + `daily_checks.sh` (cron 12:10 UTC:
+paridad F15 + degradacion F19, alerta si PARITY_FAIL). Los 11 tools con ROOT hardcodeado
+Windows ahora son portables a Linux. `.env` en VM: OKX_SANDBOX=false (datos reales; el demo
+romperia paridad) + TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID. Pendiente de Matias: cuenta cloud
+y bot de @BotFather. data/runtime/ y trading.db gitignored.
+
 **HECHO (sesion 14):**
 - Auditoria del cap `bull_peak_ema50_cap_*`: 24 disparos en 2015-26, TODOS SELL 100%->85%, en los 3
   techos (2017:9, 2021:5, 2024-25:10). Estructural, NO overfit a un evento. PERO casi todos en PARES

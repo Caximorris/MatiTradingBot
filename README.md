@@ -354,7 +354,44 @@ MatiTradingBot/
 │   ├── swing_journal.py            # JSON detallado por backtest Swing Allocator
 │   ├── fiscal_report.py            # IRPF FIFO, tramos 2026, Excel+JSON
 │   └── dashboard.py
+├── tools/                          # Scripts de auditoría/validación (portables Windows+Linux)
+│   ├── swing_parity_check.py       # Paridad live vs backtest (F15) — exit 1 si divergen
+│   ├── degradation_report.py       # Panel de degradación paper/live (F19)
+│   ├── telegram_remote.py          # Control remoto Telegram: /status /report /pause /resume
+│   └── tg_send.py                  # Envío de alertas Telegram (usado por cron)
+├── deploy/                         # Despliegue en VM (paper 24/7)
+│   ├── install_vm.sh               # Instalador idempotente Ubuntu (venv+systemd+cron)
+│   ├── matibot.service             # systemd: bot de trading (Restart=always)
+│   ├── matibot-telegram.service    # systemd: control remoto
+│   └── daily_checks.sh             # cron diario: paridad F15 + degradación F19
 ├── backtests/                      # Trade Journals JSON generados automáticamente
 │   └── STRATEGY_VERSIONS.md        # Historial de versiones y resultados
 └── reports/                        # Informes fiscales generados
 ```
+
+---
+
+## 11. Paper trading en la nube (validación forward del Swing v5)
+
+El Swing v5 está congelado: el siguiente hito **no es más backtest**, es la validación forward
+en paper — smoke 24h (F13), 30 días de paridad live/backtest sin divergencias (F15) y panel de
+degradación (F19). Corre 24/7 en una VM gratuita (Oracle Cloud Always Free o GCP e2-micro) con
+control remoto por Telegram.
+
+**Runbook completo: [`DEPLOY_PAPER.md`](DEPLOY_PAPER.md)** — instalación, operación diaria,
+criterios de cierre, semántica de pausas/reinicios y checklist de estado del despliegue.
+
+Resumen de operación una vez desplegado:
+
+| Acción | Cómo |
+|---|---|
+| Estado (vivo, % BTC, valor) | Telegram `/status` |
+| Informe de rebalanceos | Telegram `/report` |
+| Pausar / reanudar a distancia | Telegram `/pause` / `/resume` |
+| Alertas | Automáticas: cada rebalanceo + paridad diaria (12:10 UTC) |
+| Kill switch total | SSH: `python main.py stop` |
+
+Notas clave: en paper **no hay API keys** en el servidor (solo datos públicos de OKX);
+`OKX_SANDBOX=false` obligatorio para que los datos sean del exchange real; el estado
+(portfolio paper, rebalanceos, cadencia) persiste en disco y sobrevive a reinicios —
+systemd relanza los procesos solo.
