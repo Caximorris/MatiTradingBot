@@ -199,7 +199,9 @@ def _load_settings():
 
 def _make_client(settings):
     from core.exchange import OKXClient
-    return OKXClient(settings)
+    # persist_paper_state=True: el portfolio paper sobrevive a reinicios del proceso
+    # (data/runtime/paper_state.json). Los tests crean OKXClient sin persistencia.
+    return OKXClient(settings, persist_paper_state=True)
 
 
 # ---------------------------------------------------------------------------
@@ -823,7 +825,7 @@ def bot_disable(
 
 @bot_app.command("add")
 def bot_add(
-    strategy_type: str = typer.Argument(..., help="Tipo: adaptive | pro_trend"),
+    strategy_type: str = typer.Argument(..., help="Tipo: adaptive | pro_trend | scalp | range | swing"),
     symbol: str = typer.Argument(...),
     config_json: str = typer.Option("{}", "--config", "-c"),
 ):
@@ -831,10 +833,11 @@ def bot_add(
     from core.database import get_session, get_or_create_bot_state, init_db
     init_db()
 
-    valid_types = ("adaptive", "pro_trend", "pro", "scalp_momentum", "scalp", "range_reversion", "range")
+    valid_types = ("adaptive", "pro_trend", "pro", "scalp_momentum", "scalp",
+                   "range_reversion", "range", "swing_allocator", "swing")
     t = strategy_type.lower()
     if not any(t.startswith(v) for v in valid_types):
-        console.print(f"[red]Tipo inválido '{strategy_type}'. Válidos: adaptive, pro_trend, scalp, range[/red]")
+        console.print(f"[red]Tipo inválido '{strategy_type}'. Válidos: adaptive, pro_trend, scalp, range, swing[/red]")
         raise typer.Exit(1)
 
     try:
@@ -852,6 +855,8 @@ def bot_add(
         "scalp":           f"scalp_momentum_{sym_clean}",
         "range_reversion": f"range_reversion_{sym_clean}",
         "range":           f"range_reversion_{sym_clean}",
+        "swing_allocator": f"swing_allocator_{sym_clean}",
+        "swing":           f"swing_allocator_{sym_clean}",
     }
     name = next(name_map[v] for v in valid_types if t.startswith(v))
 

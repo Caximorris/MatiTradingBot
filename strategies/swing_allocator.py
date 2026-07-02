@@ -186,6 +186,17 @@ class SwingAllocatorBot:
         self._bar_count       = 0
         self._cap_latched     = False   # trinquete del cap dentro de una fase bull_peak
 
+        # Estado persistente live/paper (fix post-freeze 2026-07-02): el scheduler de `start`
+        # re-instancia la estrategia en CADA tick, asi que initialized/last_rebalance/cadencia
+        # deben sobrevivir en BotState (mismo patron que Pro Trend). En backtest el engine usa
+        # una unica instancia viva y este bloque es inerte.
+        self._live_mode = not self._is_backtest_client()
+        self._live_state: dict = {
+            "initialized": False, "last_rebalance": None, "last_eval_block": None,
+        }
+        if self._live_mode and self._session is not None:
+            self._load_live_state()
+
         # Caches de indicadores (mismo patron que Pro Trend)
         self._daily_cache: dict = {}   # {"date": "YYYY-MM-DD", "ind": {...}}
         self._4h_cache:    dict = {}   # {"key": "YYYY-MM-DD-N", "ind": {...}}
@@ -211,9 +222,16 @@ class SwingAllocatorBot:
             self._initialize()
             return
 
-        # Evaluar solo cada 4 barras (cadencia 4H en datos 1H — reduce ruido).
-        # clock_aligned_cadence (F9): alineada a reloj UTC en vez de al offset del warmup.
-        if self._cfg.clock_aligned_cadence:
+        # Cadencia de evaluacion.
+        # Backtest: cada 4 barras 1H (o clock_aligned_cadence, F9 — no adoptado como default).
+        # Live/paper: UNA evaluacion por bloque 4H UTC, persistida en BotState — el scheduler
+        # re-instancia la estrategia en cada tick y _bar_count no sirve de cadencia alli.
+        eval_block: str | None = None
+        if self._live_mode:
+            eval_block = self._current_eval_block()
+            if eval_block == self._live_state.get("last_eval_block"):
+                return
+        elif self._cfg.clock_aligned_cadence:
             if self._client.current_time().hour % 4 != 0:
                 return
         elif self._bar_count % 4 != 0:
@@ -221,10 +239,17 @@ class SwingAllocatorBot:
 
         # Cooldown entre rebalanceos
         if not self._cooldown_ok():
+            if eval_block is not None:
+                self._consume_eval_block(eval_block)
             return
 
+        # Live: si los datos de mercado fallan NO se consume el bloque — se reintenta en el
+        # siguiente tick del scheduler. En backtest este check es no-op (ver _market_data_ok).
         if not self._market_data_ok():
             return
+
+        if eval_block is not None:
+            self._consume_eval_block(eval_block)
 
         current          = self._current_btc_pct()
         target, signals  = self._compute_target(current)
@@ -243,19 +268,19 @@ class SwingAllocatorBot:
 
         if balance.get(base, Decimal("0")) > Decimal("0"):
             # Ya tiene BTC (raro en backtest, pero defensivo)
-            self._initialized = True
+            self._mark_initialized()
             return
 
         invest = usdt * Decimal(str(self._cfg.base_btc_pct))
         if not self._risk_allows_buy(invest):
-            self._initialized = True
+            self._mark_initialized()
             return
 
         price  = self._client.get_ticker(self._cfg.symbol)
         qty    = (invest / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
 
         if qty <= Decimal("0"):
-            self._initialized = True
+            self._mark_initialized()
             return
 
         result = self._client.place_order(
@@ -280,7 +305,7 @@ class SwingAllocatorBot:
         else:
             logger.warning("[{}] Init rechazada: {}", self.name, result.error)
 
-        self._initialized = True
+        self._mark_initialized()
 
     # -----------------------------------------------------------------------
     # Calculo del target
@@ -478,6 +503,7 @@ class SwingAllocatorBot:
             return
 
         self._last_rebalance = self._client.current_time()
+        self._save_live_state()   # no-op en backtest
         pct_after = self._current_btc_pct()
 
         logger.info(
@@ -516,17 +542,22 @@ class SwingAllocatorBot:
         return True
 
     def _market_data_ok(self) -> bool:
-        """Control minimo F14: no operar con OHLCV ausente o precio anomalo."""
+        """
+        Control minimo F14: no operar con OHLCV ausente o precio anomalo.
+        SOLO live/paper (M2 auditoria v5): en backtest es no-op — los datos del cache ya estan
+        validados (salto 1H maximo historico BTC 19.18%, ETH 24.07%) y un skip silencioso de la
+        barra de decision romperia el protocolo de medicion aislada.
+        """
+        if self._is_backtest_client():
+            return True
         threshold = self._cfg.max_price_jump_pct
         if threshold <= 0:
             return True
         try:
             df = self._client.get_ohlcv(self._cfg.symbol, limit=2)
             if df is None or len(df) < 2:
-                if not self._is_backtest_client():
-                    logger.warning("[{}] OHLCV insuficiente; se omite decision", self.name)
-                    return False
-                return True
+                logger.warning("[{}] OHLCV insuficiente; se omite decision", self.name)
+                return False
             prev_close = float(df["close"].iloc[-2])
             price = float(self._client.get_ticker(self._cfg.symbol))
             if prev_close <= 0 or price <= 0:
@@ -546,6 +577,60 @@ class SwingAllocatorBot:
 
     def _is_backtest_client(self) -> bool:
         return self._client.__class__.__name__ == "BacktestClient"
+
+    # -----------------------------------------------------------------------
+    # Persistencia de estado live/paper (fix post-freeze 2026-07-02)
+    # El estado vive en una fila BotState propia ("swing_allocator", symbol) con
+    # is_active=False — separada de la fila del bot activado, que guarda la config
+    # del usuario. Mismo patron que Pro Trend. En backtest todo esto es no-op.
+    # -----------------------------------------------------------------------
+
+    def _load_live_state(self) -> None:
+        try:
+            from core.database import get_or_create_bot_state
+            bot_state = get_or_create_bot_state(
+                self._session, strategy_name="swing_allocator", symbol=self._cfg.symbol,
+            )
+            self._live_state = {**self._live_state, **bot_state.get_config()}
+        except Exception as exc:
+            logger.warning("[{}] No se pudo cargar estado live (se usa fresco): {}", self.name, exc)
+            return
+        self._initialized = bool(self._live_state.get("initialized", False))
+        last_reb = self._live_state.get("last_rebalance")
+        if last_reb:
+            try:
+                self._last_rebalance = datetime.fromisoformat(last_reb)
+            except ValueError:
+                logger.warning("[{}] last_rebalance corrupto en estado live: {}", self.name, last_reb)
+
+    def _save_live_state(self) -> None:
+        if not self._live_mode or self._session is None:
+            return
+        self._live_state["initialized"] = self._initialized
+        self._live_state["last_rebalance"] = (
+            self._last_rebalance.isoformat() if self._last_rebalance else None
+        )
+        try:
+            from core.database import get_or_create_bot_state
+            bot_state = get_or_create_bot_state(
+                self._session, strategy_name="swing_allocator", symbol=self._cfg.symbol,
+            )
+            bot_state.set_config(self._live_state)
+        except Exception as exc:
+            logger.warning("[{}] No se pudo guardar estado live: {}", self.name, exc)
+
+    def _mark_initialized(self) -> None:
+        self._initialized = True
+        self._save_live_state()
+
+    def _current_eval_block(self) -> str:
+        """Identificador del bloque 4H UTC actual, p.ej. '2026-07-02T3' (12:00-15:59)."""
+        now = self._client.current_time()
+        return f"{now.date().isoformat()}T{now.hour // 4}"
+
+    def _consume_eval_block(self, block: str) -> None:
+        self._live_state["last_eval_block"] = block
+        self._save_live_state()
 
     # -----------------------------------------------------------------------
     # Indicadores — con cache para evitar O(n^2)

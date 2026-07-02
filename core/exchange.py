@@ -8,12 +8,14 @@ simulan la operación localmente y devuelven la misma estructura que el modo liv
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -135,7 +137,7 @@ class OKXClient:
     métodos independientemente del modo — la diferencia está encapsulada aquí.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, persist_paper_state: bool = False) -> None:
         self._settings = settings
         self._is_paper = settings.is_paper
         self._flag = "1" if settings.okx_sandbox else "0"
@@ -154,6 +156,14 @@ class OKXClient:
         self._paper_balance: dict[str, Decimal] = {"USDT": Decimal("10000")}
         self._paper_orders: dict[str, OrderResult] = {}
         self._paper_counter = 0
+        # Persistencia del portfolio paper (fix post-freeze 2026-07-02): sin esto, cada
+        # reinicio del proceso reseteaba el balance simulado a $10k y borraba la posicion.
+        # Opt-in (lo activa _make_client en main.py) para no acoplar tests al filesystem.
+        # OJO: las ordenes LIMIT pendientes NO sobreviven al reinicio (el Swing solo usa market).
+        self._paper_state_path = Path("data") / "runtime" / "paper_state.json"
+        self._persist_paper = persist_paper_state and self._is_paper
+        if self._persist_paper:
+            self._load_paper_state()
 
         mode = "paper" if self._is_paper else "live"
         logger.info("OKXClient inicializado — modo={}, exchange_disponible={}", mode, self._available)
@@ -354,6 +364,7 @@ class OKXClient:
             self._paper_balance[currency] = (
                 self._paper_balance.get(currency, Decimal("0")) + delta
             )
+            self._persist_paper_state()
 
     def get_open_orders(self, symbol: str) -> list[dict]:
         """
@@ -569,6 +580,7 @@ class OKXClient:
                     is_paper=True, strategy=strategy, timestamp=self._utcnow(),
                 )
                 self._paper_orders[order_id] = pending
+                self._persist_paper_state()
                 logger.info(
                     "[PAPER] Limit {} {} @ {} — pendiente (id={})", side, symbol, price, order_id
                 )
@@ -607,6 +619,7 @@ class OKXClient:
             proceeds = quote_amount - fee
             self._paper_balance[base_ccy] = available - size
             self._paper_balance[quote_ccy] = self._paper_balance.get(quote_ccy, Decimal("0")) + proceeds
+        self._persist_paper_state()
         return True, ""
 
     def _paper_cancel_order(self, order_id: str, symbol: str) -> bool:
@@ -628,6 +641,7 @@ class OKXClient:
                     self._paper_balance.get(base_ccy, Decimal("0")) + order.size
                 )
 
+            self._persist_paper_state()
             logger.info("[PAPER] Orden {} cancelada ({})", order_id, symbol)
             return True
 
@@ -697,6 +711,9 @@ class OKXClient:
                     "[PAPER] Limit {} ejecutada: {} {} @ {} (id={})",
                     order.side, symbol, order.size, current_price, order_id,
                 )
+
+            if filled:
+                self._persist_paper_state()
 
         return filled
 
@@ -773,11 +790,50 @@ class OKXClient:
         """Establece el balance simulado para una moneda. Útil para tests y backtest."""
         with self._paper_lock:
             self._paper_balance[currency] = amount
+            self._persist_paper_state()
 
     def get_paper_orders(self) -> dict[str, OrderResult]:
         """Retorna copia de las órdenes limit pendientes en paper mode."""
         with self._paper_lock:
             return dict(self._paper_orders)
+
+    def _load_paper_state(self) -> None:
+        """Carga balances paper persistidos. Debe llamarse solo desde __init__ (sin lock aún)."""
+        try:
+            if not self._paper_state_path.exists():
+                return
+            raw = json.loads(self._paper_state_path.read_text(encoding="utf-8"))
+            balances = {k: Decimal(str(v)) for k, v in raw.get("balances", {}).items()}
+            if balances:
+                self._paper_balance = balances
+            self._paper_counter = int(raw.get("counter", 0))
+            logger.info(
+                "[PAPER] Estado restaurado de {} — balances: {}",
+                self._paper_state_path,
+                {k: str(v) for k, v in self._paper_balance.items()},
+            )
+        except Exception as exc:
+            logger.warning(
+                "[PAPER] No se pudo cargar {} (se parte de balance fresco): {}",
+                self._paper_state_path, exc,
+            )
+
+    def _persist_paper_state(self) -> None:
+        """Escribe balances paper a disco. Llamar con self._paper_lock tomado."""
+        if not self._persist_paper:
+            return
+        try:
+            self._paper_state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "balances": {k: str(v) for k, v in self._paper_balance.items()},
+                "counter": self._paper_counter,
+                "updated_at": self._utcnow().isoformat(),
+            }
+            self._paper_state_path.write_text(
+                json.dumps(payload, ensure_ascii=True), encoding="utf-8"
+            )
+        except Exception as exc:
+            logger.warning("[PAPER] No se pudo persistir estado paper: {}", exc)
 
     # -----------------------------------------------------------------------
     # Propiedades de estado

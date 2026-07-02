@@ -55,8 +55,9 @@ y `test_swing_allocator_controls.py` (F14).
   podria SALTARSE en silencio la barra de decision de un crash dentro del backtest — un cambio de
   comportamiento que nunca se midio aislado (rompe el protocolo).
 - **Accion recomendada:** limitar el rechazo por salto a clientes live/paper (como ya hace la rama
-  "OHLCV insuficiente"), o como minimo loggear + contar disparos en backtest. Mientras tanto:
-  si un backtest futuro muestra rebalanceos "ausentes" en un crash, revisar esto primero.
+  "OHLCV insuficiente"), o como minimo loggear + contar disparos en backtest.
+- **RESUELTO (2026-07-02, fixes ruta live post-freeze):** `_market_data_ok` es no-op con
+  `BacktestClient`. Ancla 2015-26 realistic re-verificada identica tras el cambio.
 
 ### B1n. [BAJO] `fill_next_open=True`: compra con gap alcista puede rechazarse en silencio
 

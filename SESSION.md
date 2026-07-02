@@ -189,6 +189,23 @@ de Max DD agotado, ver arriba). El proximo hito NO es mas backtest: es **validac
 paper trading** del Swing v5 (cierra F13 24h + F15 paridad 30d + F19 datos de degradacion).
 `start` en vivo requiere confirmacion explicita.
 
+**HECHO (sesion 16 bis, 2026-07-02): fixes de la ruta live/paper (post-freeze, no tocan senales).**
+Al preparar el arranque del paper se detecto que la ruta live NO funcionaba: el scheduler de
+`start` re-instancia la estrategia en cada tick y el Swing no persistia estado → tras el INIT
+nunca volvia a rebalancear; ademas el balance paper vivia en memoria (reinicio = portfolio a $10k)
+y `bot add` no aceptaba swing. Fixes aplicados:
+- Estado live del Swing persistido en BotState fila ("swing_allocator", symbol, is_active=False),
+  mismo patron que Pro Trend: `initialized`, `last_rebalance`, `last_eval_block`.
+- Cadencia live = UNA evaluacion por bloque 4H UTC (persistida; robusta a restarts y a cualquier
+  tick). Si los datos de mercado fallan, el bloque NO se consume (reintento al siguiente tick).
+  Backtest mantiene su cadencia exacta `_bar_count % 4` (sin cambio de comportamiento).
+- Balance paper persistido en `data/runtime/paper_state.json` (opt-in via `_make_client`; los
+  tests no tocan disco). Limit orders pendientes NO sobreviven restart (el Swing solo usa market).
+- `bot add swing BTC-USDT` funciona; filtro tick-anomalo (F14) ahora SOLO live/paper (resuelve M2
+  de la auditoria v5). Ancla 2015-26 realistic re-verificada identica. Tests 96/96.
+Paper listo para arrancar: `python main.py bot enable swing_allocator_btc_usdt BTC-USDT` +
+`python main.py start` (requiere OK explicito y proceso vivo; reinicios ya no pierden estado).
+
 **HECHO (sesion 14):**
 - Auditoria del cap `bull_peak_ema50_cap_*`: 24 disparos en 2015-26, TODOS SELL 100%->85%, en los 3
   techos (2017:9, 2021:5, 2024-25:10). Estructural, NO overfit a un evento. PERO casi todos en PARES

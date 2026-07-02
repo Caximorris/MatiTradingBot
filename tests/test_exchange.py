@@ -293,3 +293,45 @@ def test_paper_order_ids_are_unique(client_with_ticker):
     ]
     ids = [r.order_id for r in results if r.status == "open"]
     assert len(ids) == len(set(ids))  # todos distintos
+
+
+# ---------------------------------------------------------------------------
+# Tests de persistencia del estado paper (fix post-freeze 2026-07-02)
+# ---------------------------------------------------------------------------
+
+def _persistent_client() -> OKXClient:
+    settings = _paper_settings()
+    with patch("core.exchange.OKXClient._init_apis"):
+        c = OKXClient(settings, persist_paper_state=True)
+        c._available = False
+    return c
+
+
+def test_paper_state_roundtrip_survives_restart(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    c1 = _persistent_client()
+    c1.set_paper_balance("USDT", Decimal("4000"))
+    c1.set_paper_balance("BTC", Decimal("0.123456"))
+
+    # "Reinicio del proceso": instancia nueva debe recuperar el portfolio
+    c2 = _persistent_client()
+    balance = c2.get_balance()
+    assert balance["USDT"] == Decimal("4000")
+    assert balance["BTC"] == Decimal("0.123456")
+
+
+def test_paper_state_not_persisted_by_default(tmp_path, monkeypatch, client):
+    monkeypatch.chdir(tmp_path)
+    client.set_paper_balance("USDT", Decimal("1234"))
+    assert not (tmp_path / "data" / "runtime" / "paper_state.json").exists()
+
+
+def test_paper_state_corrupt_file_falls_back_to_fresh(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state_path = tmp_path / "data" / "runtime" / "paper_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text("{esto no es json", encoding="utf-8")
+
+    c = _persistent_client()
+    assert c.get_balance()["USDT"] == Decimal("10000")
