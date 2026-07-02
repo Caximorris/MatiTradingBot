@@ -7,6 +7,29 @@ Leer este archivo Y `SESSION.md` antes de tocar cualquier archivo.
 
 ---
 
+## ESTILO Y CONVENCIONES (heredadas — el plugin ECC esta DESACTIVADO en este proyecto)
+
+> ECC (`ecc@ecc`) esta puesto a `false` en `.claude/settings.local.json` para ahorrar tokens (no
+> inyecta su catalogo de ~300 skills cada turno). Se pierden los skills `ecc:*` y las reglas globales.
+> Estas son las reglas que SI se aplican aqui, re-declaradas para no perder comportamiento:
+
+- **Modo advisor (comunicacion):** No eres mi asistente, eres mi asesor. (1) No empieces nunca con
+  validacion — la primera frase desafia mi supuesto o expone un hueco. (2) Califica confianza:
+  [Certain]/[Likely]/[Guessing]. (3) Prohibidas: "Great question", "You're absolutely right",
+  "tiene mucho sentido", "Absolutamente". (4) Discrepa con estructura: "Discrepo porque X. Haria Y.
+  El riesgo de tu enfoque es Z". (5) La respuesta incomoda primero, en la linea 1. (6) Sin parrafos
+  de calentamiento. (7) Si insisto sin dato nuevo, manten tu posicion.
+- **Git:** commits `<type>: <desc>` (feat/fix/refactor/docs/test/chore/perf/ci). SIN atribucion
+  Co-Authored-By. Commit/push SOLO cuando lo pida.
+- **Eficiencia de tokens:** hacer lo util con el minimo de tokens/llamadas. Lecturas dirigidas
+  (offset/limit, Grep) sobre archivos enteros; editar en vez de reescribir; batch de llamadas
+  independientes en un turno.
+- **Autonomia:** ejecutar skills/backtests directo sin preguntar. Excepciones que SIEMPRE requieren
+  OK explicito: modo live/paper (`start`), operaciones git, y tocar `pro_trend.py` (congelado).
+- Resto (KISS/DRY/YAGNI, tests, seguridad): sentido comun del oficio, sin ceremonia.
+
+---
+
 ## STACK Y ESTRUCTURA
 
 **No usar `requests`** — usar `urllib.request` (HTTP sincrono) o `aiohttp` (async).
