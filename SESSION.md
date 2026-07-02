@@ -11,6 +11,9 @@ Punteros a referencia (leer bajo demanda, NO precargar):
   detallada de Pro Trend v12/v13, macro/market/funding context, indicadores, bugs resueltos.
 - `backtests/STRATEGY_VERSIONS.md` — historial de versiones de estrategia.
 - `SWING_PLAN.md` — diseno y criterios go/no-go del Swing Allocator.
+- `AUDITORIA_SWING_V4.md` — auditoria cuantitativa critica (2026-07-02): hallazgos B1-B5/C1-C9,
+  sensibilidad calendario halving, ablations, tabla por anios. `PLAN_MEJORA_AUDITORIA.md` — plan
+  paso a paso (F1-F19) para resolverlos. Scripts en `tools/audit_*.py`.
 - Journals: NO hacer `Read` del JSON crudo (pueden ser >10 MB). Usar
   `python tools/journal_summary.py <ruta>` o `/journal-summary`.
 
