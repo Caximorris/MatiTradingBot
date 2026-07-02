@@ -1,0 +1,12 @@
+# Normalizacion de line endings.
+# Los .sh y units de systemd se ejecutan en la VM Linux: SIEMPRE LF, aunque se
+# editen desde Windows (CRLF en un script bash = "\r: command not found").
+* text=auto
+*.sh text eol=lf
+*.service text eol=lf
+*.py text
+*.md text
+*.json text
+# Binarios
+*.xlsx binary
+*.db binary
