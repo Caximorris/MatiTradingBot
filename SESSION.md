@@ -4,7 +4,7 @@ Complemento de CLAUDE.md. **Este archivo es deliberadamente corto** para no gast
 cada arranque. El detalle historico completo (logs de sesion, tablas de backtests, referencia de
 cada modulo) vive en **`SESSION_ARCHIVE.md`** — leelo SOLO cuando lo necesites, no por defecto.
 
-**Ultima actualizacion: 2026-07-02 (sesion 15)**
+**Ultima actualizacion: 2026-07-02 (sesion 16 — Swing v5 post-audit congelado)**
 
 Punteros a referencia (leer bajo demanda, NO precargar):
 - `SESSION_ARCHIVE.md` — logs sesiones 12/13, auditoria 2026-06-30, resultados backtest, referencia
@@ -13,13 +13,27 @@ Punteros a referencia (leer bajo demanda, NO precargar):
 - `SWING_PLAN.md` — diseno y criterios go/no-go del Swing Allocator.
 - `AUDITORIA_SWING_V4.md` — auditoria cuantitativa critica (2026-07-02): hallazgos B1-B5/C1-C9,
   sensibilidad calendario halving, ablations, tabla por anios. `PLAN_MEJORA_AUDITORIA.md` — plan
-  paso a paso (F1-F19) para resolverlos. Scripts en `tools/audit_*.py`.
+  paso a paso (F1-F19) para resolverlos (COMPLETADO salvo cierres que requieren paper: F13/F15/F19).
+  `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md` — auditoria post-implementacion del freeze v5.
+  Scripts en `tools/` (sens_phases, bootstrap_equity, stress_usdt_depeg, swing_benchmarks,
+  swing_parity_check, degradation_report, swing_v5_freeze_report).
 - Journals: NO hacer `Read` del JSON crudo (pueden ser >10 MB). Usar
   `python tools/journal_summary.py <ruta>` o `/journal-summary`.
 
 ---
 
 ## ESTADO ACTUAL
+
+**DEFAULT VIGENTE: Swing Allocator v5 post-audit (2026-07-02, sesion 16) — CONGELADO.**
+v5 = v4 estructural + `daily_on_closed_only=True` (F8, unico delta de comportamiento; el resto
+del plan F1-F19 son motor/metricas/operativa live). Anclas v5 (dataset canonico 102931):
+- 2015-26 realistic: $9.137M | CAGR +85.84% | Max DD -52.73% | 70 rebalanceos | btc_vs_bnh 0.8171
+- 2018-26 realistic: $219.8k | CAGR +47.14% | Max DD -53.72% | 53 rebalanceos | btc_vs_bnh 0.8432
+- 2015-26 conservative: $8.897M | CAGR +85.40% | Max DD -52.88% | 70 | btc_vs_bnh 0.7961
+Coste del fix anti-lookahead vs v4: -0.27pp CAGR / -0.02pp DD — adoptado por higiene, no resultado.
+Rollback exacto a v4 congelado: `--config '{"daily_on_closed_only": false}'`. Tests 88/88 verde.
+Auditoria post-implementacion: `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`. Tag de freeze v5
+pendiente de commit (git requiere OK explicito).
 
 **FOCO UNICO: Swing Allocator.** Pro Trend queda PAUSADO INDEFINIDAMENTE (decision 2026-07-01,
 sesion 14). No se continua ni paper trading ni optimizacion por ahora. El codigo queda como esta
@@ -30,7 +44,8 @@ sesion 14). No se continua ni paper trading ni optimizacion por ahora. El codigo
 - 2015-2026 realistic: +5812% / CAGR +44.9% — 3 ciclos bull validados.
 - Ventaja real: riesgo, no retorno. 35% tiempo en mercado, evita crashes -70%.
 
-**Swing Allocator v4 ADOPTADO como default** (2026-07-01, sesion 14). Pasa go/no-go completo.
+**Swing Allocator v4** (2026-07-01, sesion 14 — SUPERSEDIDO por v5, ver arriba; v4 sigue siendo
+la referencia estructural congelada en tag `swing-v4-frozen`). Paso go/no-go completo.
 - Cambio v3->v4: `min_btc_pct` 0.30->0.20 y `delta_bear_onset` -0.20->-0.30. Resto de v3 intacto
   (regime_off_on_bear_onset=True, bull_peak_ema50_cap=0.85). Mejora AMBAS anclas a la vez.
 - Mecanismo estructural: el floor 0.30 clampeaba y bloqueaba el estado de bear profundo (las senales
@@ -44,16 +59,64 @@ sesion 14). No se continua ni paper trading ni optimizacion por ahora. El codigo
 
 **HECHO (sesion 15, 2026-07-02):**
 - **Smoke-verify v4 OK**: `backtest --strategy swing 2015-2026 realistic` reproduce CAGR +86.2% /
-  Max DD -52.71% / PF 4.43 / 68 trades / 96930 velas analizadas. Las 5 metricas nuevas se muestran
-  (Median trade +602, Calmar 1.63, DD duracion 260d, Sharpe 1.38, Sortino 1.57).
+  Max DD -52.71% / 68 rebalanceos / 96930 velas analizadas. Las 5 metricas nuevas se muestran
+  (Median trade +602 legacy, Calmar 1.63, DD duracion 260d, Sharpe 1.38, Sortino 1.57).
 - **Cache 102931 ADOPTADO como canonico** (decision 2026-07-02): BTC-USDT_1H 2014-04-25 → 2026-01-01,
   continuo, cero huecos >24h. Reemplaza al viejo de 96906. v4 validado sobre el (WF 4/4, ETH inerte,
-  smoke OK). El PF 4.43 es sano pese a mas relleno Bitstamp que el 97105 sospechoso, porque el 102931
-  es relleno COMPLETO/continuo, no parcial. Anclas siguen siendo CAGR/DD, no PF.
+  smoke OK). El PF legacy 4.43 era artefacto de pairing; tras F1 el PF ACB del smoke es 88.38,
+  confirmando que PF/WR/expectancy siguen siendo metricas contables de rebalanceos, NO anclas de
+  decision. Anclas siguen siendo CAGR/DD/Calmar y BTC vs B&H.
 
-**PENDIENTE (sesion 15):**
-- **Commitear v4 + metricas** (sin commitear aun): 5 archivos. Sugerido 2 commits (metricas backtest /
-  swing v4 default) y push a origin/main.
+**HECHO (sesion 15 bis, 2026-07-02): v4 commiteado y CONGELADO** (tag `swing-v4-frozen` @ 06395ff).
+Auditoria completa en `AUDITORIA_SWING_V4.md`; plan de ejecucion en `PLAN_MEJORA_AUDITORIA.md`
+(en curso, ver checkboxes alli).
+
+**HECHO (sesion 16, 2026-07-02): F1-F4 parciales cerrados.**
+- F1: `_compute_trade_pnl_acb` con coste medio ponderado, fees prorrateados y selector interno
+  `trade_pnl_method="acb"|"legacy_fifo"`. Tests: `python -m pytest tests/test_backtest_pnl.py -q` = 6/6.
+- F2: `underwater_days` real (peak->recovery) junto a `max_dd_duration_days` (peak->trough).
+- Smoke v4 post-F1/F2: final $9.307M, CAGR +86.2%, Max DD -52.71%, 96930 velas, underwater 922d.
+  Equity sin cambios; solo cambian metricas por rebalanceo.
+- F3: README y CLI dejan de presentar PF del Swing como veredicto.
+- F4: umbrales de fase de halving parametrizados (`phase_post_end/phase_peak_end/phase_onset_end`)
+  con defaults 180/540/900; smoke default reproduce anclas.
+- F5: matriz calendario completa sobre v4 congelado. El signo del edge sobrevive en todas las
+  variantes, pero el reloj sigue fragil: shift -60d baja CAGR a +72.86%; shift +60d sube DD a -66.08%.
+- F6: `halving_only` extra RECHAZADO como simplificacion. 2018 realistic: +41.66% CAGR / -50.91%
+  DD / `btc_vs_bnh=0.6410` vs v4 +47.59% / -53.42% / 0.8641. Conservative 2015: +73.56% /
+  -50.91% / 0.4004 vs v4 +85.65% / -52.86% / 0.8082. Mantener `use_regime=True`.
+- F7: bootstrap mensual v4 congelado x1000: MaxDD p50 -53.01%, p95 -68.31%, p99 -74.34%;
+  sizing futuro debe usar p95/p99, no el -52.7% historico.
+- F8: `daily_on_closed_only=True` ADOPTADO por higiene anti-lookahead. Impacto aislado: CAGR
+  +85.84% vs +86.11%, DD -52.73% vs -52.71%. Rollback: `--config '{"daily_on_closed_only": false}'`.
+- F9: `clock_aligned_cadence=True` MEDIDO y NO adoptado. Empeora CAGR a +84.62% y no reduce
+  sensibilidad al offset 2015-01-02.
+- F10: `fill_next_open` medido y NO adoptado como default: impacto despreciable (+86.08% vs +86.11%,
+  DD igual). Se mantiene para mediciones en `BacktestClient(fill_next_open=True)`.
+- F11: B&H ahora incluye coste de compra; `lookback_hours` documenta que EMA200D es truncada.
+- F12: `OKXClient.get_ohlcv` pagina hasta `limit` y devuelve `timestamp` ms `int64`, igual que
+  `BacktestClient`. Smoke OKX real: 6000 filas 1H / dtype int64.
+- F13: ruta `start` ya instancia Swing y pasa `RiskManager`; Swing bloquea compras si
+  `check_daily_loss()` dispara, pero permite ventas defensivas. NO se ejecuto `start` (requiere OK
+  explicito y 24h para cerrar operativo).
+- F14: controles minimos Swing paper/live: rechazo de tick anomalo (`max_price_jump_pct=0.25`),
+  OHLCV insuficiente bloquea decisiones live, `main.py stop` es kill switch, rebalanceos live/paper
+  se persisten en `data/runtime/swing_rebalances.jsonl`.
+- F16: stress USDT depeg current default. Depeg -10% en 2018-06: CAGR +84.37%, final $8.37M.
+  Depeg -10% en 2022-06: CAGR +84.30%, final $8.34M. Riesgo aceptable en backtest, pero capital
+  estable/custodia siguen siendo riesgo real.
+- F17 sizing formal: dimensionar con MaxDD p95/p99 bootstrap (-68%/-74%), no con -52.7% historico.
+  Conservador 10-20% del patrimonio cripto; moderado 30-50%; agresivo solo si sustituye el sleeve BTC
+  completo y se acepta DD tipo -75%. Sin apalancamiento; limitar custodia concentrada en un exchange.
+- F15 parcial: `tools/swing_parity_check.py` compara target live/backtest con las mismas 6000 velas.
+  Check puntual OK 2026-07-02 12:00 UTC: ambos target 0.2000, `regime_bear;halving_bear_onset`.
+  Cierre real sigue siendo 30 dias de paper sin divergencias.
+- F18 parcial: `tools/swing_benchmarks.py` implementa benchmarks Swing. 2015-2026 realistic current:
+  Swing $9.14M / CAGR +85.84% / DD -52.73%; 60/40 mensual $540k / +43.71% / -65.01%;
+  EMA200D long/flat $1.47M / +57.36% / -74.93%; DCA semanal $539k / +43.69% / -79.06%.
+  Falta integrar estos benchmarks en `main.py baselines`/README.
+- F19 parcial: `tools/degradation_report.py` lee `data/runtime/swing_rebalances.jsonl` y alerta por
+  frecuencia >2x backtest o gap target/after >2pp. Sin datos live aun (`no_data` esperado).
 
 **Descartado sesion 14 (no reintentar):** latch del cap (`bull_peak_cap_latch`), regime_delta 0.15,
 VIX, MVRV (wash), Pi Cycle (inerte), floor <0.20 (inerte, senales nunca bajan de 0.20).
@@ -105,6 +168,13 @@ un backtest puntual.
   `disable_external_filters=False`.
 - Swing v1/v2 config exactas: ver "SWING ALLOCATOR — REFERENCIA" en SESSION_ARCHIVE.md.
 
+### 5. Out-of-sample — ventana 2015-2026 CERRADA para optimizacion (auditoria 2026-07-02)
+- Ningun cambio de estrategia se adopta por mejorar 2015-2026. Esa ventana solo se usa para MEDIR
+  robustez/sensibilidad de lo ya adoptado. La evidencia para cambios futuros = datos posteriores a
+  2026-01-01 (forward/paper) o justificacion estructural pura + no-empeora-anclas.
+- Excepcion permitida: SIMPLIFICACION (quitar componentes) si no empeora las anclas.
+- v4 congelado en tag `swing-v4-frozen` (commit 06395ff).
+
 ### 4. Determinismo de datos
 - Backtests deterministas via cache OHLCV (`data/cache/`). Runs con rango cacheado = velas identicas.
 - Resultado SENSIBLE al punto de inicio (dataset canonico: 102931 velas, adoptado 2026-07-02; viejo 96906). No mezclar caches entre maquinas.
@@ -114,9 +184,10 @@ un backtest puntual.
 
 ## SIGUIENTE PASO — Swing Allocator (foco unico)
 
-Pro Trend pausado. **Optimizacion de backtest del Swing = CERRADA** (v4 default, frente de Max DD
-agotado, ver arriba). El proximo hito NO es mas backtest: es **validacion forward / paper trading**
-del Swing v4. `start` en vivo requiere confirmacion explicita.
+Pro Trend pausado. **Optimizacion de backtest del Swing = CERRADA** (v5 post-audit default, frente
+de Max DD agotado, ver arriba). El proximo hito NO es mas backtest: es **validacion forward /
+paper trading** del Swing v5 (cierra F13 24h + F15 paridad 30d + F19 datos de degradacion).
+`start` en vivo requiere confirmacion explicita.
 
 **HECHO (sesion 14):**
 - Auditoria del cap `bull_peak_ema50_cap_*`: 24 disparos en 2015-26, TODOS SELL 100%->85%, en los 3

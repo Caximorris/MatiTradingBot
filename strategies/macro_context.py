@@ -38,6 +38,30 @@ HALVING_DATES: list[date] = [
 # Umbrales MVRV historicamente significativos
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Umbrales de fase de halving (dias desde el ultimo halving)
+# ---------------------------------------------------------------------------
+# Configurables via set_phase_bounds() — F4 del plan de auditoria 2026-07-02.
+# Los defaults reproducen el comportamiento historico EXACTO (180/540/900).
+# OJO: son globales de modulo — afectan a todas las estrategias del proceso.
+# El 540 es el parametro mas sensible del Swing (ver AUDITORIA_SWING_V4.md, B2).
+
+PHASE_POST_END  = 180   # fin de post_halving
+PHASE_PEAK_END  = 540   # fin de bull_peak / inicio de bear_onset
+PHASE_ONSET_END = 900   # fin de bear_onset / inicio de accumulation
+
+
+def set_phase_bounds(post_end: int = 180, peak_end: int = 540, onset_end: int = 900) -> None:
+    """Ajusta los umbrales de fase. Solo para sensitivity/ablation — no cambiar en produccion."""
+    global PHASE_POST_END, PHASE_PEAK_END, PHASE_ONSET_END
+    if not (0 < post_end < peak_end < onset_end):
+        raise ValueError(f"Umbrales de fase invalidos: {post_end}/{peak_end}/{onset_end}")
+    if (post_end, peak_end, onset_end) != (PHASE_POST_END, PHASE_PEAK_END, PHASE_ONSET_END):
+        logger.warning("Umbrales de fase halving MODIFICADOS: {}/{}/{} (default 180/540/900)",
+                       post_end, peak_end, onset_end)
+    PHASE_POST_END, PHASE_PEAK_END, PHASE_ONSET_END = post_end, peak_end, onset_end
+
+
 # CoinMetrics asset IDs para cada activo soportado
 _CM_ASSETS: dict[str, str] = {
     "BTC": "btc",
@@ -164,7 +188,7 @@ class MacroContext:
         Devuelve (dias_desde_ultimo_halving, nombre_fase).
         Solo BTC tiene halvings. Para otros activos devuelve (0, "unknown").
 
-        Fases BTC:
+        Fases BTC (umbrales = PHASE_POST_END/PHASE_PEAK_END/PHASE_ONSET_END, default 180/540/900):
           post_halving:  0-180 dias   — transicion, mercado indeciso
           bull_peak:     180-540 dias — historicamente el bull market principal
           bear_onset:    540-900 dias — inicio del bear market
@@ -184,11 +208,11 @@ class MacroContext:
 
         days = (d - last_halving).days
 
-        if days < 180:
+        if days < PHASE_POST_END:
             phase = "post_halving"
-        elif days < 540:
+        elif days < PHASE_PEAK_END:
             phase = "bull_peak"
-        elif days < 900:
+        elif days < PHASE_ONSET_END:
             phase = "bear_onset"
         else:
             phase = "accumulation"

@@ -262,26 +262,58 @@ class OKXClient:
             return empty
 
         try:
-            resp = self._call_api(
-                self._market_api.get_candlesticks,
-                instId=symbol,
-                bar=timeframe,
-                limit=str(limit),
-            )
-            raw = resp.get("data", [])
-            if not raw:
+            rows_by_ts: dict[int, list] = {}
+            cursor_after: int | None = None
+            page_cap = 300
+
+            while len(rows_by_ts) < limit:
+                page_limit = min(page_cap, limit - len(rows_by_ts))
+                params = {
+                    "instId": symbol,
+                    "bar": timeframe,
+                    "limit": str(page_limit),
+                }
+                if cursor_after is not None:
+                    params["after"] = str(cursor_after)
+
+                method = self._market_api.get_candlesticks
+                if cursor_after is not None and hasattr(self._market_api, "get_history_candlesticks"):
+                    method = self._market_api.get_history_candlesticks
+
+                resp = self._call_api(method, **params)
+                raw_page = resp.get("data", [])
+                if not raw_page:
+                    break
+
+                oldest_ts = cursor_after
+                added = 0
+                for row in raw_page:
+                    if len(row) < 6:
+                        continue
+                    ts = int(row[0])
+                    oldest_ts = ts if oldest_ts is None else min(oldest_ts, ts)
+                    if ts not in rows_by_ts:
+                        rows_by_ts[ts] = row
+                        added += 1
+
+                if oldest_ts is None or oldest_ts == cursor_after or added == 0:
+                    break
+                cursor_after = oldest_ts
+                time.sleep(0.12)
+
+            if not rows_by_ts:
                 return empty
 
             df = pd.DataFrame(
-                raw,
-                columns=["ts", "open", "high", "low", "close", "vol", "volCcy", "volCcyQuote", "confirm"],
+                [row[:6] for row in rows_by_ts.values()],
+                columns=["timestamp", "open", "high", "low", "close", "volume"],
             )
-            df["timestamp"] = pd.to_datetime(df["ts"].astype("int64"), unit="ms", utc=True)
-            df = df[["timestamp", "open", "high", "low", "close", "vol"]].copy()
-            df.rename(columns={"vol": "volume"}, inplace=True)
+            df["timestamp"] = df["timestamp"].astype("int64")
             for col in ["open", "high", "low", "close", "volume"]:
                 df[col] = df[col].astype(float)
             df.sort_values("timestamp", inplace=True)
+            if len(df) > limit:
+                df = df.tail(limit)
             df.reset_index(drop=True, inplace=True)
             return df
 

@@ -99,6 +99,12 @@ del allocator es ruido. Evidencia: PF de las variantes de hoy = 4.43 / 2.34 / 7.
 con cambios menores de config. CAGR/DD/equity NO estan afectados (salen de balances).
 **No citar PF del Swing en README/decisiones.**
 
+**Actualizacion F1 (2026-07-02):** `_compute_trade_pnl_acb` sustituye el pairing FIFO por coste medio
+ponderado con fees prorrateados y deja `legacy_fifo` como selector interno. Smoke v4 post-F1:
+final $9.307M, CAGR +86.2%, Max DD -52.71%, underwater 922d. El PF ACB sube a 88.38 porque mide
+realizacion contable de rebalanceos, no calidad de decision del allocator. Conclusion: F1 corrige
+la aritmetica, pero PF/WR/expectancy del Swing siguen fuera de las anclas.
+
 ### B4. [ALTO — operativa] Paridad backtest→live rota; el Swing no puede hacer ni paper
 
 1. `main.py:209-233` (`_instantiate_strategy`): no hay rama `swing_allocator` →
@@ -164,6 +170,78 @@ Sensibilidad a costes (mismos rebalanceos, costes reaplicados):
 **Robusto a costes** (churn bajo: 138 rebalanceos en 11 anos). Funding no aplica (spot).
 Maker/taker: asume taker 0.1% (correcto tier base OKX). Fills parciales/perdidos: no modelados,
 pero con market orders sobre BTC-USDT a tamano retail es aceptable.
+
+### Actualizacion F5-F11 (2026-07-02)
+
+Matriz calendario completa sobre v4 congelado (`daily_on_closed_only=false`), 2015-2026 realistic:
+
+| Variante | CAGR | Max DD | Trades | Lectura |
+|---|---:|---:|---:|---|
+| default 180/540/900 | +86.11% | -52.71% | 70 | baseline congelado |
+| post_end 120 | +86.00% | -52.71% | 72 | estable |
+| post_end 240 | +86.55% | -52.71% | 68 | estable |
+| onset_end 800 | +83.59% | -54.05% | 70 | menor pero sobrevive |
+| onset_end 1000 | +86.51% | -52.71% | 67 | estable |
+| shift -30d | +80.83% | -52.71% | 69 | fragil en magnitud |
+| shift +30d | +81.73% | -57.53% | 73 | fragil en DD |
+| shift -60d | +72.86% | -52.71% | 67 | edge sobrevive, CAGR cae fuerte |
+| shift +60d | +77.40% | -66.08% | 77 | edge sobrevive, DD se degrada |
+
+Conclusion F5: el signo del edge sobrevive en todas las variantes frente a B&H, pero la magnitud
+depende demasiado del reloj: no se cambia ningun umbral.
+
+F6 halving-only extra:
+
+| Ventana | Config | CAGR | Max DD | Final | `btc_vs_bnh` | Decision |
+|---|---|---:|---:|---:|---:|---|
+| 2018-2026 realistic | v4 congelado | +47.59% | -53.42% | $225.2k | 0.8641 | mantener |
+| 2018-2026 realistic | halving-only | +41.66% | -50.91% | $162.2k | 0.6410 | rechazar |
+| 2015-2026 conservative | v4 congelado | +85.65% | -52.86% | $9.03M | 0.8082 | mantener |
+| 2015-2026 conservative | halving-only | +73.56% | -50.91% | $4.31M | 0.4004 | rechazar |
+
+F7 bootstrap mensual de equity v4 congelado, x1000: CAGR p05/p50/p95 = +45.93% / +85.39% /
++139.94%; MaxDD p50/p95/p99 = -53.01% / -68.31% / -74.34%. Sizing real debe dimensionarse con
+p95/p99, no con el DD historico.
+
+F8-F10:
+
+| Check | CAGR | Max DD | Final | Decision |
+|---|---:|---:|---:|---|
+| v4 congelado | +86.11% | -52.71% | $9.28M | referencia |
+| `daily_on_closed_only=true` | +85.84% | -52.73% | $9.14M | ADOPTADO por regla anti-lookahead |
+| `clock_aligned_cadence=true` | +84.62% | -52.99% | $8.50M | NO adoptar; no reduce offset |
+| `fill_next_open=true` | +86.08% | -52.71% | $9.27M | medir, no cambiar default |
+
+F11: B&H incluye coste de compra; `lookback_hours` documenta que la EMA200D del Swing es truncada.
+
+### Actualizacion operativa F12-F17 (2026-07-02)
+
+- F12: `OKXClient.get_ohlcv` pagina OKX hasta el `limit` pedido y devuelve `timestamp` como ms `int64`
+  para igualar a `BacktestClient`. Smoke con OKX real: 6000 velas 1H y dtype int64.
+- F13: `start` ya instancia Swing y pasa `RiskManager`; las compras se bloquean si hay daily-loss,
+  las ventas defensivas no. No se ejecuto `start` porque requiere OK explicito y observacion 24h.
+- F14: control de precio anomalo (`max_price_jump_pct=0.25`), OHLCV insuficiente bloquea decisiones
+  live, kill switch existente (`main.py stop`) y persistencia JSONL de rebalanceos paper/live.
+- F16 stress USDT current default:
+
+| Shock | Perdida aplicada | CAGR | Max DD | Final |
+|---|---:|---:|---:|---:|
+| baseline | $0 | +85.84% | -52.73% | $9.14M |
+| 2018-06 depeg -5% | $13.4k | +85.06% | -52.73% | $8.72M |
+| 2018-06 depeg -10% | $26.8k | +84.37% | -52.73% | $8.37M |
+| 2022-06 depeg -5% | $120.1k | +85.09% | -52.73% | $8.74M |
+| 2022-06 depeg -10% | $240.1k | +84.30% | -52.73% | $8.34M |
+
+F17 sizing: usar MaxDD p95/p99 bootstrap (-68%/-74%) para asignacion real; un sizing que solo tolera
+-55% esta subdimensionado.
+
+F15/F18/F19 parciales:
+- `tools/swing_parity_check.py`: check puntual 2026-07-02 12:00 UTC OK, target live/backtest 0.2000
+  con senales `regime_bear;halving_bear_onset`. No sustituye los 30 dias de paper.
+- `tools/swing_benchmarks.py`: Swing current supera controles simples en 2015-2026 realistic:
+  60/40 mensual $540k/CAGR +43.71%/DD -65.01%; EMA200D $1.47M/+57.36%/-74.93%; DCA semanal
+  $539k/+43.69%/-79.06%. Falta integrarlo en el comando `baselines`.
+- `tools/degradation_report.py`: reporte JSONL para paper/live creado; sin datos live aun.
 
 ---
 

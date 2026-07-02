@@ -356,8 +356,9 @@ python3 main.py backtest --strategy scalp --from 2022-01-01 --to 2026-06-01 --ti
 
 ## SWING ALLOCATOR
 
-Concepto: mantiene siempre BTC (min 30%), ajusta 30-100% segun regimen (EMA50D/200D+ADX) y
-fase de halving. Rebalancea cuando |target-actual| > threshold. Nunca sale del todo.
+Concepto: mantiene siempre BTC (min 30% hasta v3; 20% desde v4), ajusta segun regimen
+(EMA50D/200D+ADX) y fase de halving. Rebalancea cuando |target-actual| > threshold.
+Nunca sale del todo.
 
 ### v0 — regime + halving deltas ±0.10 (2026-06-30)
 **Config:** `use_regime=True, use_halving=True`, resto False. `delta_post_halving=+0.10, delta_bear_onset=-0.10`.
@@ -372,7 +373,7 @@ fase de halving. Rebalancea cuando |target-actual| > threshold. Nunca sale del t
 **Problema:** ping-pong Q4 2025 — `regime_bull`(+0.20) vs `halving_bear_onset`(-0.20) con BTC lateral
 $103-112k → EMA50D/200D cruzaba cada 3-5d → 5 rebalanceos perdedores.
 
-### v2 — regime_off_on_bear_onset (2026-07-01, sesion 13) [DEFAULT ACTUAL]
+### v2 — regime_off_on_bear_onset (2026-07-01, sesion 13)
 **Config:** igual que v1 + **`regime_off_on_bear_onset=True`**.
 **Cambio:** cuando `bear_onset` esta activo, suprime SOLO la rama `regime_bull` (mantiene `regime_bear`).
 Estructural: `bear_onset` = fase de distribucion post-halving; perseguir breakouts alcistas ahi es
@@ -388,7 +389,8 @@ sistematicamente una trampa (2018, 2021-22, 2025). Suprimir solo la compra aline
 al desactivar la defensa `regime_bear` (mantuvo 40% BTC en el bear -77% en vez de 30%): Q1 2023 -$274k,
 Max DD -59.02%. La supresion debe ser SOLO de la rama bull.
 
-**Pendiente:** reduccion de Max DD (cap `max_btc_pct` en bull_peak / vol-targeting). Diagnostico:
+**Pendiente (RESUELTO en v3/v4; frente Max DD CERRADO en sesion 15):** reduccion de Max DD
+(cap `max_btc_pct` en bull_peak / vol-targeting). Diagnostico:
 el DD viene de estar 90-100% BTC en techos de ciclo (mayo 2021: 100% BTC, de-risk tardio a -36%),
 no de los bears (donde ya esta en floor 30%).
 
@@ -415,6 +417,39 @@ Lectura: capar `max_btc_pct` global reduce exposicion, pero destruye CAGR. `min_
 mejora USDT CAGR/DD frente a v2, pero empeora mucho la tenencia final de BTC (v2: 0.843x B&H).
 Decision del usuario: la diferencia USDT no compensa partir la estrategia ni perder BTC acumulado.
 Mantener v2 como estrategia unica y afinar desde ahi.
+
+### v3 — bull_peak_ema50_cap (2026-07-01, sesion 14)
+**Config:** v2 + `bull_peak_ema50_cap=0.85` (en fase bull_peak, si el precio pierde la EMA50D,
+capa el target a 85%). Dataset canonico 102931 velas desde aqui.
+**Resultado (realistic):** 2015-26 +82.4% CAGR / Max DD -53.64% (v2 en el mismo dataset:
++80.6% / -55.23%). Cap auditado: 24 disparos, todos SELL 100%->85% en los 3 techos (2017/2021/
+2024-25) — estructural, no overfit a un evento. Latch del cap PROBADO Y DESCARTADO (-4.6pp CAGR).
+
+### v4 — floor 0.20 + delta_bear_onset -0.30 (2026-07-01, sesion 14) [tag `swing-v4-frozen` @ 06395ff]
+**Config:** v3 + `min_btc_pct` 0.30->0.20 y `delta_bear_onset` -0.20->-0.30.
+**Mecanismo estructural:** el floor 0.30 clampeaba el estado de bear profundo (las senales nunca
+calculan <0.20); bajarlo desbloquea "mas USDT en bear -> recompra mas barata" = la tesis central.
+**Resultado (realistic):** 2015-26 +86.2% CAGR / Max DD -52.71% / 68 rebalanceos. 2018-26 +47.6% /
+-53.42%. Conservative 2015-26 +85.7% / -52.86%. WF 4/4 TEST positivo. ETH inerte.
+**Veredicto:** ADOPTADO y CONGELADO (auditoria completa en `AUDITORIA_SWING_V4.md`). Rollback:
+`--config '{"min_btc_pct": 0.30, "delta_bear_onset": -0.20}'` vuelve a v3.
+
+### v5 — post-audit: daily_on_closed_only (2026-07-02, sesion 16) [DEFAULT ACTUAL — CONGELADO]
+**Config:** v4 + `daily_on_closed_only=True` (F8 del plan de auditoria: TODOS los indicadores
+diarios del Swing se calculan solo con dias cerrados — regla invariante #1, anti-lookahead).
+Unico delta de COMPORTAMIENTO vs v4. Ademas entran en el motor (afectan metricas/operativa, no a
+las senales): F1 PnL por trade con coste medio (ACB), F2 `underwater_days`, F4 fases de halving
+parametrizadas (defaults 180/540/900 intactos), F10 `fill_next_open` opcional, F11 B&H con coste,
+F12 `get_ohlcv` paginado live, F13/F14 ruta `start` + controles live, F16-F19 herramientas de
+riesgo/benchmarks/degradacion en `tools/`.
+**Resultado (anclas v5, dataset canonico 102931):**
+- 2015-26 realistic: $9.137M | CAGR +85.84% | Max DD -52.73% | 70 rebalanceos | btc_vs_bnh 0.8171
+- 2018-26 realistic: $219.8k | CAGR +47.14% | Max DD -53.72% | 53 rebalanceos | btc_vs_bnh 0.8432
+- 2015-26 conservative: $8.897M | CAGR +85.40% | Max DD -52.88% | 70 rebalanceos | btc_vs_bnh 0.7961
+**Coste del fix anti-lookahead:** -0.27pp CAGR / -0.02pp DD vs v4 congelado — se adopta por
+higiene, no por resultado. Rollback exacto a v4: `--config '{"daily_on_closed_only": false}'`.
+**Veredicto:** DEFAULT congelado para validacion forward/paper. Optimizacion de backtest CERRADA.
+Auditoria post-implementacion en `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`.
 
 ---
 

@@ -79,7 +79,8 @@ class BacktestResult:
     # Métricas adicionales (con defaults para compatibilidad)
     cagr: Decimal = Decimal("0")
     calmar: Decimal = Decimal("0")          # CAGR / MaxDD — trade-off riesgo/retorno en un numero
-    max_dd_duration_days: int = 0           # dias bajo el agua del peor drawdown (peak->trough)
+    max_dd_duration_days: int = 0           # duracion del peor drawdown, solo peak->trough
+    underwater_days: int = 0                # dias maximos bajo el agua reales (peak->recovery)
     sortino: Decimal = Decimal("0")
     expectancy: Decimal = Decimal("0")
     median_trade: Decimal = Decimal("0")   # mediana del P&L por trade — robusta a monstruos/outliers
@@ -110,7 +111,8 @@ class BacktestResult:
             ("Median trade", f"{self.median_trade:+.2f} USDT"),
             ("Profit Factor", f"{self.profit_factor:.2f}"),
             ("Max Drawdown", f"[red]-{self.max_drawdown_pct:.2f}%[/red]"),
-            ("Max DD duracion", f"{self.max_dd_duration_days} dias"),
+            ("Max DD duracion (peak->trough)", f"{self.max_dd_duration_days} dias"),
+            ("Underwater max (peak->recovery)", f"{self.underwater_days} dias"),
             ("Max racha perdedoras", str(self.max_consec_losses)),
             ("Calmar (CAGR/MaxDD)", f"{self.calmar:.2f}"),
             ("Sharpe Ratio", f"{self.sharpe_ratio:.2f}"),
@@ -139,6 +141,7 @@ class BacktestClient:
         fee_rate: Decimal = Decimal("0.001"),
         slippage_bps: float = 0.0,
         cost_mode: str = COST_MODE_IDEAL,
+        fill_next_open: bool = False,
     ) -> None:
         self._symbol = symbol
         self._bars = bars
@@ -162,6 +165,7 @@ class BacktestClient:
             self._fee_rate = fee_rate
             self._slippage_bps = Decimal(str(slippage_bps))
         self.cost_mode = cost_mode
+        self.fill_next_open = fill_next_open
 
     # ---- Control de barra actual ----
 
@@ -323,7 +327,12 @@ class BacktestClient:
     def _fill_market(
         self, order_id: str, symbol: str, side: str, size: Decimal, strategy: str
     ) -> OrderResult:
-        raw_price = self.current_bar.close
+        fill_bar = self.current_bar
+        if self.fill_next_open and self._idx + 1 < len(self._bars):
+            fill_bar = self._bars[self._idx + 1]
+            raw_price = fill_bar.open
+        else:
+            raw_price = self.current_bar.close
         # Aplica slippage: buy paga más, sell recibe menos
         if self._slippage_bps > 0:
             slip = self._slippage_bps / Decimal("10000")
@@ -333,7 +342,7 @@ class BacktestClient:
             price = raw_price
         fee = (size * price * self._fee_rate).quantize(Decimal("0.00000001"))
         base = symbol.split("-")[0]
-        ts = self.current_bar_ts()
+        ts = datetime.fromtimestamp(fill_bar.timestamp / 1000, tz=timezone.utc)
 
         if side == "buy":
             cost = size * price + fee
@@ -438,11 +447,15 @@ class BacktestEngine:
         strategy_factory: Callable,
         warmup_bars: int = 20,
         timeframe: str = "1H",
+        trade_pnl_method: str = "acb",
     ) -> None:
+        if trade_pnl_method not in {"acb", "legacy_fifo"}:
+            raise ValueError(f"trade_pnl_method invalido: {trade_pnl_method}")
         self._client = bt_client
         self._factory = strategy_factory
         self._warmup = warmup_bars
         self._timeframe = timeframe
+        self._trade_pnl_method = trade_pnl_method
         self.last_strategy: Any = None   # expuesto tras run() para acceder al journal
 
     def run(
@@ -472,10 +485,16 @@ class BacktestEngine:
         Base.metadata.create_all(engine)
         session = sessionmaker(bind=engine)()
 
-        # Balance para buy&hold: precio primera y última barra después del warmup
+        # Balance para buy&hold: precio primera y última barra después del warmup.
+        # Con coste de entrada (fee + slippage del modo activo) para comparar en igualdad
+        # de condiciones — la estrategia paga sus fills, el benchmark paga su unica compra.
         start_price = bars[self._warmup].close
         end_price = bars[-1].close
-        buy_hold_pct = ((end_price - start_price) / start_price * 100).quantize(Decimal("0.01"))
+        _slip = self._client._slippage_bps / Decimal("10000")
+        _entry_cost = (1 + _slip) * (1 + self._client._fee_rate)
+        buy_hold_pct = (
+            (end_price / (start_price * _entry_cost) - 1) * 100
+        ).quantize(Decimal("0.01"))
 
         # Historial de valor del portfolio con timestamps (para drawdown, sharpe y análisis externo)
         equity_curve: list[tuple[datetime, Decimal]] = []
@@ -520,7 +539,11 @@ class BacktestEngine:
         total_pnl_pct = (total_pnl / self._client.initial_balance * 100).quantize(Decimal("0.01"))
 
         trades = self._client._executed
-        pnl_trades = self._compute_trade_pnl(trades)
+        pnl_trades = (
+            self._compute_trade_pnl_legacy_fifo(trades)
+            if self._trade_pnl_method == "legacy_fifo"
+            else self._compute_trade_pnl_acb(trades)
+        )
 
         wins = [t for t in pnl_trades if t.pnl and t.pnl > 0]
         losses = [t for t in pnl_trades if t.pnl and t.pnl < 0]
@@ -575,6 +598,7 @@ class BacktestEngine:
         _cagr   = self._cagr(equity_values, start_dt, end_dt, self._client.initial_balance)
         _calmar = (_cagr / _maxdd).quantize(Decimal("0.01")) if _maxdd > 0 else Decimal("0")
         _dd_dur = self._max_dd_duration(equity_curve)
+        _uw_days = self._max_underwater_days(equity_curve)
 
         return BacktestResult(
             symbol=symbol,
@@ -600,6 +624,7 @@ class BacktestEngine:
             cagr=_cagr,
             calmar=_calmar,
             max_dd_duration_days=_dd_dur,
+            underwater_days=_uw_days,
             sortino=self._sortino(equity_values, bars_per_year=bars_per_year),
             expectancy=expectancy,
             median_trade=median_trade,
@@ -614,9 +639,54 @@ class BacktestEngine:
 
     @staticmethod
     def _compute_trade_pnl(trades: list[BacktestTrade]) -> list[BacktestTrade]:
+        """Alias de compatibilidad: desde 2026-07-02 el default es ACB."""
+        return BacktestEngine._compute_trade_pnl_acb(trades)
+
+    @staticmethod
+    def _compute_trade_pnl_acb(trades: list[BacktestTrade]) -> list[BacktestTrade]:
         """
-        Asocia cada venta con su compra más reciente (LIFO simplificado para backtest).
-        Calcula el PnL neto de cada par cerrado.
+        P&L por trade con coste medio ponderado (average cost basis).
+
+        Cada BUY actualiza el coste medio de la posicion (fee de compra incluida en el coste).
+        Cada SELL cierra un trade: PnL = qty * (precio - coste_medio) - fee de venta.
+        Correcto para rebalanceos parciales de tamanos arbitrarios (Swing Allocator);
+        para estrategias todo-in/todo-out equivale al pairing clasico por lotes.
+        Fix auditoria 2026-07-02 (hallazgo B3): el pairing anterior emparejaba ventas con
+        compras SIN igualar cantidades — PF/WR/expectancy eran ruido para el allocator.
+        El metodo antiguo queda en _compute_trade_pnl_legacy_fifo para comparaciones.
+        """
+        pos: dict[str, tuple[Decimal, Decimal]] = {}   # symbol -> (qty_abierta, coste_medio)
+        closed: list[BacktestTrade] = []
+
+        for t in trades:
+            qty_open, avg_cost = pos.get(t.symbol, (Decimal("0"), Decimal("0")))
+            if t.side == "buy":
+                total_cost = qty_open * avg_cost + t.quantity * t.price + t.fee
+                qty_open += t.quantity
+                avg_cost = total_cost / qty_open if qty_open > 0 else Decimal("0")
+                pos[t.symbol] = (qty_open, avg_cost)
+            elif t.side == "sell":
+                if qty_open <= 0:
+                    continue   # venta sin posicion registrada (cortos sinteticos van aparte)
+                qty = min(t.quantity, qty_open)
+                sell_fee = t.fee
+                if t.quantity > 0 and qty != t.quantity:
+                    sell_fee = (t.fee * qty / t.quantity)
+                pnl = qty * (t.price - avg_cost) - sell_fee
+                pos[t.symbol] = (qty_open - qty, avg_cost)
+                closed.append(BacktestTrade(
+                    timestamp=t.timestamp, symbol=t.symbol, side="sell",
+                    price=t.price, quantity=qty, fee=sell_fee,
+                    pnl=pnl.quantize(Decimal("0.01")), strategy=t.strategy,
+                ))
+
+        return closed
+
+    @staticmethod
+    def _compute_trade_pnl_legacy_fifo(trades: list[BacktestTrade]) -> list[BacktestTrade]:
+        """
+        Pairing antiguo (pre-auditoria 2026-07-02): asocia cada venta con la compra abierta
+        mas ANTIGUA (FIFO) sin igualar cantidades. Solo para reproducir metricas historicas.
         """
         open_lots: dict[str, list[BacktestTrade]] = {}
         closed: list[BacktestTrade] = []
@@ -651,6 +721,26 @@ class BacktestEngine:
             if dd > max_dd:
                 max_dd = dd
         return max_dd.quantize(Decimal("0.01"))
+
+    @staticmethod
+    def _max_underwater_days(curve: list[tuple[datetime, Decimal]]) -> int:
+        """
+        Dias maximos bajo el agua: desde un peak hasta RECUPERARLO (o hasta el fin de datos
+        si no se recupera). Complementa a _max_dd_duration, que solo mide peak->trough y
+        infrarreporta ~4x el tiempo real bajo el agua (auditoria 2026-07-02, hallazgo C4).
+        """
+        if len(curve) < 2:
+            return 0
+        peak_v = curve[0][1]
+        peak_dt = curve[0][0]
+        worst = 0
+        for dt, v in curve:
+            if v >= peak_v:
+                worst = max(worst, (dt - peak_dt).days)
+                peak_v = v
+                peak_dt = dt
+        worst = max(worst, (curve[-1][0] - peak_dt).days)   # tramo final sin recuperar
+        return worst
 
     @staticmethod
     def _max_dd_duration(curve: list[tuple[datetime, Decimal]]) -> int:

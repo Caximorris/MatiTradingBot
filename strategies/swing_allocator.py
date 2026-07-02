@@ -1,17 +1,25 @@
 """
 BTC Swing Allocator — gestion dinamica de allocation BTC/USDT.
 
-Mantiene siempre un porcentaje minimo en BTC y ajusta entre 30-100%
+Mantiene siempre un porcentaje minimo en BTC y ajusta entre 20-100%
 segun senales macro, de valoracion, y tecnicas.
 
 Objetivo: batir BTC Buy & Hold acumulando mas BTC en correcciones.
 Diferencia vs Pro Trend: nunca sale del todo — ajusta el porcentaje.
+
+VERSION ACTUAL: v5 post-audit (2026-07-02, congelada). v5 = v4 estructural
+(min_btc_pct=0.20, delta_bear_onset=-0.30, regime_off_on_bear_onset=True,
+bull_peak_ema50_cap=0.85) + daily_on_closed_only=True (F8, anti-lookahead).
+Rollback a v4 congelado: --config '{"daily_on_closed_only": false}'.
+Anclas v5 2015-2026 realistic: CAGR +85.84% / Max DD -52.73% / 70 rebalanceos.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_DOWN
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -39,6 +47,8 @@ class SwingAllocatorConfig:
     # -- Control de rebalanceo --
     rebalance_threshold:        float = 0.10  # umbral minimo de diferencia para actuar
     min_days_between_rebalance: int   = 3     # cooldown entre rebalanceos
+    max_price_jump_pct:         float = 0.25  # F14: rechazar tick si salta >25% vs vela previa
+    persist_live_rebalance_log: bool  = True  # F14: JSONL en paper/live (no backtest)
 
     # -- Toggles de senales (para ablation testing) --
     use_regime:    bool = True    # EMA50D/200D + ADX — regimen macro
@@ -103,7 +113,25 @@ class SwingAllocatorConfig:
     vix_extreme:    float = 55.0
     funding_high:   float = 0.0005   # mismo umbral que Pro Trend
 
+    # -- Flags de correccion de auditoria (F8/F9). --
+    # daily_on_closed_only: calcula TODOS los indicadores diarios solo con dias cerrados
+    # (F8 adoptado: cumple la regla invariante #1; rollback: False).
+    # Este flag es el UNICO delta de comportamiento v4->v5 (2026-07-02): False = v4 congelado.
+    daily_on_closed_only: bool = True
+    # clock_aligned_cadence: evalua en horas UTC multiplos de 4 en vez de _bar_count % 4
+    # (F9 medido y NO adoptado: no redujo sensibilidad al offset).
+    clock_aligned_cadence: bool = False
+
+    # -- Umbrales de fase de halving (F4 auditoria) --
+    # Defaults = comportamiento historico exacto. Solo para sensitivity — el 540 es el parametro
+    # mas fragil del sistema (AUDITORIA_SWING_V4.md, B2). Se aplican via macro_context (global).
+    phase_post_end:  int = 180
+    phase_peak_end:  int = 540
+    phase_onset_end: int = 900
+
     # -- Historial para indicadores de largo plazo --
+    # OJO (C7 auditoria): la "EMA200D" resultante es una EMA TRUNCADA a esta ventana (~250 dias);
+    # no converge a la EMA200 canonica y cambiar lookback_hours cambia las senales.
     lookback_hours:   int  = 6000    # ~250 dias en 1H — suficiente para EMA200D
     pi_cycle_enabled: bool = True    # auto-False para no-BTC en main.py
 
@@ -142,10 +170,15 @@ class SwingAllocatorBot:
     Compatible con BacktestEngine (requiere run() y name).
     """
 
-    def __init__(self, client, config: SwingAllocatorConfig, session=None) -> None:
+    def __init__(self, client, config: SwingAllocatorConfig, session=None, risk_manager=None) -> None:
         self._client  = client
         self._cfg     = config
         self._session = session
+        self._risk_manager = risk_manager
+
+        # F4 auditoria: aplicar umbrales de fase de halving (default = sin cambio)
+        from strategies.macro_context import set_phase_bounds
+        set_phase_bounds(config.phase_post_end, config.phase_peak_end, config.phase_onset_end)
 
         # Estado interno
         self._initialized     = False
@@ -173,15 +206,24 @@ class SwingAllocatorBot:
 
         # Primera barra: inicializar allocation comprando BTC
         if not self._initialized:
+            if not self._market_data_ok():
+                return
             self._initialize()
             return
 
-        # Evaluar solo cada 4 barras (cadencia 4H en datos 1H — reduce ruido)
-        if self._bar_count % 4 != 0:
+        # Evaluar solo cada 4 barras (cadencia 4H en datos 1H — reduce ruido).
+        # clock_aligned_cadence (F9): alineada a reloj UTC en vez de al offset del warmup.
+        if self._cfg.clock_aligned_cadence:
+            if self._client.current_time().hour % 4 != 0:
+                return
+        elif self._bar_count % 4 != 0:
             return
 
         # Cooldown entre rebalanceos
         if not self._cooldown_ok():
+            return
+
+        if not self._market_data_ok():
             return
 
         current          = self._current_btc_pct()
@@ -205,6 +247,10 @@ class SwingAllocatorBot:
             return
 
         invest = usdt * Decimal(str(self._cfg.base_btc_pct))
+        if not self._risk_allows_buy(invest):
+            self._initialized = True
+            return
+
         price  = self._client.get_ticker(self._cfg.symbol)
         qty    = (invest / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
 
@@ -401,6 +447,8 @@ class SwingAllocatorBot:
         if delta_value > Decimal("1"):  # Comprar BTC
             # Reservar 0.35% para cubrir fee+slippage en todos los modos (conservative=0.25%)
             buy_usdt = min(delta_value, usdt_bal * Decimal("0.9965"))
+            if not self._risk_allows_buy(buy_usdt):
+                return
             qty = (buy_usdt / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN)
             if qty < Decimal("0.000001"):
                 return
@@ -450,6 +498,55 @@ class SwingAllocatorBot:
             signals=signals,
         )
 
+    def _risk_allows_buy(self, size_usdt: Decimal) -> bool:
+        """RiskManager del live/paper: bloquear solo compras si se supero perdida diaria."""
+        if self._risk_manager is None:
+            return True
+        try:
+            limit_hit, daily_pnl = self._risk_manager.check_daily_loss()
+        except Exception as exc:
+            logger.warning("[{}] RiskManager fallo; compra bloqueada: {}", self.name, exc)
+            return False
+        if limit_hit:
+            logger.warning(
+                "[{}] Compra bloqueada por limite de perdida diaria: {:.2f} USDT (orden {:.2f})",
+                self.name, daily_pnl, float(size_usdt),
+            )
+            return False
+        return True
+
+    def _market_data_ok(self) -> bool:
+        """Control minimo F14: no operar con OHLCV ausente o precio anomalo."""
+        threshold = self._cfg.max_price_jump_pct
+        if threshold <= 0:
+            return True
+        try:
+            df = self._client.get_ohlcv(self._cfg.symbol, limit=2)
+            if df is None or len(df) < 2:
+                if not self._is_backtest_client():
+                    logger.warning("[{}] OHLCV insuficiente; se omite decision", self.name)
+                    return False
+                return True
+            prev_close = float(df["close"].iloc[-2])
+            price = float(self._client.get_ticker(self._cfg.symbol))
+            if prev_close <= 0 or price <= 0:
+                logger.warning("[{}] Precio invalido prev={} current={}", self.name, prev_close, price)
+                return False
+            jump = abs(price / prev_close - 1.0)
+            if jump > threshold:
+                logger.warning(
+                    "[{}] Tick rechazado por salto anomalo: {:.2%} > {:.2%}",
+                    self.name, jump, threshold,
+                )
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("[{}] Validacion de mercado fallo; se omite decision: {}", self.name, exc)
+            return False
+
+    def _is_backtest_client(self) -> bool:
+        return self._client.__class__.__name__ == "BacktestClient"
+
     # -----------------------------------------------------------------------
     # Indicadores — con cache para evitar O(n^2)
     # -----------------------------------------------------------------------
@@ -475,17 +572,25 @@ class SwingAllocatorBot:
             if len(daily) < 201:
                 return None
 
-            closes = daily["close"]
-            highs  = daily["high"]
-            lows   = daily["low"]
+            current_day = pd.Timestamp(current_dt.date(), tz="UTC")
+            closed_daily = daily[daily["dt"] < current_day]
+
+            # F8 auditoria (C2): con daily_on_closed_only todos los indicadores diarios se
+            # calculan SOLO con dias cerrados (regla invariante #1). Rollback False reproduce
+            # v4 congelado, que incluia el dia en curso parcial.
+            calc = closed_daily if self._cfg.daily_on_closed_only else daily
+            if len(calc) < 201:
+                return None
+
+            closes = calc["close"]
+            highs  = calc["high"]
+            lows   = calc["low"]
 
             ema50d  = ema_fn(closes, 50)
             ema200d = ema_fn(closes, 200)
             rsi14   = rsi_fn(closes, 14)
             adx14   = adx_fn(highs, lows, closes, 14)
 
-            current_day = pd.Timestamp(current_dt.date(), tz="UTC")
-            closed_daily = daily[daily["dt"] < current_day]
             ema50d_closed = None
             if len(closed_daily) >= 50:
                 ema50d_closed = float(ema_fn(closed_daily["close"], 50).iloc[-1])
@@ -599,7 +704,7 @@ class SwingAllocatorBot:
         portfolio_usdt: float,
         signals:        list[str],
     ) -> None:
-        self._rebalance_log.append({
+        entry = {
             "num":            len(self._rebalance_log) + 1,
             "timestamp":      self._client.current_time().isoformat(),
             "direction":      direction,
@@ -610,4 +715,19 @@ class SwingAllocatorBot:
             "btc_pct_after":  round(pct_after,  4),
             "portfolio_usdt": round(portfolio_usdt, 2),
             "signals":        signals,
-        })
+        }
+        self._rebalance_log.append(entry)
+        self._persist_live_rebalance(entry)
+
+    def _persist_live_rebalance(self, entry: dict) -> None:
+        if self._is_backtest_client() or not self._cfg.persist_live_rebalance_log:
+            return
+        try:
+            out_dir = Path("data") / "runtime"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / "swing_rebalances.jsonl"
+            payload = {"strategy": self.name, "symbol": self._cfg.symbol, **entry}
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        except Exception as exc:
+            logger.warning("[{}] No se pudo persistir rebalance live: {}", self.name, exc)

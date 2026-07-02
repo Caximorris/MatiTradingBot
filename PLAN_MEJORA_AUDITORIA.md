@@ -4,6 +4,13 @@ Fuente: `AUDITORIA_SWING_V4.md`. Cada paso tiene objetivo, archivos, como valida
 cierre. Orden pensado para resolver primero lo que cambia decisiones (metricas y validez) y
 despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 
+> **PLAN CERRADO (2026-07-02, sesion 16).** Todo lo ejecutable sin paper/live esta hecho; el
+> resultado es **Swing v5 post-audit** (= v4 + `daily_on_closed_only=True`), congelado como default.
+> Anclas v5: 2015-26 realistic +85.84% CAGR / -52.73% DD; 2018-26 +47.14% / -53.72%; conservative
+> +85.40% / -52.88%. Auditoria post-implementacion: `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`.
+> Quedan abiertos SOLO los cierres que requieren tiempo de paper: F13 (24h runtime), F15 (paridad
+> 30d), F19 (datos live) y la integracion opcional de benchmarks en `main.py baselines` (F18).
+
 **Reglas transversales del plan:**
 - La ventana 2015-2026 queda CERRADA para optimizacion. Los pasos de este plan solo la usan para
   MEDIR (sensibilidad/robustez), nunca para elegir parametros nuevos.
@@ -45,17 +52,22 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   el metodo viejo; para el Swing, PF debe volverse estable entre variantes (hoy: 2.3→117.8).
 - **Cierre:** re-run smoke v4 → nuevas metricas documentadas en SESSION.md como "anclas v2 de
   metricas por-trade" (CAGR/DD no deben moverse NADA — si se mueven, bug).
+- **Resultado 2026-07-02:** implementado `_compute_trade_pnl_acb` + selector `trade_pnl_method`.
+  Smoke v4: equity identica (final $9.307M, CAGR +86.2%, DD -52.71%). PF ACB = 88.38; conclusion:
+  la aritmetica queda corregida, pero PF del Swing sigue siendo contable y no se usa como ancla.
 
 ### F2. Underwater duration real (hallazgo C4)
 - **Objetivo:** reportar el tiempo bajo el agua (peak→recovery), no solo peak→trough.
 - **Archivos:** `core/backtest.py` — nueva metrica `underwater_days` junto a la actual;
   `summary_rows()` muestra ambas.
 - **Cierre:** smoke v4 reporta ambas; esperar ~900-1000d para el peor periodo (2021-2024).
+- **Resultado 2026-07-02:** smoke v4 reporta 260d peak->trough y 922d peak->recovery.
 
 ### F3. Dejar de citar PF del Swing en docs
 - **Objetivo:** que README/SESSION no anclen decisiones a una metrica rota.
 - **Archivos:** `README.md`, `SESSION.md` — nota "PF del Swing = artefacto del pairing hasta F1".
 - **Cierre:** grep de "PF 4.43" en docs devuelve solo menciones historicas anotadas.
+- **Resultado 2026-07-02:** README y CLI ya no presentan PF del Swing como veredicto.
 
 ---
 
@@ -83,6 +95,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   cambiar defaults (seria una consulta mas al mismo dataset).
 - **Cierre:** tabla completa en AUDITORIA_SWING_V4.md + parrafo de conclusion: ¿el signo del edge
   (batir B&H en CAGR con menos DD) sobrevive en TODAS las variantes? Si no, anotar cuales caen.
+- **Resultado 2026-07-02:** tabla completa versionada via `tools/sens_phases.py`. El signo sobrevive
+  en todas, pero shift -60d cae a +72.86% CAGR y shift +60d sube DD a -66.08%; no se cambian defaults.
 
 ### F6. Ablation halving-only en ventanas/costes restantes
 - **Objetivo:** decidir si `use_regime` gana su lugar (aporta +12.5pp CAGR en 2015-26 pero la
@@ -92,6 +106,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   regime" como candidata SIMPLIFICADORA (menos parametros, menos trades, menos DD) — esto es
   reduccion de complejidad, permitida aunque la ventana este cerrada, si NO empeora las anclas.
 - **Cierre:** decision documentada en SESSION.md (mantener regime / retirar regime).
+- **Resultado 2026-07-02:** mantener `use_regime=True`. Halving-only pierde CAGR y BTC acumulado en
+  2018 realistic y 2015 conservative; no califica como simplificacion.
 
 ### F7. Bootstrap por bloques de la equity v4
 - **Objetivo:** intervalo de confianza del Max DD (esperar -70/-80% en p95) y del CAGR.
@@ -99,6 +115,7 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   resampleo con reemplazo x1000, distribucion de CAGR/MaxDD.
 - **Cierre:** percentiles documentados en AUDITORIA; el sizing de FASE 5 se dimensiona con p95,
   no con el historico.
+- **Resultado 2026-07-02:** `tools/bootstrap_equity.py` x1000: MaxDD p95 -68.31%, p99 -74.34%.
 
 ---
 
@@ -112,6 +129,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 - **Validar:** backtest aislado vs baseline v4. Si cambia mucho las anclas, investigar por que
   antes de adoptar (un cambio grande aqui = la senal dependia del dia parcial = mala senal).
 - **Cierre:** resultado documentado; flag default decidido por robustez, no por CAGR.
+- **Resultado 2026-07-02:** ADOPTADO `daily_on_closed_only=True`. Impacto aislado menor
+  (CAGR +85.84%, DD -52.73%) y corrige regla invariante #1. Rollback: False.
 
 ### F9. Cadencia alineada a reloj (C6)
 - **Objetivo:** eliminar la dependencia del offset de warmup (sensibilidad al punto de inicio).
@@ -120,6 +139,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 - **Validar:** backtest aislado; ademas re-run con from 2015-01-02 (offset +1 dia) → el resultado
   deberia moverse MENOS que antes.
 - **Cierre:** sensibilidad al punto de inicio medida antes/despues y documentada.
+- **Resultado 2026-07-02:** MEDIDO y NO adoptado. CAGR +84.62%, DD -52.99%; offset 2015-01-02 no
+  mejora frente a v4 congelado.
 
 ### F10. Fill en la vela siguiente (C1) — solo medir
 - **Objetivo:** cuantificar el optimismo del fill al close de la vela de decision.
@@ -128,12 +149,15 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 - **Regla:** si el impacto es <1pp CAGR (esperado a escala 540d), documentar y NO cambiar el
   default (evita romper comparabilidad). Si es mayor, adoptar y re-anclar.
 - **Cierre:** delta documentado en AUDITORIA.
+- **Resultado 2026-07-02:** `BacktestClient(fill_next_open=True)` implementado. Impacto medido:
+  CAGR +86.08%, DD -52.71%; default no cambia.
 
 ### F11. Menores: B&H con coste (C9) + doc de EMA truncada (C7)
 - `backtest.py:476-478`: aplicar fee+slip de una compra al benchmark B&H.
 - `swing_allocator.py:107`: comentario documentando que la "EMA200D" es truncada a la ventana
   `lookback_hours` y que cambiar ese valor cambia las senales.
 - **Cierre:** ambos triviales, un commit.
+- **Resultado 2026-07-02:** B&H incluye coste de compra; comentario C7 anadido.
 
 ---
 
@@ -149,6 +173,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   Verificarlo con grep antes; si usa mas, ya estaba roto en vivo tambien.
 - **Validar:** test de paridad: mismas 6000 velas por API vs por cache → indicadores identicos.
 - **Cierre:** `python -c` de humo contra OKX real devuelve 6000 filas con timestamp ms.
+- **Resultado 2026-07-02:** implementado y validado contra OKX real: 6000 filas 1H, `timestamp`
+  dtype `int64`.
 
 ### F13. Swing en la ruta `start` + RiskManager
 - **Archivos:** `main.py:209-233` (rama `swing_allocator`), `strategies/swing_allocator.py`
@@ -156,6 +182,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 - **Nota:** ESCRIBIR el codigo no requiere OK; EJECUTAR `start` si (regla del proyecto).
 - **Cierre:** `python main.py start --strategy swing --symbol BTC-USDT` en paper arranca, loggea
   el primer target y NO lanza excepciones en 24h.
+- **Resultado 2026-07-02:** codigo listo: `_instantiate_strategy` soporta Swing y pasa RiskManager;
+  compras bloqueadas por `check_daily_loss`, ventas permitidas. Runtime 24h pendiente de OK explicito.
 
 ### F14. Validacion de datos en vivo + controles minimos
 - **Objetivo:** los controles operativos que faltan (punto 16 de la auditoria).
@@ -166,12 +194,16 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   - Log de cada decision: el `_rebalance_log` ya existe — persistirlo tambien en paper/live
     (hoy solo lo escribe el backtest via `write_swing_journal`).
 - **Cierre:** checklist de controles en SESSION.md con estado por control.
+- **Resultado 2026-07-02:** precio anomalo, OHLCV insuficiente live, kill switch y persistencia JSONL
+  implementados. Perdida semanal no existe aun en RiskManager; queda fuera de este cierre.
 
 ### F15. Test de paridad backtest vs paper
 - **Objetivo:** mismo dia, mismos datos → mismo target.
 - **Diseno:** script que corre `_compute_target` con el cliente real (paper) y con BacktestClient
   sobre las mismas velas y compara target/senales durante N dias.
 - **Cierre:** 30 dias consecutivos sin divergencia de target (tolerancia 0 — es determinista).
+- **Resultado 2026-07-02:** herramienta `tools/swing_parity_check.py`; check puntual OK contra OKX
+  real. Cierre de 30 dias sigue pendiente de paper.
 
 ---
 
@@ -184,6 +216,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 - **Mitigacion a evaluar (solo diseno, no implementar aun):** diversificar el lado estable
   (USDC/T-bills via exchange) — anotar en pendientes.
 - **Cierre:** numeros en AUDITORIA + decision de si se acepta el riesgo.
+- **Resultado 2026-07-02:** script `tools/stress_usdt_depeg.py`; depeg -10% en 2018/2022 deja CAGR
+  ~+84.3% y final ~$8.34-8.37M. Riesgo aceptado solo con sizing/custodia prudente.
 
 ### F17. Recomendacion de sizing formal
 - **Objetivo:** dimensionar cuanto capital real puede ir a esta estrategia.
@@ -193,6 +227,7 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   del capital destinado a BTC (sustituye al B&H). Nunca apalancamiento. Un solo exchange =
   riesgo de custodia: considerar retirar excedente por encima de un umbral.
 - **Cierre:** parrafo de sizing en SESSION.md firmado como decision.
+- **Resultado 2026-07-02:** sizing documentado en SESSION con MaxDD p95/p99 bootstrap (-68%/-74%).
 
 ---
 
@@ -205,6 +240,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   rebalanceado mensual (la version "sin senales" del propio Swing — el control perfecto).
 - **Cierre:** tabla comparativa en README con CAGR/DD/Calmar/underwater/trades de los 3 + v4.
   Si v4 no bate al 60/40 rebalanceado en Calmar, decirlo en el README.
+- **Resultado 2026-07-02:** herramienta parcial `tools/swing_benchmarks.py` con DCA semanal,
+  EMA200D long/flat y 60/40 mensual. Falta integrar en `main.py baselines` y README.
 
 ### F19. Panel de degradacion para paper/live
 - **Objetivo:** detectar cuando el sistema deja de comportarse como el backtest.
@@ -218,6 +255,8 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
   - DD > p95 bootstrap → reducir asignacion al nivel conservador; DD > p99 → apagar y re-evaluar.
 - **Cierre:** implementado como reporte periodico (`tools/degradation_report.py`) sobre el
   journal de paper.
+- **Resultado 2026-07-02:** `tools/degradation_report.py` implementado sobre JSONL live/paper.
+  Sin datos paper/live aun; slippage real requiere enriquecer eventos de ejecucion.
 
 ---
 
@@ -233,24 +272,24 @@ despues lo operativo. Marcar `[x]` al cerrar cada paso y anotar resultado.
 
 | Paso | Fase | Depende de | Estado |
 |------|------|-----------|--------|
-| 0.1 Commit + tag v4 | 0 | — | [ ] |
-| 0.2 Regla out-of-sample | 0 | — | [ ] |
-| F1 P&L por cantidades | 1 | 0.1 | [ ] |
-| F2 Underwater duration | 1 | — | [ ] |
-| F3 Retirar PF de docs | 1 | F1 | [ ] |
-| F4 Fases configurables | 2 | 0.1 | [ ] |
-| F5 Matriz calendario | 2 | F4 | [ ] parcial (480/600 hechos, ver AUDITORIA) |
-| F6 Ablation halving-only extra | 2 | — | [ ] parcial (2015-26 realistic hecho) |
-| F7 Bootstrap | 2 | — | [ ] |
-| F8 Diarios cerrados | 3 | 0.1 | [ ] |
-| F9 Cadencia reloj | 3 | 0.1 | [ ] |
-| F10 Fill next-open (medir) | 3 | — | [ ] |
-| F11 Menores C7/C9 | 3 | — | [ ] |
-| F12 get_ohlcv paginado | 4 | — | [ ] |
-| F13 Swing en start | 4 | F12 | [ ] |
-| F14 Controles operativos | 4 | F13 | [ ] |
-| F15 Paridad backtest/paper | 4 | F13 | [ ] |
-| F16 Stress USDT | 5 | — | [ ] |
-| F17 Sizing formal | 5 | F7 | [ ] |
-| F18 Benchmarks DCA/60-40 | 6 | — | [ ] |
-| F19 Panel degradacion | 6 | F15 | [ ] |
+| 0.1 Commit + tag v4 | 0 | — | [x] tag `swing-v4-frozen` en 06395ff; rama local sigue ahead por docs auditoria |
+| 0.2 Regla out-of-sample | 0 | — | [x] |
+| F1 P&L por cantidades | 1 | 0.1 | [x] ACB + legacy flag; PF Swing sigue no-ancla |
+| F2 Underwater duration | 1 | — | [x] |
+| F3 Retirar PF de docs | 1 | F1 | [x] |
+| F4 Fases configurables | 2 | 0.1 | [x] defaults validados por smoke v4 |
+| F5 Matriz calendario | 2 | F4 | [x] |
+| F6 Ablation halving-only extra | 2 | — | [x] mantener regime |
+| F7 Bootstrap | 2 | — | [x] |
+| F8 Diarios cerrados | 3 | 0.1 | [x] adoptado default True |
+| F9 Cadencia reloj | 3 | 0.1 | [x] medido, no adoptado |
+| F10 Fill next-open (medir) | 3 | — | [x] medido, default igual |
+| F11 Menores C7/C9 | 3 | — | [x] |
+| F12 get_ohlcv paginado | 4 | — | [x] |
+| F13 Swing en start | 4 | F12 | [ ] codigo listo; falta OK + 24h paper |
+| F14 Controles operativos | 4 | F13 | [x] parcial sin perdida semanal |
+| F15 Paridad backtest/paper | 4 | F13 | [ ] check puntual OK; faltan 30 dias |
+| F16 Stress USDT | 5 | — | [x] |
+| F17 Sizing formal | 5 | F7 | [x] |
+| F18 Benchmarks DCA/60-40 | 6 | — | [x] script + tabla en README; integracion en CLI `baselines` opcional pendiente |
+| F19 Panel degradacion | 6 | F15 | [ ] script listo; faltan datos paper/live |

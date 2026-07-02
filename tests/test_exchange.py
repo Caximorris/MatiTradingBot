@@ -236,6 +236,43 @@ def test_get_positions_returns_empty_in_paper_mode(client):
     assert client.get_positions() == []
 
 
+def test_get_ohlcv_paginates_and_returns_ms_timestamps(client):
+    class MarketApi:
+        def __init__(self):
+            self.calls = []
+
+        def get_candlesticks(self, **params):
+            self.calls.append(("recent", params))
+            return {
+                "data": [
+                    ["3000", "3", "4", "2", "3.5", "30", "0", "0", "1"],
+                    ["2000", "2", "3", "1", "2.5", "20", "0", "0", "1"],
+                ]
+            }
+
+        def get_history_candlesticks(self, **params):
+            self.calls.append(("history", params))
+            return {
+                "data": [
+                    ["1000", "1", "2", "0.5", "1.5", "10", "0", "0", "1"],
+                ]
+            }
+
+    market = MarketApi()
+    client._available = True
+    client._market_api = market
+    client._call_api = lambda fn, **params: fn(**params)
+
+    df = client.get_ohlcv("BTC-USDT", "1H", limit=3)
+
+    assert list(df["timestamp"]) == [1000, 2000, 3000]
+    assert str(df["timestamp"].dtype).startswith("int")
+    assert market.calls[0][0] == "recent"
+    assert "after" not in market.calls[0][1]
+    assert market.calls[1][0] == "history"
+    assert market.calls[1][1]["after"] == "2000"
+
+
 # ---------------------------------------------------------------------------
 # Tests del rate limiter
 # ---------------------------------------------------------------------------

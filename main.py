@@ -225,6 +225,15 @@ def _instantiate_strategy(bot_state, client, risk_manager, session):
             return ScalpMomentumBot(client=client,
                                     config=ScalpMomentumConfig.from_dict(config),
                                     session=session, risk_manager=risk_manager)
+        elif name.startswith("swing_allocator") or name.startswith("swing"):
+            from strategies.swing_allocator import SwingAllocatorBot, SwingAllocatorConfig
+            cfg = {"symbol": bot_state.symbol}
+            cfg.update(config)
+            if bot_state.symbol.split("-")[0].upper() != "BTC":
+                cfg.setdefault("pi_cycle_enabled", False)
+            return SwingAllocatorBot(client=client,
+                                     config=SwingAllocatorConfig.from_dict(cfg),
+                                     session=session, risk_manager=risk_manager)
         else:
             logger.warning("Tipo de estrategia desconocido: {}", name)
             return None
@@ -913,8 +922,14 @@ def backtest(
         t.add_row(label, value)
     console.print(t)
 
+    is_swing_allocator = result.strategy_name.startswith("swing_allocator")
     if result.total_trades == 0:
         console.print("[yellow](!)  Sin trades generados.[/yellow]")
+    elif is_swing_allocator:
+        console.print(
+            "[yellow](!)  En Swing, PF/WR son metricas contables de rebalanceos; "
+            "usa CAGR, Max DD, Calmar y BTC vs B&H como anclas.[/yellow]"
+        )
     elif result.profit_factor > Decimal("1.5"):
         console.print("[green][OK] Profit Factor > 1.5 — estrategia prometedora.[/green]")
     elif result.profit_factor < Decimal("1.0"):
