@@ -19,6 +19,12 @@ Punteros a referencia (leer bajo demanda, NO precargar):
   swing_parity_check, degradation_report, swing_v5_freeze_report).
 - Journals: NO hacer `Read` del JSON crudo (pueden ser >10 MB). Usar
   `python tools/journal_summary.py <ruta>` o `/journal-summary`.
+- `HYROTRADER_PLAN.md` — estrategia prop firm (HyroTrader/Bybit). Estado final 2026-07-03:
+  P0-P4 COMPLETADOS y **checkpoint FASE 7 disparado — NO comprar challenge**. Mejor candidato
+  (prop_swing breakout + risk 1%): P(pasar) 11.8% << 60% go/no-go; EV negativo. Queda listo:
+  `core/prop_rules.py` (simulador reglas prop), `strategies/prop_swing.py` (entry_mode
+  pullback|breakout), `tools/prop_challenge_sim.py`. Swing v5 por el simulador = breach 100%
+  (baseline). Retomable solo con un motor nuevo que de P(pasar)>=60% en el simulador.
 
 ---
 

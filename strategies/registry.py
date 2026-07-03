@@ -92,6 +92,13 @@ _REGISTRY: list[StrategyMeta] = [
         aliases=("range",),
     ),
     StrategyMeta(
+        name="prop_swing",       display_name="Prop Swing (HyroTrader)",
+        module="strategies.prop_swing",
+        bot_cls="PropSwingBot",  config_cls="PropSwingConfig",
+        warmup_days=250, output="trade",
+        aliases=("prop",),
+    ),
+    StrategyMeta(
         name="swing_allocator",  display_name="Swing Allocator",
         module="strategies.swing_allocator",
         bot_cls="SwingAllocatorBot", config_cls="SwingAllocatorConfig",
