@@ -286,6 +286,12 @@ BTC nominal que B&H.
 > realizadas por rebalanceo y no deben usarse como veredicto del allocator. Por eso las anclas de
 > comparacion son **CAGR, Max Drawdown, Calmar y BTC vs B&H**, no el PF.
 > v5 esta congelado para paper/forward; capital real requiere validacion paper.
+>
+> **Ruta tool vs ruta CLI:** estas cifras salen de `tools/swing_v5_freeze_report.py`. El comando
+> `main.py backtest --strategy swing` da $9.164M / +85.9% en la misma ventana — NO es regresion:
+> difiere la contabilidad del warmup (CLI analiza 96930 velas, tool 96907; 23 velas en el tramo
+> 2014 con huecos), lo que desplaza el INIT y desvia la valoracion USD +0.29%. DD, ratio BTC y
+> rebalanceos son identicos. Cada smoke debe comparar contra el numero de su propia ruta.
 
 ### Otras estrategias (balance inicial $10,000, costes realistic)
 

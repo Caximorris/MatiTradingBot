@@ -32,6 +32,11 @@ del plan F1-F19 son motor/metricas/operativa live). Anclas v5 (dataset canonico 
 - 2015-26 conservative: $8.897M | CAGR +85.40% | Max DD -52.88% | 70 | btc_vs_bnh 0.7961
 Coste del fix anti-lookahead vs v4: -0.27pp CAGR / -0.02pp DD — adoptado por higiene, no resultado.
 Rollback exacto a v4 congelado: `--config '{"daily_on_closed_only": false}'`. Tests 88/88 verde.
+NOTA (2026-07-03): estas anclas son RUTA-TOOL (`tools/swing_v5_freeze_report.py`). El CLI
+(`main.py backtest`) da $9.164M / +85.9% en 2015-26 realistic — NO es regresion: difiere la
+contabilidad del warmup (CLI analiza 96930 velas, tool 96907; 23 velas en el tramo 2014 con
+huecos), desplaza el INIT y desvia la valoracion USD +0.29%. DD/ratio/rebalanceos identicos.
+Smoke por CLI debe comparar contra $9.164M; smoke por tool contra $9.137M exacto.
 Auditoria post-implementacion: `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`. CONGELADO en tag
 `swing-v5-frozen` @ 4c955fb (2026-07-02).
 
