@@ -19,11 +19,12 @@ Sin red o con la API caida, reintenta indefinidamente — apto para systemd.
 """
 from __future__ import annotations
 
+import html
 import json
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -94,47 +95,89 @@ def fetch_price(symbol: str = "BTC-USDT") -> Decimal | None:
         return None
 
 
+_DIR_ICON = {"BUY": "\U0001F7E2", "SELL": "\U0001F534", "INIT": "⚪"}  # verde/rojo/blanco
+
+
+def _esc(s) -> str:
+    """Escapa texto dinamico para parse_mode=HTML de Telegram."""
+    return html.escape(str(s), quote=False)
+
+
+def _next_4h_eval(now: datetime) -> tuple[datetime, int]:
+    """Proximo cierre de bloque 4H UTC (00/04/08/12/16/20) y minutos restantes."""
+    base = now.replace(minute=0, second=0, microsecond=0)
+    nxt = base + timedelta(hours=4 - base.hour % 4)
+    return nxt, int((nxt - now).total_seconds() // 60)
+
+
 def format_status(rows, balances: dict, price: Decimal | None,
                   rebalances: list[dict], now: datetime) -> str:
-    lines = ["ESTADO DEL BOT", ""]
+    lines = ["\U0001F4CA <b>SWING ALLOCATOR — PAPER</b>", ""]
     if not rows:
         lines.append("Sin bots swing configurados (usa: python main.py bot enable ...)")
         return "\n".join(lines)
 
     for r in rows:
         if not r.is_active:
-            estado = "PAUSADO"
+            icon, estado = "⏸", "PAUSADO"
         elif r.last_run is None:
-            estado = "ACTIVO (sin tick aun)"
+            icon, estado = "\U0001F7E1", "ACTIVO (sin tick aun)"
         else:
             last = r.last_run if r.last_run.tzinfo else r.last_run.replace(tzinfo=timezone.utc)
             age_min = (now - last).total_seconds() / 60
-            estado = (f"VIVO (ultimo tick hace {age_min:.0f} min)" if age_min <= LIVENESS_MAX_AGE_MIN
-                      else f"ACTIVO PERO SIN TICK HACE {age_min:.0f} MIN — revisar proceso!")
-        lines.append(f"{r.strategy_name} [{r.symbol}]: {estado}")
+            if age_min <= LIVENESS_MAX_AGE_MIN:
+                icon, estado = "\U0001F7E2", f"VIVO (ultimo tick hace {age_min:.0f} min)"
+            else:
+                icon, estado = "\U0001F534", f"ACTIVO PERO SIN TICK HACE {age_min:.0f} MIN — revisar proceso!"
+        lines.append(f"{icon} <b>{_esc(r.strategy_name)}</b> [{_esc(r.symbol)}]: {estado}")
 
     btc = balances.get("BTC", Decimal("0"))
     usdt = balances.get("USDT", Decimal("0"))
     lines.append("")
-    lines.append(f"Balance: {btc:.6f} BTC + {usdt:.2f} USDT")
     if price is not None:
         total = btc * price + usdt
         pct = (btc * price / total * 100) if total > 0 else Decimal("0")
-        lines.append(f"BTC = ${price:,.0f} -> portfolio ${total:,.2f} ({pct:.1f}% en BTC)")
+        lines.append(f"\U0001F4B0 <b>Portfolio: ${total:,.2f}</b> ({pct:.1f}% en BTC)")
+        lines.append(f"{btc:.6f} BTC (${btc * price:,.0f}) + {usdt:,.2f} USDT")
+        lines.append(f"BTC = ${price:,.0f}")
     else:
+        lines.append(f"\U0001F4B0 Balance: {btc:.6f} BTC + {usdt:.2f} USDT")
         lines.append("(precio BTC no disponible ahora mismo)")
 
+    # Rendimiento desde el INIT: retorno del bot vs B&H BTC (la metrica ancla del Swing)
+    if rebalances and price is not None:
+        init = rebalances[0]
+        init_port = Decimal(str(init.get("portfolio_usdt", 0)))
+        init_price = Decimal(str(init.get("price", 0)))
+        if init_port > 0 and init_price > 0 and total > 0:
+            bot_ret = (total / init_port - 1) * 100
+            bnh_ret = (price / init_price - 1) * 100
+            ratio = float(total / init_port) / float(price / init_price)
+            days = max(0, (now - datetime.fromisoformat(init["timestamp"])).days) \
+                if "timestamp" in init else 0
+            lines.append("")
+            lines.append(f"\U0001F4C8 <b>Rendimiento</b> ({days} dias, {len(rebalances)} rebalanceos)")
+            lines.append(f"Bot {bot_ret:+.2f}% | B&amp;H BTC {bnh_ret:+.2f}% | bot/B&amp;H {ratio:.3f}")
+
     if rebalances:
-        last_rb = rebalances[-1]
+        rb = rebalances[-1]
+        icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
         lines.append("")
+        lines.append("\U0001F501 <b>Ultimo rebalanceo</b>")
         lines.append(
-            f"Ultimo rebalanceo: {last_rb.get('timestamp', '?')[:16]} "
-            f"{last_rb.get('direction', '?')} "
-            f"{last_rb.get('btc_pct_before', 0):.0%} -> {last_rb.get('btc_pct_after', 0):.0%}"
+            f"{icon} {rb.get('timestamp', '?')[:16]} {rb.get('direction', '?')} "
+            f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%} "
+            f"@ ${rb.get('price', 0):,.0f}"
         )
+        if rb.get("signals"):
+            lines.append(f"senales: {_esc(', '.join(rb['signals']))}")
     else:
         lines.append("")
         lines.append("Sin rebalanceos registrados aun.")
+
+    nxt, mins = _next_4h_eval(now)
+    lines.append("")
+    lines.append(f"⏱ Proxima evaluacion 4H: {nxt:%H:%M} UTC (en {mins // 60}h {mins % 60:02d}m)")
     return "\n".join(lines)
 
 
@@ -143,32 +186,38 @@ def format_report(rebalances: list[dict], n: int = 10) -> str:
         return "Sin rebalanceos registrados aun."
     total = len(rebalances)
     first_ts = rebalances[0].get("timestamp", "?")[:10]
-    lines = [f"REPORT — {total} rebalanceo(s) desde {first_ts}", ""]
+    body = []
     for rb in rebalances[-n:]:
-        lines.append(
-            f"{rb.get('timestamp', '?')[:16]} {rb.get('direction', '?'):4} "
-            f"{rb.get('btc_pct_before', 0):.0%}->{rb.get('btc_pct_after', 0):.0%} "
-            f"@ ${rb.get('price', 0):,.0f} | port ${rb.get('portfolio_usdt', 0):,.0f} "
+        icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
+        body.append(_esc(
+            f"{icon} {rb.get('timestamp', '?')[5:16]} {rb.get('direction', '?'):4} "
+            f"{rb.get('btc_pct_before', 0):.0%}→{rb.get('btc_pct_after', 0):.0%} "
+            f"@ ${rb.get('price', 0):,.0f} | ${rb.get('portfolio_usdt', 0):,.0f} "
             f"| {','.join(rb.get('signals', []))}"
-        )
+        ))
+    lines = [f"\U0001F4D2 <b>REPORT</b> — {total} rebalanceo(s) desde {first_ts}", ""]
+    lines.append("<pre>" + "\n".join(body) + "</pre>")
     if total > n:
         lines.append(f"... ({total - n} anteriores omitidos; /report {total} para todos)")
     return "\n".join(lines)
 
 
 def format_rebalance_alert(rb: dict) -> str:
-    return (
-        f"REBALANCEO EJECUTADO\n"
-        f"{rb.get('timestamp', '?')[:16]} {rb.get('direction', '?')} "
-        f"{rb.get('btc_pct_before', 0):.0%} -> {rb.get('btc_pct_after', 0):.0%} "
-        f"@ ${rb.get('price', 0):,.0f}\n"
-        f"Portfolio: ${rb.get('portfolio_usdt', 0):,.0f} | senales: {','.join(rb.get('signals', []))}"
-    )
+    icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
+    lines = [
+        f"{icon} <b>REBALANCEO: {_esc(rb.get('direction', '?'))} "
+        f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%}</b>",
+        f"{rb.get('timestamp', '?')[:16]} @ ${rb.get('price', 0):,.0f}",
+        f"\U0001F4B0 Portfolio: ${rb.get('portfolio_usdt', 0):,.0f}",
+    ]
+    if rb.get("signals"):
+        lines.append(f"senales: {_esc(', '.join(rb['signals']))}")
+    return "\n".join(lines)
 
 
 HELP_TEXT = (
-    "Comandos:\n"
-    "/status — estado, balances y valor actual\n"
+    "\U0001F916 <b>Comandos</b>\n"
+    "/status — estado, balances, rendimiento vs B&amp;H\n"
     "/report [n] — ultimos n rebalanceos (10 por defecto)\n"
     "/pause — pausar el Swing (el proceso sigue; no decide)\n"
     "/resume — reanudar\n"
@@ -199,11 +248,11 @@ def handle_command(text: str, get_session) -> str:
     if cmd == "/pause":
         with get_session() as s:
             names = set_swing_active(s, False)
-        return f"PAUSADO: {', '.join(names) or 'nada que pausar'}"
+        return f"⏸ PAUSADO: {_esc(', '.join(names)) or 'nada que pausar'}"
     if cmd == "/resume":
         with get_session() as s:
             names = set_swing_active(s, True)
-        return f"REANUDADO: {', '.join(names) or 'nada que reanudar'}"
+        return f"▶️ REANUDADO: {_esc(', '.join(names)) or 'nada que reanudar'}"
     return HELP_TEXT
 
 
@@ -230,7 +279,7 @@ def main() -> None:
         logger.warning("No se pudo limpiar backlog de updates: {}", exc)
 
     seen_rebalances = len(read_rebalances())
-    tg_send("Control remoto conectado. /help para comandos.")
+    tg_send("\U0001F916 Control remoto conectado. /help para comandos.")
     logger.info("telegram_remote arrancado (rebalanceos ya registrados: {})", seen_rebalances)
 
     while True:
@@ -238,7 +287,7 @@ def main() -> None:
         try:
             rebalances = read_rebalances()
             for rb in rebalances[seen_rebalances:]:
-                tg_send(format_rebalance_alert(rb))
+                tg_send(format_rebalance_alert(rb), parse_mode="HTML")
             seen_rebalances = len(rebalances)
         except Exception as exc:
             logger.warning("Chequeo de rebalanceos fallo: {}", exc)
@@ -268,8 +317,8 @@ def main() -> None:
                 reply = handle_command(text, get_session)
             except Exception as exc:
                 logger.exception("Comando '{}' fallo", text)
-                reply = f"Error ejecutando '{text}': {exc}"
-            tg_send(reply)
+                reply = f"⚠️ Error ejecutando '{_esc(text)}': {_esc(exc)}"
+            tg_send(reply, parse_mode="HTML")
 
 
 if __name__ == "__main__":

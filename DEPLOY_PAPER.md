@@ -113,10 +113,14 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 
 - [x] Codigo listo: fixes ruta live (commit b61ea95), telegram_remote + tg_send,
       deploy/ (install_vm.sh, units systemd, daily_checks.sh), tools portables a Linux.
-- [ ] Cuenta cloud creada (Oracle/GCP) — la crea Matias (pide tarjeta, no cobra)
-- [ ] Bot de Telegram creado (@BotFather) + chat id
-- [ ] VM instalada (`deploy/install_vm.sh` completo, servicios verdes)
-- [ ] Smoke 24h (F13) superado — fecha inicio 30 dias: ____
+- [x] Cuenta cloud creada: GCP e2-micro us-central1 (free tier), Debian 13, VM `matitrbot`
+      (2026-07-04). Disco standard 30GB, sin snapshots, sin Ops Agent.
+- [x] Bot de Telegram creado (@BotFather) + chat id (2026-07-04)
+- [x] VM instalada (2026-07-04 08:58 UTC): servicios matibot + matibot-telegram verdes,
+      /status y /report responden. Fix necesario: DetachedInstanceError en bot enable (9214e1e).
+      INIT 0%->60% + SELL 60%->20% (regime_bear,halving_bear_onset) — coincide con parity F15.
+- [ ] Smoke 24h (F13) — corre desde 2026-07-04 08:58 UTC; revisar journalctl 2026-07-05.
+      Superado: ____ — fecha inicio 30 dias: ____
 - [ ] 30 dias de paridad (F15) — sin PARITY_FAIL desde: ____
 - [ ] F19 sin alertas al cierre de la ventana
 - Incidencias/pausas: (anotar fecha y motivo)

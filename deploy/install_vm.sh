@@ -55,7 +55,9 @@ chmod +x deploy/daily_checks.sh
 
 # Cron: paridad + degradacion cada dia a las 12:10 UTC (el parity check de las 12:00 del plan)
 CRON_LINE="10 12 * * * $APP_DIR/deploy/daily_checks.sh"
-( crontab -l 2>/dev/null | grep -vF "daily_checks.sh" ; echo "$CRON_LINE" ) | crontab -
+# "|| true": sin crontab previo (o sin otras lineas) el pipe falla y set -e abortaria
+# el subshell antes del echo, instalando un crontab VACIO (bug detectado en el deploy real)
+( crontab -l 2>/dev/null | grep -vF "daily_checks.sh" || true ; echo "$CRON_LINE" ) | crontab -
 
 echo ""
 echo "LISTO. Comprobaciones:"

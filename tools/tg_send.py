@@ -47,17 +47,30 @@ def tg_api(method: str, params: dict, timeout: int = _TIMEOUT) -> dict:
     return payload
 
 
-def tg_send(text: str) -> bool:
-    """Envia un mensaje al chat configurado. Devuelve False si no hay credenciales o falla."""
+def tg_send(text: str, parse_mode: str | None = None) -> bool:
+    """Envia un mensaje al chat configurado. Devuelve False si no hay credenciales o falla.
+
+    parse_mode="HTML" activa formato (negritas, <pre>); si Telegram rechaza el HTML
+    (entidades mal balanceadas), reintenta en texto plano para no perder el mensaje.
+    """
     token, chat_id = tg_credentials()
     if not token or not chat_id:
         print("tg_send: TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID no configurados — no-op", file=sys.stderr)
         return False
+    # Telegram limita a 4096 chars por mensaje
+    params = {"chat_id": chat_id, "text": text[:4000]}
+    if parse_mode:
+        params["parse_mode"] = parse_mode
     try:
-        # Telegram limita a 4096 chars por mensaje
-        tg_api("sendMessage", {"chat_id": chat_id, "text": text[:4000]})
+        tg_api("sendMessage", params)
         return True
     except Exception as exc:
+        if parse_mode:
+            try:
+                tg_api("sendMessage", {"chat_id": chat_id, "text": text[:4000]})
+                return True
+            except Exception:
+                pass
         print(f"tg_send fallo: {exc}", file=sys.stderr)
         return False
 

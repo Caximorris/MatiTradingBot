@@ -84,8 +84,8 @@ def test_format_status_reports_alive_paused_and_stale():
     balances = {"BTC": Decimal("0.5"), "USDT": Decimal("1000")}
 
     alive = format_status([_row(True, now - timedelta(minutes=2))], balances, Decimal("100000"), [], now)
-    assert "VIVO" in alive and "50,000" not in alive   # 0.5*100k+1000 = 51,000
-    assert "$51,000.00" in alive
+    assert "VIVO" in alive
+    assert "Portfolio: $51,000.00" in alive   # total = 0.5*100k+1000, no la pata BTC ($50k)
 
     paused = format_status([_row(False)], balances, None, [], now)
     assert "PAUSADO" in paused
