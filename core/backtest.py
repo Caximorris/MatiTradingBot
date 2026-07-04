@@ -32,6 +32,12 @@ _PAPER_FEE_RATE = Decimal("0.001")  # 0.1% taker fee OKX por defecto
 COST_MODE_IDEAL       = "ideal"        # fee=0.001, slippage=0
 COST_MODE_REALISTIC   = "realistic"    # fee=0.001, slippage=5bps (0.05%)
 COST_MODE_CONSERVATIVE = "conservative" # fee=0.001, slippage=15bps (0.15%)
+# N1 (HYROTRADER_PLAN seccion 13): modelo Bybit perps lineales, taker VIP0 = 5.5bps.
+# Slippage 2bps = supuesto base para ordenes $3-6k en BTCUSDT (book profundo, spread ~1bp);
+# bybit_cons = 10bps hasta que N0 (testnet) lo mida. El funding NO va aqui: lo devenga la
+# estrategia por settlement (adjust_balance), igual que el MTM de los shorts sinteticos.
+COST_MODE_BYBIT       = "bybit"        # fee=0.00055, slippage=2bps
+COST_MODE_BYBIT_CONS  = "bybit_cons"   # fee=0.00055, slippage=10bps
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +167,12 @@ class BacktestClient:
         elif cost_mode == COST_MODE_CONSERVATIVE:
             self._fee_rate = Decimal("0.001")
             self._slippage_bps = Decimal("15")    # 0.15%
+        elif cost_mode == COST_MODE_BYBIT:
+            self._fee_rate = Decimal("0.00055")
+            self._slippage_bps = Decimal("2")
+        elif cost_mode == COST_MODE_BYBIT_CONS:
+            self._fee_rate = Decimal("0.00055")
+            self._slippage_bps = Decimal("10")
         else:
             self._fee_rate = fee_rate
             self._slippage_bps = Decimal(str(slippage_bps))

@@ -47,8 +47,16 @@ Punteros a referencia (leer bajo demanda, NO precargar):
   post-barrida MUERTOS tras dedup (leccion: deduplicar senales solapadas SIEMPRE);
   dia-de-semana marginal; **funding extremo = unico superviviente** (p95: +92bps
   mediana f72, WR 65%, 6/6 anios; p05: +58bps, 5/6; ambas colas long, ~30 senales/anio).
-  SIGUIENTE: N4 prototipo "funding-extreme long" + N1 modelo Bybit; N0 (testnet)
-  BLOQUEADO en Matias (cuenta Bybit testnet + API keys).
+  N1+N4 EJECUTADOS (sesion 18, 2026-07-04, seccion 15 del plan): modelo Bybit en
+  `core/backtest.py` (`--costs bybit`=5.5+2bps / `bybit_cons`=5.5+10bps, funding
+  devengado por settlement) + motor `strategies/funding_extreme.py` (alias `funding`).
+  Edge standalone BUENO (bybit: PF 1.44, expectancy +30bps, maxDD SOLO 12.96%) pero
+  como PROP **RECHAZADO**: gate bybit_cons two-step 27.1% pass / 36.7% breach (vs
+  >=60%/<=20%), peor que E9. N2->N4 agota el alfa no-indicador barato. Cierre formal
+  del plan B depende SOLO de N0 (testnet Bybit, BLOQUEADO en Matias: cuenta + API keys):
+  costes reales <=7bps reabre E9 one-step; >=12bps = cierre sin apelacion. N3/N5 no
+  ejecutados (solo si N0 justifica seguir). funding_extreme queda en registry, medido y
+  reversible; dominado por Swing v5 como vehiculo propio (mismo argumento que E9).
 
 ---
 

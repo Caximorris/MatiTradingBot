@@ -99,6 +99,13 @@ _REGISTRY: list[StrategyMeta] = [
         aliases=("prop",),
     ),
     StrategyMeta(
+        name="funding_extreme",  display_name="Funding Extreme Long (N4)",
+        module="strategies.funding_extreme",
+        bot_cls="FundingExtremeBot", config_cls="FundingExtremeConfig",
+        warmup_days=45, output="trade",
+        aliases=("funding",),
+    ),
+    StrategyMeta(
         name="swing_allocator",  display_name="Swing Allocator",
         module="strategies.swing_allocator",
         bot_cls="SwingAllocatorBot", config_cls="SwingAllocatorConfig",

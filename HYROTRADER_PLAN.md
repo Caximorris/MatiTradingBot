@@ -666,3 +666,50 @@ peak->trough): el peor tramo historico del motor es EL MAS RECIENTE (mercado en 
 4. Nota tecnica: el resumen trimestral del CLI solo ve patas long (los shorts sinteticos
    no pasan por el pairing ACB); el PnL por anio del journal (true_pnl_usdt) es la vista
    completa. Metricas de equity (CAGR/DD/Sharpe) correctas en ambas rutas.
+
+---
+
+## 15. N4 — MOTOR "FUNDING-EXTREME LONG" MEDIDO Y RECHAZADO COMO PROP (2026-07-04, sesion 18)
+
+Implementado `strategies/funding_extreme.py` (registry `funding`) desde el unico superviviente
+de N2. Senal por settlement Bybit, percentil trailing 90 settlements shift(1) (anti-lookahead),
+dedup conjunto 72h, delay 24h en cola p95 (hallazgo f24 negativo), hold 72h, stop 2xATR14-4H,
+sizing riesgo 1% cap notional 0.5 (esquema E9). MODELO N1 nuevo en `core/backtest.py`: costes
+`bybit` (taker 5.5bps + 2bps slip) y `bybit_cons` (5.5 + 10bps); **funding devengado por
+settlement** dentro del motor via adjust_balance (la cola p95 entra pagando funding caro).
+Ventana 2020-06 -> 2026-01 (Bybit funding empieza 2020-03). 277 senales dedup (86 hi / 191 lo),
+238 trades con PnL.
+
+**Edge standalone (bueno): rentable y DD bajo.**
+- bybit: pnl +71.96% | PF 1.44 | WR 50.0% | expectancy +30bps | maxDD **12.96%**.
+- bybit_cons: pnl +53.68% | PF 1.34 | WR 48.7% | expectancy +23bps | maxDD 13.91%.
+El perfil de bajo DD es lo contrario de E9 (-21%). El screen N2 se confirma como efecto real.
+
+**Como PROP: RECHAZADO — no pasa el gate (>=60% pass / <=20% breach) en ninguna variante.**
+| costes | config | pass | breach | timeout |
+|---|---|---|---|---|
+| bybit | two_step_swing | 0.362 | 0.342 | 0.296 |
+| bybit | one_step_swing | 0.531 | 0.369 | 0.100 |
+| bybit_cons (gate) | two_step_swing | **0.271** | **0.367** | 0.362 |
+| bybit_cons (gate) | one_step_swing | 0.418 | 0.458 | 0.124 |
+
+Peor que E9 (two-step 64% realistic / 37-44% conservative). Los breaches son mitad daily,
+mitad total, + muchos `trade_loss_violation` (45-48 en two-step): trades sueltos que exceden
+el limite de perdida por trade del prop pese al risk 1%. El motor con hold fijo de 72h y stop
+2xATR no controla el daily DD lo bastante para el challenge.
+
+**Diagnostico: mismo patron del proyecto entero.** Hay edge (positivo, robusto, DD bajo) pero
+la distribucion no cabe en las reglas prop. N2->N4 agota el frente de alfa no-indicador barato.
+
+**Estado del PLAN B tras N4:**
+- N2 (screens) y N4 (motor del superviviente) EJECUTADOS y sin candidato que pase el gate.
+- Presupuesto duro (seccion 13): "si tras N2 ningun efecto pasa su gate Y N0 da costes reales
+  >=12bps -> cierre sin apelacion". N4 no pasa. Falta SOLO N0 (testnet Bybit, BLOQUEADO en
+  Matias: cuenta + API keys) para el cierre formal. Si N0 mide costes <=7bps, E9 one-step
+  (0.60-0.73 realistic) se re-evalua; si >=12bps, cierre.
+- N3 (OI/liquidaciones/basis) y N5 (meta-labeling) NO ejecutados: solo tendrian sentido si
+  N0 justifica seguir invirtiendo, y N5 es el de mayor riesgo de overfit del proyecto.
+
+**Valor residual de funding_extreme (no-prop):** rentable con DD 13%, pero como capital propio
+esta dominado por el Swing v5 igual que E9 (mismo argumento de la seccion 14). No adoptar como
+vehiculo propio. Queda en el registry, reversible y medido, por si N0/N1 reabren el frente.
