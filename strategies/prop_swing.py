@@ -18,6 +18,17 @@ P3 de HYROTRADER_PLAN.md (FASE 3). Estrategia de trades discretos con stop SIEMP
 Stops y TP se chequean en CADA barra 1H contra high/low (el fill es market al close de esa
 barra — modela gap/slippage de forma honesta, no fill exacto en el nivel).
 
+H2 (2026-07-03): `allow_shorts=True` habilita el espejo en regimen bear (EMA50D<EMA200D,
+close<EMA200D, ADX>=adx_min). Los shorts son SINTETICOS (solo backtest — requieren
+`adjust_balance`; en Bybit real seran perps nativos, P5): mark-to-market barra a barra
+contra el balance USDT para que la equity (y el trailing DD del simulador prop) vea el
+uPnL en continuo; costes identicos a `_fill_market` (slippage bps + fee sobre notional).
+Solo se registran en el journal, no en la DB de ordenes.
+
+`self.realized` acumula (ts, pnl neto de fees) de CADA cierre realizado (TP1 y cierre,
+long y short) — fuente de PnL por trade para el simulador prop (los shorts sinteticos
+no pasan por el pairing ACB del motor).
+
 NOTA C7 (igual que Swing): la EMA200D sobre lookback_hours=6000 es una EMA truncada.
 Filtro de eventos macro (FOMC/CPI) y spread-check son SOLO live — no se modelan aqui.
 """
@@ -71,6 +82,14 @@ class PropSwingConfig:
     be_after_tp1: bool = True         # False: el stop NO sube a BE tras TP1 (solo chandelier)
     trail_on_high: bool = False       # True: high-water usa el high de la barra, no el close
     max_notional_pct: float = 0.25    # cap duro de notional (funded: margen 25%)
+    # -- H2: shorts en regimen bear (espejo; sinteticos, solo backtest hasta P5/Bybit) --
+    allow_shorts: bool = False
+    # -- H4: squeeze — entrar solo si la vol 4H esta comprimida (breakout tras compresion
+    #    tiene mas recorrido; filtra falsos breakouts en chop). ATR14-4H/close en percentil
+    #    <= squeeze_max_pctile de los ultimos squeeze_lookback_4h bloques cerrados. --
+    use_squeeze: bool = False
+    squeeze_lookback_4h: int = 90     # ~15 dias de bloques 4H
+    squeeze_max_pctile: float = 0.5   # mediana
 
     # -- Filtros --
     vol_max_atr_pct_d: float = 0.06   # no entrar si ATR14D/close > 6% (vol explosiva)
@@ -119,6 +138,8 @@ class PropSwingBot(BaseStrategy):
         self._day: str = ""
         self._day_start_equity: float = 0.0
         self._entries_today: int = 0
+        # PnL realizado por cierre (ts, Decimal neto de fees) — consumido por el sim prop
+        self.realized: list[tuple[datetime, Decimal]] = []
 
     @property
     def name(self) -> str:
@@ -144,6 +165,9 @@ class PropSwingBot(BaseStrategy):
         last = df.iloc[-1]
         ts = datetime.fromtimestamp(int(last["timestamp"]) / 1000, tz=timezone.utc)
         price = float(last["close"])
+        # MTM del short ANTES de leer equity: la barra actual ya refleja su uPnL
+        if self._pos is not None and self._pos.get("side") == "short":
+            self._mtm_short(price)
         equity = self._equity(price)
 
         # -- Rollover de dia UTC --
@@ -168,42 +192,65 @@ class PropSwingBot(BaseStrategy):
         pos = self._pos
         bar_low = float(last["low"])
         bar_high = float(last["high"])
+        short = pos.get("side") == "short"
 
         # Kill switch diario interno
         if day_pnl <= -self._cfg.daily_flatten:
             self._close_all(ts, price, "daily_flatten")
             return
 
-        # Stop (chequeo intrabar contra el low; fill market al close de la barra)
-        if bar_low <= pos["stop"]:
+        # Stop (chequeo intrabar contra el extremo; fill market al close de la barra)
+        if (bar_high >= pos["stop"]) if short else (bar_low <= pos["stop"]):
             self._close_all(ts, price, "stop_be" if pos["tp1_done"] else "stop_loss")
             return
 
         # TP1 parcial + break-even
-        if not pos["tp1_done"] and bar_high >= pos["tp1"]:
-            qty_out = (pos["qty"] * Decimal(str(self._cfg.tp1_size))).quantize(
-                Decimal("0.00000001"), rounding=ROUND_DOWN)
-            if qty_out > 0:
-                r = self._client.place_order(self._cfg.symbol, "sell", "market",
-                                             qty_out, strategy=self.name)
-                if r.status == "filled":
-                    self.log_trade(r)
-                    pos["qty"] -= qty_out
-                    pos["tp1_done"] = True
-                    if self._cfg.be_after_tp1:
-                        pos["stop"] = pos["entry"]      # break-even
-                    pos["high_water"] = price
+        if not pos["tp1_done"] and ((bar_low <= pos["tp1"]) if short
+                                    else (bar_high >= pos["tp1"])):
+            self._take_tp1(ts, price)
 
-        # Trailing chandelier tras TP1
+        # Trailing chandelier tras TP1 (water_mark: high-water long / low-water short)
         if pos["tp1_done"]:
-            hw_ref = bar_high if self._cfg.trail_on_high else price
-            pos["high_water"] = max(pos["high_water"], hw_ref)
-            trail = pos["high_water"] - self._cfg.trail_atr_mult * pos["atr_entry"]
-            pos["stop"] = max(pos["stop"], trail)
+            if short:
+                wm_ref = bar_low if self._cfg.trail_on_high else price
+                pos["water_mark"] = min(pos["water_mark"], wm_ref)
+                trail = pos["water_mark"] + self._cfg.trail_atr_mult * pos["atr_entry"]
+                pos["stop"] = min(pos["stop"], trail)
+            else:
+                wm_ref = bar_high if self._cfg.trail_on_high else price
+                pos["water_mark"] = max(pos["water_mark"], wm_ref)
+                trail = pos["water_mark"] - self._cfg.trail_atr_mult * pos["atr_entry"]
+                pos["stop"] = max(pos["stop"], trail)
 
         # Salida por regimen en cierre de bloque 4H
-        if ts.hour % 4 == 3 and not self._regime_ok(df, ts):
+        if ts.hour % 4 == 3 and self._regime(df, ts) != ("bear" if short else "bull"):
             self._close_all(ts, price, "regime_exit")
+
+    def _take_tp1(self, ts: datetime, price: float) -> None:
+        pos, cfg = self._pos, self._cfg
+        qty_out = (pos["qty"] * Decimal(str(cfg.tp1_size))).quantize(
+            Decimal("0.00000001"), rounding=ROUND_DOWN)
+        if qty_out <= 0:
+            return
+        if pos.get("side") == "short":
+            pnl = self._cover_short(qty_out, price)
+            if pnl is None:
+                return
+        else:
+            r = self._client.place_order(cfg.symbol, "sell", "market",
+                                         qty_out, strategy=self.name)
+            if r.status != "filled":
+                return
+            self.log_trade(r)
+            fill = float(r.filled_price or price)
+            pnl = Decimal(str(round((fill - pos["entry"]) * float(qty_out)
+                                    - float(r.fee), 8)))
+        self.realized.append((ts, pnl))
+        pos["qty"] -= qty_out
+        pos["tp1_done"] = True
+        if cfg.be_after_tp1:
+            pos["stop"] = pos["entry"]          # break-even
+        pos["water_mark"] = price
 
     # ------------------------------------------------------------------
     # Entrada (solo en cierre de bloque 4H UTC)
@@ -216,7 +263,12 @@ class PropSwingBot(BaseStrategy):
             return
         if day_pnl <= -cfg.daily_loss_stop or day_pnl >= cfg.daily_profit_stop:
             return
-        if not self._regime_ok(df, ts, check_vol=True):
+        regime = self._regime(df, ts, check_vol=True)
+        if regime == "bull":
+            side = "long"
+        elif regime == "bear" and cfg.allow_shorts:
+            side = "short"
+        else:
             return
 
         df4 = resample_to_4h(df)
@@ -231,27 +283,46 @@ class PropSwingBot(BaseStrategy):
         if atr_now <= 0 or pd.isna(atr_now) or pd.isna(ema_now):
             return
 
+        # H4: filtro squeeze — solo entrar con vol comprimida (percentil del ATR% 4H)
+        if cfg.use_squeeze:
+            atr_pct = (atr4 / df4["close"]).iloc[-cfg.squeeze_lookback_4h:]
+            if len(atr_pct) < cfg.squeeze_lookback_4h or atr_pct.isna().any():
+                return
+            rank = float((atr_pct <= atr_pct.iloc[-1]).mean())
+            if rank > cfg.squeeze_max_pctile:
+                return
+
         if cfg.entry_mode == "breakout":
-            # E5: breakout Donchian — cierre 4H sobre el max high de los N bloques previos
+            # E5: breakout Donchian — cierre 4H fuera del rango de los N bloques previos
             n = cfg.breakout_lookback_4h
             if len(df4) < n + 2:
                 return
-            donchian_high = float(df4["high"].iloc[-(n + 1):-1].max())
-            if not (c_now > donchian_high and c_now > ema_now):
-                return
+            if side == "long":
+                donchian_high = float(df4["high"].iloc[-(n + 1):-1].max())
+                if not (c_now > donchian_high and c_now > ema_now):
+                    return
+            else:
+                donchian_low = float(df4["low"].iloc[-(n + 1):-1].min())
+                if not (c_now < donchian_low and c_now < ema_now):
+                    return
         else:
-            # v0: pullback — algun low de los ultimos N bloques cerrados toco la EMA50-4H
-            lows = df4["low"].iloc[-cfg.pullback_lookback_4h:]
+            # v0: pullback a la EMA50-4H + gatillo de reanudacion (espejado para shorts)
             emas = ema4.iloc[-cfg.pullback_lookback_4h:]
-            touched = bool((lows.values <= emas.values).any())
-            # Gatillo: reanudacion sobre el high del 4H previo, por encima de la EMA
-            trigger = c_now > h_prev and c_now > ema_now
+            if side == "long":
+                lows = df4["low"].iloc[-cfg.pullback_lookback_4h:]
+                touched = bool((lows.values <= emas.values).any())
+                trigger = c_now > h_prev and c_now > ema_now
+            else:
+                highs = df4["high"].iloc[-cfg.pullback_lookback_4h:]
+                touched = bool((highs.values >= emas.values).any())
+                l_prev = float(df4["low"].iloc[-2])
+                trigger = c_now < l_prev and c_now < ema_now
             if not (touched and trigger):
                 return
 
         # -- Sizing por riesgo: el stop dimensiona la posicion --
         stop_dist = cfg.atr_stop_mult * atr_now
-        stop = price - stop_dist
+        stop = price - stop_dist if side == "long" else price + stop_dist
         if stop <= 0:
             return
         risk_usdt = equity * cfg.risk_per_trade
@@ -275,16 +346,21 @@ class PropSwingBot(BaseStrategy):
             self._log_risk_block(cfg.symbol, reason)
             return
 
+        if side == "short":
+            self._open_short(ts, price, qty_d, stop_dist, atr_now, ema_now, equity)
+            return
+
         r = self._client.place_order(cfg.symbol, "buy", "market", qty_d, strategy=self.name)
         if r.status != "filled" or not r.filled_price:
             return
         self.log_trade(r)
         entry = float(r.filled_price)
         self._pos = {
+            "side": "long",
             "qty": r.filled_qty, "entry": entry,
             "stop": entry - stop_dist,
             "tp1": entry + cfg.tp1_r * stop_dist,
-            "tp1_done": False, "high_water": entry,
+            "tp1_done": False, "water_mark": entry,
             "atr_entry": atr_now,
         }
         self._entries_today += 1
@@ -297,27 +373,91 @@ class PropSwingBot(BaseStrategy):
         )
 
     # ------------------------------------------------------------------
+    # Shorts sinteticos (solo backtest — ver docstring del modulo)
+    # ------------------------------------------------------------------
+
+    def _open_short(self, ts: datetime, price: float, qty_d: Decimal, stop_dist: float,
+                    atr_now: float, ema_now: float, equity: float) -> None:
+        cfg, cli = self._cfg, self._client
+        if not hasattr(cli, "adjust_balance"):
+            logger.warning("[{}] shorts sinteticos requieren adjust_balance; omitido", self.name)
+            return
+        slip = float(getattr(cli, "_slippage_bps", 0)) / 10000.0
+        fee_rate = float(getattr(cli, "_fee_rate", Decimal("0.001")))
+        q = float(qty_d)
+        fill = price * (1 - slip)                 # sell recibe menos (igual que _fill_market)
+        fee_open = q * fill * fee_rate
+        cli.adjust_balance("USDT", Decimal(str(round(-fee_open, 8))))
+        self._pos = {
+            "side": "short",
+            "qty": qty_d, "entry": fill,
+            "stop": fill + stop_dist,
+            "tp1": fill - cfg.tp1_r * stop_dist,
+            "tp1_done": False, "water_mark": fill,
+            "atr_entry": atr_now,
+            "mark": fill,                          # ultimo precio marcado contra balance
+            "fee_open_unit": fee_open / q,         # prorrateo del fee de apertura
+        }
+        self._entries_today += 1
+        self._journal_open(
+            side="short", ts=ts.isoformat(), price=fill,
+            invest=q * fill, stop=self._pos["stop"],
+            qty=q, balance_before=equity, ls=0, ss=0,
+            indicators={"atr4h": round(atr_now, 2), "ema50_4h": round(ema_now, 2)},
+            tp=self._pos["tp1"],
+        )
+
+    def _mtm_short(self, price: float) -> None:
+        """Marca el uPnL del short contra el balance USDT (equity continua para el DD)."""
+        pos = self._pos
+        delta = (pos["mark"] - price) * float(pos["qty"])
+        if delta:
+            self._client.adjust_balance("USDT", Decimal(str(round(delta, 8))))
+        pos["mark"] = price
+
+    def _cover_short(self, qty: Decimal, price: float) -> Decimal | None:
+        """Recompra sintetica de `qty` a mercado (slippage+fee como _fill_market).
+        Devuelve el PnL neto realizado del tramo (incluye fee de apertura prorrateado)."""
+        pos, cli = self._pos, self._client
+        slip = float(getattr(cli, "_slippage_bps", 0)) / 10000.0
+        fee_rate = float(getattr(cli, "_fee_rate", Decimal("0.001")))
+        q = float(qty)
+        fill = price * (1 + slip)                 # buy paga mas
+        fee_close = q * fill * fee_rate
+        # El uPnL ya esta marcado hasta pos["mark"]; ajustar el tramo mark->fill y el fee
+        delta = (pos["mark"] - fill) * q - fee_close
+        cli.adjust_balance("USDT", Decimal(str(round(delta, 8))))
+        pnl = (pos["entry"] - fill) * q - fee_close - pos["fee_open_unit"] * q
+        return Decimal(str(round(pnl, 8)))
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _regime_ok(self, df: pd.DataFrame, ts: datetime, check_vol: bool = False) -> bool:
-        """Regimen bull en diario CERRADO (dias < hoy UTC). check_vol añade el filtro ATR%."""
+    def _regime(self, df: pd.DataFrame, ts: datetime,
+                check_vol: bool = False) -> str | None:
+        """Regimen en diario CERRADO (dias < hoy UTC): "bull" | "bear" | None.
+        Bear = espejo exacto del bull. check_vol añade el filtro ATR% (ambos lados)."""
         daily = resample_to_daily(df)
         daily = daily[daily["dt"].dt.date < ts.date()]
         if len(daily) < 210:
-            return False
+            return None
         close = daily["close"]
         ema50 = float(ema_fn(close, 50).iloc[-1])
         ema200 = float(ema_fn(close, 200).iloc[-1])
         adx_d = float(adx_fn(daily["high"], daily["low"], close, 14).iloc[-1])
         c = float(close.iloc[-1])
-        if not (ema50 > ema200 and c > ema200 and adx_d >= self._cfg.adx_min):
-            return False
+        if adx_d < self._cfg.adx_min or c <= 0:
+            return None
         if check_vol:
             atr_d = float(atr_fn(daily["high"], daily["low"], close, 14).iloc[-1])
-            if c <= 0 or atr_d / c > self._cfg.vol_max_atr_pct_d:
-                return False
-        return True
+            if atr_d / c > self._cfg.vol_max_atr_pct_d:
+                return None
+        if ema50 > ema200 and c > ema200:
+            return "bull"
+        if ema50 < ema200 and c < ema200:
+            return "bear"
+        return None
 
     def _equity(self, price: float) -> float:
         balance = self._client.get_balance()
@@ -330,6 +470,18 @@ class PropSwingBot(BaseStrategy):
         if pos is None or pos["qty"] <= 0:
             self._pos = None
             return
+        if pos.get("side") == "short":
+            pnl_d = self._cover_short(pos["qty"], price)
+            if pnl_d is None:
+                return
+            self.realized.append((ts, pnl_d))
+            self._journal_close(
+                ts=ts.isoformat(), price=price, pnl=float(pnl_d), reason=reason,
+                holding_hours=0.0, balance_after=self._equity(price), ls=0, ss=0,
+                indicators={},
+            )
+            self._pos = None
+            return
         r = self._client.place_order(self._cfg.symbol, "sell", "market",
                                      pos["qty"], strategy=self.name)
         if r.status != "filled":
@@ -338,6 +490,7 @@ class PropSwingBot(BaseStrategy):
         fill = float(r.filled_price or price)
         pnl = (fill - pos["entry"]) * float(pos["qty"])
         self.log_trade(r, pnl=Decimal(str(round(pnl, 8))))
+        self.realized.append((ts, Decimal(str(round(pnl - float(r.fee), 8)))))
         self._journal_close(
             ts=ts.isoformat(), price=fill, pnl=pnl, reason=reason,
             holding_hours=0.0, balance_after=self._equity(fill), ls=0, ss=0,

@@ -399,3 +399,270 @@ una decision EMPIRICA, no de opinion: el simulador debe correr ambas.
 Con target F1 = 10% y regla del 40%: ningun dia puede aportar >4% de equity al pasar justo.
 Nuestro freno interno de +2.5%/dia ya lo cumple con margen. El limite interno de perdida
 diaria (-1.5%/-2.5%) tambien es coherente con el 5% oficial del Two-Step.
+
+---
+
+## 10. H1 — RE-MEDICION POST-CHECKPOINT (2026-07-03, sesion 17)
+
+Tras el checkpoint de abandono, se midieron las palancas GRATIS (sin tocar la estrategia)
+que podian estar sesgando el 11.8% al pesimismo: (a) timeout 365d artificial (el challenge
+real es ilimitado), (b) arranques aleatorios vs arranque condicionado a regimen bull,
+(c) matriz salidas x breakout (E2/E3/E4 solo se habian medido sobre el motor pullback v0).
+Tooling: `--max-days` (lista) y `--bull-start` en `prop_challenge_sim.py`; `start_filter`
+y herencia de `max_days` en fase 2 en `core/prop_rules.py`. Tests 17/17. El run baseline
+@365d reproduce el 11.8% de P4 (validacion del tooling).
+
+Resultados (2018-2026 realistic, buffer 0.2, one_step_std / two_step_std):
+
+| Variante | Edge 8a / PF / maxDD | 1-step @365 | 1-step @540 | 1-step @730 | 2-step @540 |
+|---|---|---|---|---|---|
+| E6 baseline | +15.0% / 1.27 / -6.6% | 0.118 | 0.193 | 0.210 | 0.000 |
+| E6 + tp1_r 1.5 | +20.3% / 1.33 / -10.1% | 0.103 | **0.243** | — | **0.182** |
+| E6 + be_after_tp1=False | +16.2% / 1.29 / -7.2% | 0.117 | 0.192 | — | 0.000 |
+| E6 + trail_on_high | +11.6% / 1.20 / -7.2% | 0.000 | 0.000 | — | 0.000 |
+
+Hallazgos:
+1. **GATE FALLADO.** Maximo absoluto alcanzable con palancas gratis: 24.3% one-step /
+   18.2% two-step (@540d, tp1.5) << 30% (gate H1) << 60% (go/no-go). Mediana para pasar
+   el two-step: 830 dias (2.3 anos). El tiempo ilimitado ayuda pero PLATEA (~21% @730d):
+   el motor gana ~2%/ano y ni la eternidad convierte eso en 15% acumulado fiable.
+2. **bull-start REFUTADO (al reves de la hipotesis):** arrancar en regimen bull EMPEORA
+   (1-step @365: 0.5% vs 11.8%; breach sube 2-3x). Los pases provienen de ventanas que
+   arrancan en bear, esperan planas y capturan el giro de regimen desde el inicio;
+   arrancar en mitad del bull = entrar tarde en el chop del techo. La palanca "comprar el
+   challenge cuando ya es bull" esta MUERTA tal cual (refinamiento no medido: condicionar
+   al cruce RECIENTE de regimen).
+3. **Salidas x breakout:** tp1_r=1.5 SI mejora sobre breakout (PF 1.33, unico two-step
+   no-nulo) — el veredicto E2 de P4 era especifico del motor pullback. be_after_tp1
+   neutro. trail_on_high letal (mata los pocos runners que pasan). Nuevo mejor candidato:
+   **E7 = breakout + risk 1% + tp1_r 1.5**, con mas cola (breach one-step 14% @540d).
+4. **EV sigue negativo:** P~0.18-0.24 con mediana 1-2.3 anos por intento. El veredicto
+   NO COMPRAR del checkpoint FASE 7 se mantiene.
+
+Consecuencia: las palancas gratis no bastan. Para reabrir el proyecto hace falta un salto
+de 3-5x en expectancy x frecuencia. Candidatos estructurales (requieren OK explicito,
+ver analisis sesion 17): H2 = shorts en regimen bear (espejo del breakout; duplica
+disponibilidad, funding a favor, resuelve inactividad 90d), H3 = multi-simbolo (ETH+)
+con cap de riesgo agregado por correlacion, H4 = filtro de compresion de vol sobre el
+breakout. Gates si se ejecutan: seguir solo si P(pasar) two-step >= 40%; comprar solo
+con >= 60% + robustez slippage x2. Si tras H2+H3 sigue < 40%: ABANDONO DEFINITIVO.
+
+---
+
+## 11. H2/H3 — SHORTS Y MULTI-SIMBOLO (2026-07-03, sesion 17, OK de Matias)
+
+**Implementacion H2** (`strategies/prop_swing.py`, `allow_shorts=False` default — v0/E7
+intactos, invarianza verificada con smoke identico pre/post refactor; tests 118/118):
+regimen bear = espejo exacto (EMA50D<EMA200D + close<EMA200D + ADX>=adx_min), breakout
+Donchian a la baja, stop/TP1/chandelier invertidos. Shorts SINTETICOS solo backtest
+(requieren `adjust_balance`): mark-to-market barra a barra contra el balance USDT para
+que el trailing DD vea el uPnL en continuo (los shorts de pro_trend NO hacen MTM — su
+equity se congela durante el short; inaceptable para reglas prop). Costes identicos a
+`_fill_market`; fee de apertura prorrateado en los cierres parciales. `self.realized`
+= (ts, pnl neto) de cada cierre (long+short), fuente por-trade del simulador (los
+sinteticos no pasan por el pairing ACB). En Bybit real seran perps nativos (P5).
+
+**Implementacion H3** (`tools/prop_challenge_sim.py --symbols A,B`): curva portfolio =
+sleeves independientes de $10k por simbolo, equity sumada, trades concatenados. Con n
+sleeves a riesgo r, el riesgo por trade a nivel cuenta es ~r/n.
+
+**Resultados (realistic, buffer 0.2, E7 = breakout + risk 1% + tp1_r 1.5):**
+
+| Config | Ventana | Edge / PF / maxDD | 1-step @540d (breach) | 2-step @540d (breach) |
+|---|---|---|---|---|
+| E7 long-only | 2018-26 | +20.3% / 1.33 / -10.1% | 0.243 (0.141) | 0.182 (0.018) |
+| **E8 = E7+shorts** | 2018-26 | +41.1% / 1.30 / -12.5% | **0.485** (0.191) | **0.308** (0.085) |
+| E7 long-only | 2020-26 | +10.4% / 1.19 / -10.1% | 0.117 (0.199) | 0.004 (0.026) |
+| **E8 = E7+shorts** | 2020-26 | +27.3% / 1.18 / -12.5% | **0.401** (0.263) | **0.348** (0.121) |
+| E7 BTC+ETH 1% | 2020-26 | ETH sleeve: +1.3% / 1.03 | 0.209 (0.308) | 0.073 (0.188) |
+| E7 BTC+ETH 2% | 2020-26 | ETH sleeve: -2.3% / 0.96 | 0.210 (0.356) | 0.000 (0.263) |
+| E8 BTC+ETH 1% | 2020-26 | ETH sleeve: -7.6% | 0.435 (0.438) | 0.200 (0.236) |
+
+**Conclusiones:**
+1. **H2 ADOPTADO como candidato (E8).** Los shorts ~2-4x el pass rate en las DOS ventanas
+   (robusto, no window-fitting). El bear 2022 pasa de 0 trades a +14.2% con maxDD 3.4%.
+   Resuelve ademas la inactividad de 90d. Worst daily DD 2.0% — el daily nunca es el
+   modo de fallo; TODOS los breach son max-loss-total.
+2. **H3 RECHAZADO (no reintentar).** ETH con este motor no tiene edge en ninguna
+   direccion (long PF 1.03; con shorts -7.6% el sleeve). Anade varianza, no alfa:
+   sube pass one-step pero sube breach mas (0.438 vs 0.263) y HUNDE el two-step
+   (0.200 vs 0.348). El edge del breakout-regimen es BTC-especifico.
+3. **Insight estructural: la regla que mata es el MAX LOSS TOTAL (6% one-step / 10%
+   two-step), no el daily DD ni el target.** El two-step domina al one-step en
+   supervivencia (breach 0.085 vs 0.191 en 2018-26) y a 365d incluso pasa MAS que el
+   one-step en 2020-26 (0.222 vs 0.208). Confirma Two-Step como plan correcto.
+   Corolario NO testeado: risk >1% podria pagar en two-step (el techo de 10% tiene
+   margen) aunque E1 demostro que amplifica breach en one-step (techo 6%).
+4. **GATE: dos-step mejor = 0.348 (2020-26) / 0.308 (2018-26) < 40%.** Formalmente en
+   zona de abandono. Mediana para pasar two-step ~490 dias (~1.4 anos/intento) — el
+   tiempo, no solo la probabilidad, sigue lastrando el EV. Swing Upgrade (+$89) inerte
+   en todas las filas (el daily nunca muerde) — NO comprarlo con este motor.
+
+**Estado: E8 congelable; decision de Matias pendiente entre (a) abandono definitivo por
+gate <40%, o (b) exactamente DOS runs finales medidos antes del cierre: risk 1.25% y
+1.5% sobre E8 two-step (dimension nunca testeada bajo el techo de 10%; E1/E6b eran
+one-step-era) y/o H4 squeeze. Sin mas iteraciones despues, pase lo que pase.**
+[Decision de Matias 2026-07-03: opcion (b) + H4. Resultado en seccion 12.]
+
+---
+
+## 12. RUNS FINALES Y VEREDICTO DE CIERRE (2026-07-03, sesion 17)
+
+**H4 squeeze: RECHAZADO sin ambiguedad.** `use_squeeze` (ATR%4H bajo su mediana de 90
+bloques) mata el edge: +3.7% en 8 anios (vs +41% E8), two-step @540d 7.0%. Filtra
+exactamente los breakouts buenos. Flag queda en config (default False), no reintentar.
+
+**risk 1.25%/1.5% sobre E8: runs NULOS — descubrieron el artefacto del cap.** Subir el
+riesgo no cambio nada (mismos 184 trades, mismo PnL) porque `max_notional_pct=0.25`
+clampeaba el sizing: con stop 2xATR4H (~1-3% del precio), risk>=1% implica notional
+33-100% y el cap de 25% lo recorta. **El riesgo efectivo de TODO el proyecto habia sido
+~0.25-0.75%, nunca el configurado.** El cap 25% era proxy de spot sin apalancamiento;
+en Bybit perps el limite funded real es margen<=25% y notional<=2x: con 4-5x de
+leverage, notional 50% = margen 10-12% (legal). Se midio el des-clampeo como cambio
+estructural aislado (E9 = E8 + `max_notional_pct=0.5`):
+
+**Matriz de decision E9 (two-step @540d, pass/breach; one-step entre parentesis):**
+
+| Config | 2018-26 realistic | 2020-26 realistic | 2018-26 CONSERVATIVE |
+|---|---|---|---|
+| E9 r1.0% | 0.610/0.297 (0.703/0.229) | 0.452/0.413 (0.589/0.310) | 0.371/0.341 (0.580/0.278) |
+| E9 r1.25% | 0.643/0.307 (0.730/0.265) | 0.550/0.422 (0.654/0.339) | 0.437/0.327 (0.599/0.303) |
+
+Cero violaciones de la regla 3%/trade; worst daily DD 2.7-2.8% (el daily nunca muerde).
+maxDD del motor 19-26% — una cuenta funded (techo 6-10%) muere eventualmente; el EV
+funded es "payouts hasta el blowup", no renta perpetua.
+
+**VEREDICTO: NO-GO — NO comprar challenge.** Los criterios de FASE 7 exigen P(pasar)
+>=60% CON COSTES CONSERVADORES y P(breach) <=20%. Con conservative (slippage 3x, mas
+duro que el x2 exigido): two-step 37-44%, one-step 58-60%, y breach 27-42% en todas las
+celdas — ambos criterios fallan. El 60%+ solo existe con costes realistic en la ventana
+ya sobre-explotada. Ademas el FUNDING de perps NO esta modelado (notional 50%, holds
+multi-dia: ~1.5-2.5%/anio de drag en longs) — solo empeoraria.
+
+**Balance del proyecto:** de 11.8% (E6) a 73%/64% realistic (E9 r1.25) — el motor es
+real (PF 1.14 conservative, +39%/8a) pero fragil a costes, y la economia del challenge
+no cierra bajo supuestos honestos. Hallazgos estructurales que quedan: (1) shorts BTC
+= la mitad del edge; (2) ETH inerte con este motor; (3) la regla letal es el max loss
+total, no el daily DD; (4) Swing Upgrade inutil para este motor; (5) el cap de notional
+clampeaba el riesgo — cualquier motor futuro debe verificar sizing efectivo vs
+configurado.
+
+**Condiciones de reapertura (todas, no alguna):** modelo Bybit real (fees maker/taker,
+funding historico, spread) integrado en el backtest; y un motor que de two-step >=60% /
+breach <=20% bajo ese modelo CON conservative. Sin eso, esta linea queda CERRADA.
+Config E9 congelada y reproducible:
+`--config '{"entry_mode":"breakout","risk_per_trade":0.0125,"tp1_r":1.5,"allow_shorts":true,"max_notional_pct":0.5}'`.
+[2026-07-03: Matias decide NO cerrar — reapertura via PLAN B, seccion 13.]
+
+---
+
+## 13. PLAN B — REMAKE (2026-07-03, sesion 17 bis; decision de Matias: no matar el proyecto)
+
+Premisa corregida antes de disenar: una prop firm es rentable vendiendo challenges a
+gente que falla — su existencia NO demuestra que pasar sea sistematicamente alcanzable.
+Lo que SI es verdad: (a) nuestro no-go se decidio por SUPUESTOS de coste (conservative
+15bps), no por costes medidos; (b) el unico gap real es expectancy del motor — el risk
+management esta RESUELTO (daily DD, 3%/trade, distribucion, margen: todo verde). El
+remake ataca expectancy y sustituye supuestos por medidas.
+
+- **N0 — Medir la realidad antes de redisenar (EN PARALELO, coste ~0, 2-4 semanas).**
+  Bybit testnet con E9 congelado. El no-go realistic->conservative es una disputa de
+  10bps de slippage: BTC perp con ordenes de $3-6k tiene spread ~1bp y book profundo.
+  Medir slippage real por orden, fees efectivas, funding pagado/cobrado (reusar patron
+  parity-check F15). DECISION CON DATOS: coste real <=7bps por lado -> E9 one-step
+  (0.599-0.730 pass) se re-evalua como candidato de compra directo; >=12bps -> el
+  remake es obligatorio y N0 calibra el modelo de N1.
+- **N1 — Modelo Bybit en el backtest** (= condicion de reapertura de seccion 12): fees
+  maker/taker Bybit, funding historico (reusar `funding_context`), spread. Todos los
+  gates futuros se evaluan bajo este modelo.
+- **N2 — Screens de alfa NO-indicador con datos YA disponibles (barato, sin estrategia
+  nueva todavia).** Sobre el cache 1H 2014-2026 y funding_context:
+  (a) estacionalidad intradia/semanal (sesiones US/EU/Asia, dia de semana, fin de semana);
+  (b) funding extremo como senal (crowding: funding p95+ -> squeeze de longs);
+  (c) drift alrededor de settlements de funding (00/08/16 UTC);
+  (d) reversion post-barrida (barras 1H con rango >p99: continuacion o reversion).
+  Metodo: expectancy condicional vs incondicional por anio (estabilidad temporal, no
+  t-stat de una ventana). Gate: efecto estable en >=6 de 8 anios -> pasa a motor N4.
+- **N3 — Datos derivados nuevos (OI, liquidaciones, basis)** — SOLO si N2 no da nada y
+  N0 justifica seguir: evaluar coste/factibilidad primero (Bybit API tiene poco
+  historico; archivos completos suelen ser de pago).
+- **N4 — Motores candidatos** desde lo que sobreviva de N2/N3, cada uno AISLADO por el
+  simulador bajo modelo N1. Gates: two-step >=60% / breach <=20% con conservative-N1.
+- **N5 — Meta-labeling sobre E8/E9** (filtrar los trades del breakout con features de
+  contexto: funding, vol percentile, sesion, distancia a EMA; walk-forward con embargo).
+  ULTIMO recurso: maximo riesgo de overfit-hunting del proyecto entero.
+- **Presupuesto duro:** N0 corre en paralelo y es casi gratis. Si tras N2 (y N3 si se
+  aprueba) ningun efecto pasa su gate Y N0 da costes reales >=12bps -> cierre sin
+  apelacion. No hay N6.
+
+### N2 — EJECUTADO (2026-07-03, `tools/alpha_screens.py`)
+
+BTC 1H 2015-2026 (96930 barras) + funding Bybit por settlement (6874, 2020-03 -> hoy,
+cache `data/cache/funding_bybit_BTCUSDT.json`). Barra de tradability standalone ~30bps.
+LECCION METODOLOGICA: reportar SIEMPRE con dedup de senales solapadas — el screen D
+paso de +157bps (10/11 anios) a +19bps (5/11) al deduplicar: las cascadas de un crash
+cuentan N veces el mismo rebote. Toda senal densa en el tiempo debe deduplicarse antes
+de creersela.
+
+| Screen | Resultado (dedup) | Veredicto |
+|---|---|---|
+| A) Hora del dia | max h21 +4.6bps (11/12 anios) | NO tradable (10x bajo la barra) |
+| C) Dia de semana | Lun +46 / Mie +36 / Vie +37 bps (8-9/11) | Marginal; solo micro-filtro |
+| D) Post-barrida 1H >p99 | f24 +19bps, WR 53%, 5-6/11 anios | MUERTO (artefacto de clustering) |
+| B) Funding extremo trailing p95/p05 | ver abajo | **UNICO SUPERVIVIENTE — pasa gate** |
+
+**B en detalle (dedup >72h entre senales, horizonte 72h):**
+- funding>p95 (longs crowded): n=54 (~9/anio), f72 media +144 / mediana +92 bps,
+  WR 65%, **6/6 anios positivos**. OJO: f24 mediana -16 (el efecto tarda ~1 dia en
+  arrancar — detalle de diseno para N4).
+- funding<p05 (shorts crowded, squeeze): n=126 (~21/anio), f72 media +108 / mediana
+  +58 bps, WR 60%, 5/6 anios.
+- Ambas colas son LONG a 72h. Sin senal short en este screen. Solo 6 anios de datos
+  (Bybit 2020+), regimen mayormente alcista — control pendiente en N4: exceso sobre
+  base f72 (~+51bps) y comportamiento 2022.
+
+**Consecuencia -> N4:** un solo motor candidato: "funding-extreme long" (entrada tras
+extremo de funding deduplicado, hold ~72h con stop, posible retraso de entrada 24h en
+la cola p95). ~30 senales/anio. Debe medirse por el simulador prop; N1 (modelo Bybit
+con funding) es prerequisito para el veredicto final.
+
+---
+
+## 14. E9 COMO ESTRATEGIA STANDALONE — COMPARATIVA vs SWING v5 (2026-07-03)
+
+Peticion de Matias: medir si E9 es rentable "como tal" (capital propio), mismas ventanas
+y ruta CLI que las anclas del Swing. Backtests `main.py backtest --strategy prop
+--costs realistic` con config E9. Journals:
+`journal_prop_swing_..._20260703_171030.json` (2018) / `..._171449.json` (2015).
+
+| Metrica (realistic) | Swing v5 2015-26 | E9 2015-26 | Swing v5 2018-26 | E9 2018-26 |
+|---|---|---|---|---|
+| Balance final ($10k) | $9.164M (CLI) | $26,347 | $219.8k | $16,275 |
+| CAGR | +85.9% | +9.2% | +47.1% | +6.3% |
+| Max DD | -52.73% | -21.19% | -53.72% | -21.19% |
+| Calmar | 1.63 | 0.43 | 0.88 | 0.30 |
+| Sharpe / Sortino | 1.38 / 1.57 | 0.63 / 0.90 | — | 0.30 / 0.44 |
+| Underwater max | 922 d | 658 d | — | 658 d |
+| Tiempo en mercado | 100% | 15.8% | 100% | 14.7% |
+| Posiciones | 70 rebal. | 259 (190L/69S) | 53 rebal. | 183+shorts |
+| B&H ventana | +27,653% | +27,653% | +549% | +549% |
+
+PnL por anio E9 2015-26 (nivel posicion, shorts incluidos): 10/11 anios positivos;
+2022 = 2o mejor anio (+$4,263, los shorts entregan en bear). **2025 = unico anio
+negativo (-$3,963)**; el Max DD -21.19% es exactamente Q1-2024 -> finales-2025 (654d
+peak->trough): el peor tramo historico del motor es EL MAS RECIENTE (mercado en rango
+2024-25 tritura breakouts en ambas direcciones).
+
+**Conclusiones:**
+1. E9 es rentable standalone (CAGR +9.2%, 10/11 anios verdes) pero NO competitivo como
+   vehiculo de capital propio: el Swing lo domina TAMBIEN ajustado a riesgo (Calmar
+   1.63 vs 0.43, Sharpe 1.38 vs 0.63). Con capital propio, E9 no tiene rol.
+2. El valor de E9 es exclusivamente prop: DD -21% y daily DD max 2.8% son inaceptables
+   de superar para reglas prop, y el apalancamiento ajeno multiplica su CAGR modesto.
+3. ALERTA para la decision de compra: la degradacion 2024-2025 significa que los pass
+   rates @540d beben sobre todo de ventanas 2018-2023. Un challenge comprado HOY entra
+   en el regimen que peor le sienta al motor. Refuerza N0 (medir antes de comprar) y
+   pide un degradation-check tipo F19 para E9 si algun dia opera.
+4. Nota tecnica: el resumen trimestral del CLI solo ve patas long (los shorts sinteticos
+   no pasan por el pairing ACB); el PnL por anio del journal (true_pnl_usdt) es la vista
+   completa. Metricas de equity (CAGR/DD/Sharpe) correctas en ambas rutas.

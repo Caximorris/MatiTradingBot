@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from statistics import median
-from typing import Sequence
+from typing import Callable, Sequence
 
 # ---------------------------------------------------------------------------
 # Config y presets (numeros verificados en HYROTRADER_PLAN.md seccion 9)
@@ -275,10 +275,13 @@ def simulate_challenges(
     start_every_days: int = 7,
     trade_pnls: Sequence[tuple[datetime, Decimal]] | None = None,
     two_step: bool = False,
+    start_filter: Callable[[datetime], bool] | None = None,
 ) -> ChallengeStats:
     """
     Lanza un challenge cada `start_every_days` a lo largo de la curva y agrega resultados.
     two_step=True usa evaluate_two_step con cfg como fase 1 y TWO_STEP_P2 como fase 2.
+    start_filter(ts) -> bool: si se pasa, solo arrancan challenges en timestamps que lo
+    cumplan (p.ej. regimen bull en el arranque); los que no, no consumen ventana.
     """
     equity = _as_float_curve(equity_curve)
     tp = [(ts, float(p)) for ts, p in trade_pnls] if trade_pnls is not None else None
@@ -286,15 +289,18 @@ def simulate_challenges(
     stats = ChallengeStats(label=cfg.label + ("+p2" if two_step else ""))
     if not equity:
         return stats
-    # La fase 2 hereda upgrade y buffer de la fase 1
+    # La fase 2 hereda upgrade, buffer y timeout de la fase 1
     p2 = TWO_STEP_P2.with_(swing_upgrade=cfg.swing_upgrade,
-                           intrabar_buffer=cfg.intrabar_buffer)
+                           intrabar_buffer=cfg.intrabar_buffer,
+                           max_days=cfg.max_days)
 
     next_start: datetime | None = None
     total_days = 0
     near_days = 0
     for i, (ts, _) in enumerate(equity):
         if next_start is not None and ts < next_start:
+            continue
+        if start_filter is not None and not start_filter(ts):
             continue
         next_start = ts + timedelta(days=start_every_days)
         r = (evaluate_two_step(equity, i, cfg, p2, tp) if two_step
