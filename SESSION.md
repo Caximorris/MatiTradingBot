@@ -4,7 +4,7 @@ Complemento de CLAUDE.md. **Este archivo es deliberadamente corto** para no gast
 cada arranque. El detalle historico completo (logs de sesion, tablas de backtests, referencia de
 cada modulo) vive en **`SESSION_ARCHIVE.md`** — leelo SOLO cuando lo necesites, no por defecto.
 
-**Ultima actualizacion: 2026-07-02 (sesion 16 — Swing v5 post-audit congelado)**
+**Ultima actualizacion: 2026-07-04 (sesion 18 — paper Swing v5 DESPLEGADO en GCP, F13 en curso)**
 
 Punteros a referencia (leer bajo demanda, NO precargar):
 - `SESSION_ARCHIVE.md` — logs sesiones 12/13, auditoria 2026-06-30, resultados backtest, referencia
@@ -25,6 +25,30 @@ Punteros a referencia (leer bajo demanda, NO precargar):
   `core/prop_rules.py` (simulador reglas prop), `strategies/prop_swing.py` (entry_mode
   pullback|breakout), `tools/prop_challenge_sim.py`. Swing v5 por el simulador = breach 100%
   (baseline). Retomable solo con un motor nuevo que de P(pasar)>=60% en el simulador.
+  Sesion 17 (2026-07-03, secciones 10-12 del plan): H1 palancas gratis insuficientes y
+  bull-start REFUTADO; H2 shorts sinteticos con MTM (`allow_shorts`) = E8, ~2-4x pass;
+  H3 ETH RECHAZADO (sin edge, no reintentar); H4 squeeze RECHAZADO (mata el edge).
+  Hallazgo clave: `max_notional_pct=0.25` clampeaba el riesgo efectivo de TODO el
+  proyecto (~0.25-0.75% real). E9 = E8 + cap 0.5 (legal en perps con leverage) llego a
+  two-step 64%/one-step 73% realistic PERO **VEREDICTO FINAL: NO-GO** — con costes
+  conservative cae a 37-44% two-step y breach 27-42% (criterios: >=60% y <=20%), y el
+  funding de perps ni esta modelado. Seccion 12: balance, hallazgos, condiciones de
+  reapertura. Config E9 congelada en el plan; flags reversibles en prop_swing.
+  **Matias decide NO cerrar** -> **PLAN B (seccion 13)**: N0 testnet Bybit para medir
+  costes REALES con E9 (el no-go fue por supuestos de slippage, no medidas) + N1 modelo
+  Bybit en backtest + N2 screens de alfa no-indicador con datos existentes
+  (estacionalidad, funding extremo, settlement drift, post-barrida) + N4 motores + N5
+  meta-labeling (ultimo recurso). Presupuesto duro: sin efecto en N2 y costes reales
+  >=12bps -> cierre sin apelacion. Seccion 14: E9 standalone vs Swing v5 — rentable
+  (CAGR +9.2% 2015-26, DD -21%, 10/11 anios verdes) pero dominado por el Swing tambien
+  en riesgo-ajustado (Calmar 0.43 vs 1.63); rol de E9 = solo prop. ALERTA: 2025 unico
+  anio negativo (-$3.9k) y el Max DD es Q1-24->2025 (degradacion reciente del motor).
+  N2 EJECUTADO (`tools/alpha_screens.py` + funding Bybit cacheado): hora-del-dia y
+  post-barrida MUERTOS tras dedup (leccion: deduplicar senales solapadas SIEMPRE);
+  dia-de-semana marginal; **funding extremo = unico superviviente** (p95: +92bps
+  mediana f72, WR 65%, 6/6 anios; p05: +58bps, 5/6; ambas colas long, ~30 senales/anio).
+  SIGUIENTE: N4 prototipo "funding-extreme long" + N1 modelo Bybit; N0 (testnet)
+  BLOQUEADO en Matias (cuenta Bybit testnet + API keys).
 
 ---
 
@@ -216,6 +240,18 @@ y `bot add` no aceptaba swing. Fixes aplicados:
   de la auditoria v5). Ancla 2015-26 realistic re-verificada identica. Tests 96/96.
 Paper listo para arrancar: `python main.py bot enable swing_allocator_btc_usdt BTC-USDT` +
 `python main.py start` (requiere OK explicito y proceso vivo; reinicios ya no pierden estado).
+
+**HECHO (sesion 18, 2026-07-04): PAPER DESPLEGADO — VM GCP e2-micro us-central1 (free tier),
+Debian 13, VM `matitrbot`.** Servicios verdes, INIT 0%->60% + SELL 60%->20% @ $62,573
+(regime_bear,halving_bear_onset — coincide con parity F15). Smoke F13 corre desde
+2026-07-04 08:58 UTC; 30 dias de paridad empiezan al superarlo. Fixes del deploy:
+DetachedInstanceError en `bot enable/disable` (9214e1e), cron vacio por `set -e` + pipe sin
+crontab previo en `install_vm.sh`, y 403 de Cloudflare OKX al UA de urllib (`fetch_price`).
+Control remoto Telegram AMPLIADO (a15c8e2): watchdog sin-tick push, heartbeat diario 08:00 UTC,
+backup semanal automatico al chat, /equity /chart (PNG matplotlib lazy, `tools/tg_charts.py`),
+/signals /parity /health /logs /backup /restart /update (sudo -n; GCP google-sudoers),
+setMyCommands, HTML + fallback texto plano. Todo verificado en produccion. Estado y runbook:
+`DEPLOY_PAPER.md`. Operacion normal = leer heartbeat 08:00 + check 12:10; consola innecesaria.
 
 **HECHO (sesion 16 ter, 2026-07-02): infra cloud para el paper — plan aprobado por Matias.**
 El paper correra en VM gratuita (Oracle Free / GCP e2-micro) con control remoto por Telegram.
