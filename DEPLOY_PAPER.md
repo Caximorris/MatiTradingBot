@@ -64,11 +64,22 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 
 | Quiero... | Como |
 |---|---|
-| Estado (vivo?, % BTC, valor) | Telegram `/status` (o SSH: `python main.py status`) |
+| Estado (vivo?, % BTC, valor, vs B&H) | Telegram `/status` (o SSH: `python main.py status`) |
 | Informe de rebalanceos | Telegram `/report` o `/report 25` |
+| Grafico equity bot vs B&H | Telegram `/equity` o `/equity 45` (2-60 dias) |
+| Grafico precio + rebalanceos | Telegram `/chart [dias]` |
+| Target y senales AHORA (calculo live) | Telegram `/signals` (~1 min; corre parity check) |
+| Paridad F15: ultimo check y racha /30 | Telegram `/parity` (lee daily_checks.log) |
+| Salud VM (servicios, RAM, disco, errores) | Telegram `/health` |
+| Logs sin SSH | Telegram `/logs` o `/logs 100` |
+| Backup DB+estado al chat | Telegram `/backup` (ademas automatico semanal) |
+| Reiniciar el bot sin SSH | Telegram `/restart` |
+| Actualizar codigo sin SSH | Telegram `/update` (git pull --ff-only + restart) |
 | Pausar a distancia | Telegram `/pause` (proceso sigue; no decide) |
 | Reanudar | Telegram `/resume` |
 | Aviso de cada rebalanceo | Automatico (alerta Telegram) |
+| Caida del proceso (sin tick >10 min) | Automatico (watchdog Telegram, alerta y recuperacion) |
+| "Sigue vivo?" sin preguntar | Automatico (heartbeat diario 08:00 UTC) |
 | Resultado paridad diaria | Automatico 12:10 UTC (alerta especial si PARITY_FAIL) |
 | Logs en vivo | SSH: `journalctl -u matibot -f` |
 | Parada total (kill switch) | SSH: `python main.py stop` (deshabilita bots; re-enable para retomar) |

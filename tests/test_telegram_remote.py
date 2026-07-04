@@ -105,3 +105,69 @@ def test_format_report_truncates_and_counts():
     assert "15 rebalanceo(s)" in out
     assert "5 anteriores omitidos" in out
     assert out.count("regime_bull") == 10
+
+
+def test_parse_daily_checks_and_streak():
+    from tools.telegram_remote import format_parity, parse_daily_checks, parity_streak
+    log = (
+        "===== daily_checks 2026-07-05T12:10:00Z =====\n"
+        "timestamp,2026-07-05T12:00:00+00:00\n"
+        "live_target,0.2000\n"
+        "live_signals,regime_bear;halving_bear_onset\n"
+        "PARITY_OK\n"
+        "no_data\n"
+        "===== daily_checks 2026-07-06T12:10:00Z =====\n"
+        "live_target,0.2000\n"
+        "PARITY_FAIL\n"
+        "===== daily_checks 2026-07-07T12:10:00Z =====\n"
+        "live_target,0.2000\n"
+        "PARITY_OK\n"
+    )
+    blocks = parse_daily_checks(log)
+    assert [b["parity"] for b in blocks] == [True, False, True]
+    assert blocks[0]["target"] == "0.2000"
+    assert parity_streak(blocks) == 1          # el FAIL corta la racha
+    out = format_parity(blocks)
+    assert "1/30" in out and "OK" in out
+    assert "PARIDAD" in format_parity([])
+
+
+def test_build_equity_series_reconstructs_holdings():
+    from tools.tg_charts import build_equity_series
+    h = 3_600_000
+    t0 = 1_751_600_000_000
+    rebalances = [
+        {"timestamp": "2026-07-04T08:00:00+00:00", "direction": "INIT",
+         "btc_pct_after": 0.6, "price": 100.0, "portfolio_usdt": 1000.0},
+        {"timestamp": "2026-07-04T10:00:00+00:00", "direction": "SELL",
+         "btc_pct_after": 0.2, "price": 100.0, "portfolio_usdt": 1000.0},
+    ]
+    # timestamps de velas alineados con los de los rebalanceos
+    import datetime as dt
+    base = int(dt.datetime(2026, 7, 4, 8, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    candles = [(base + i * h, 100.0 + i * 10) for i in range(4)]  # 100,110,120,130
+
+    s = build_equity_series(rebalances, candles)
+    # INIT: 6 BTC + 400 USDT. Velas 0-1: 6*100+400=1000, 6*110+400=1060
+    assert s["bot"][0] == 1000.0 and s["bot"][1] == 1060.0
+    # SELL en vela 2 (10:00): 2 BTC + 800 USDT -> 2*120+800=1040, 2*130+800=1060
+    assert s["bot"][2] == 1040.0 and s["bot"][3] == 1060.0
+    # B&H: 10 BTC desde el INIT -> 1000,1100,1200,1300
+    assert s["bnh"] == [1000.0, 1100.0, 1200.0, 1300.0]
+    assert [e[2] for e in s["events"]] == ["INIT", "SELL"]
+    assert build_equity_series([], candles)["ts"] == []
+
+
+def test_format_heartbeat_summarizes():
+    from decimal import Decimal
+    from datetime import datetime, timedelta, timezone
+    from tools.telegram_remote import format_heartbeat
+    now = datetime(2026, 7, 5, 8, 0, tzinfo=timezone.utc)
+    rows = [_row(True, now - timedelta(minutes=1))]
+    balances = {"BTC": Decimal("0.02"), "USDT": Decimal("8000")}
+    rebalances = [{"timestamp": "2026-07-04T08:59:00+00:00", "portfolio_usdt": 10000.0,
+                   "price": 62578.0}]
+    hb = format_heartbeat(rows, balances, Decimal("62578"), rebalances, [], now)
+    assert "vivo" in hb and "parity 0/30" in hb and "1 rebalanceos" in hb
+    hb_paused = format_heartbeat([_row(False)], balances, None, [], [], now)
+    assert "pausado" in hb_paused

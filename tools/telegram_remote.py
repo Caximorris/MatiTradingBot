@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import html
 import json
+import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.request
@@ -33,12 +36,20 @@ sys.path.insert(0, str(ROOT))
 
 from loguru import logger
 
-from tools.tg_send import tg_api, tg_credentials, tg_send
+from tools.tg_send import tg_api, tg_credentials, tg_send, tg_send_document, tg_send_photo
 
 PAPER_STATE = ROOT / "data" / "runtime" / "paper_state.json"
 REBALANCES = ROOT / "data" / "runtime" / "swing_rebalances.jsonl"
+DAILY_CHECKS_LOG = ROOT / "data" / "runtime" / "daily_checks.log"
+TG_STATE = ROOT / "data" / "runtime" / "tg_state.json"   # heartbeat/backup/watchdog persistido
+TRADING_DB = ROOT / "trading.db"
 STATE_ROW_NAME = "swing_allocator"   # fila de estado interno — NUNCA pausar/reanudar esta
 LIVENESS_MAX_AGE_MIN = 10            # last_run mas viejo que esto con bot activo = proceso caido
+UNIT_BOT = "matibot"
+UNIT_TG = "matibot-telegram"
+HEARTBEAT_HOUR_UTC = 8               # 1 mensaje/dia: el silencio deja de ser ambiguo
+BACKUP_EVERY_DAYS = 7                # backup automatico semanal al chat
+PARITY_TARGET_DAYS = 30              # criterio de cierre F15
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +95,15 @@ def read_rebalances(path: Path = REBALANCES) -> list[dict]:
 
 
 def fetch_price(symbol: str = "BTC-USDT") -> Decimal | None:
-    """Ticker publico OKX — sin credenciales."""
+    """Ticker publico OKX — sin credenciales.
+
+    User-Agent obligatorio: el Cloudflare de OKX devuelve 403 al UA por defecto
+    de urllib (visto en el deploy GCP 2026-07-04); curl y aiohttp pasan.
+    """
     url = f"https://www.okx.com/api/v5/market/ticker?instId={symbol}"
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         return Decimal(str(data["data"][0]["last"]))
     except Exception as exc:
@@ -215,21 +231,322 @@ def format_rebalance_alert(rb: dict) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Sistema: subprocesos, journal, salud
+# ---------------------------------------------------------------------------
+
+def _run(cmd: list[str], timeout: int = 30, use_sudo: bool = False) -> tuple[int, str]:
+    """Ejecuta un comando y devuelve (rc, salida). sudo -n = nunca pide password
+    (en GCP el usuario tiene NOPASSWD via google-sudoers)."""
+    if use_sudo:
+        cmd = ["sudo", "-n"] + cmd
+    try:
+        p = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except Exception as exc:
+        return 1, str(exc)
+
+
+def _journal(unit: str, extra: list[str], timeout: int = 30) -> str:
+    """journalctl con fallback a sudo (el usuario puede no estar en el grupo adm)."""
+    base = ["journalctl", "-u", unit, "--no-pager", *extra]
+    rc, out = _run(base, timeout)
+    if rc != 0:
+        _, out = _run(base, timeout, use_sudo=True)
+    return out
+
+
+def format_health() -> str:
+    lines = ["\U0001FA7A <b>SALUD</b>", ""]
+    for unit in (UNIT_BOT, UNIT_TG):
+        _, state = _run(["systemctl", "is-active", unit])
+        icon = "\U0001F7E2" if state == "active" else "\U0001F534"
+        lines.append(f"{icon} {unit}: {_esc(state or '?')}")
+    try:
+        mem = {}
+        for ln in Path("/proc/meminfo").read_text().splitlines():
+            k, v = ln.split(":", 1)
+            mem[k] = int(v.strip().split()[0])
+        ram = 100 * (1 - mem["MemAvailable"] / mem["MemTotal"])
+        swap = 100 * (1 - mem["SwapFree"] / mem["SwapTotal"]) if mem.get("SwapTotal") else 0.0
+        lines.append(f"RAM {ram:.0f}% | swap {swap:.0f}%")
+    except Exception:
+        lines.append("RAM: n/d (no-Linux)")
+    du = shutil.disk_usage(ROOT)
+    lines.append(f"Disco {du.used / du.total * 100:.0f}% ({du.free / 2**30:.1f} GB libres)")
+    try:
+        lines.append(f"Load 1m: {Path('/proc/loadavg').read_text().split()[0]}")
+    except Exception:
+        pass
+    out = _journal(UNIT_BOT, ["--since", "24 hours ago", "-o", "cat"], timeout=60)
+    n_err = len([ln for ln in out.splitlines()
+                 if re.search(r"error|exception|traceback", ln, re.I)])
+    icon = "\U0001F7E2" if n_err == 0 else "\U0001F534"
+    lines.append(f"{icon} Errores en journal 24h: {n_err}")
+    return "\n".join(lines)
+
+
+def cmd_logs(n: int) -> str:
+    out = _journal(UNIT_BOT, ["-n", str(n), "-o", "short-iso"])
+    if not out:
+        return "Journal vacio o inaccesible."
+    return f"\U0001F4DC <b>LOGS matibot</b> (ultimas {n})\n<pre>{_esc(out)[-3500:]}</pre>"
+
+
+# ---------------------------------------------------------------------------
+# Paridad F15 y senales
+# ---------------------------------------------------------------------------
+
+def parse_daily_checks(text: str) -> list[dict]:
+    """Bloques del daily_checks.log -> [{ts, parity(bool|None), target}]."""
+    blocks: list[dict] = []
+    cur: dict | None = None
+    for line in text.splitlines():
+        if line.startswith("===== daily_checks"):
+            cur = {"ts": line.split()[2] if len(line.split()) > 2 else "?",
+                   "parity": None, "target": None}
+            blocks.append(cur)
+        elif cur is not None:
+            if line.startswith("live_target,"):
+                cur["target"] = line.split(",", 1)[1].strip()
+            elif line.strip() == "PARITY_OK":
+                cur["parity"] = True
+            elif "PARITY_FAIL" in line:
+                cur["parity"] = False
+    return blocks
+
+
+def parity_streak(blocks: list[dict]) -> int:
+    streak = 0
+    for b in reversed(blocks):
+        if b["parity"] is True:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def format_parity(blocks: list[dict]) -> str:
+    if not blocks:
+        return ("\U0001F50D <b>PARIDAD F15</b>\n"
+                "Sin checks aun — el cron corre a las 12:10 UTC.")
+    last = blocks[-1]
+    if last["parity"] is True:
+        icon, verdict = "\U0001F7E2", "OK"
+    elif last["parity"] is False:
+        icon, verdict = "\U0001F534", "FAIL — pausa e investiga (bug por definicion)"
+    else:
+        icon, verdict = "\U0001F7E1", "sin resultado (revisar log)"
+    lines = [
+        "\U0001F50D <b>PARIDAD F15</b>",
+        f"{icon} Ultimo check {_esc(last['ts'])}: {verdict}",
+    ]
+    if last["target"]:
+        lines.append(f"Target: {_esc(last['target'])}")
+    lines.append(f"Racha: <b>{parity_streak(blocks)}/{PARITY_TARGET_DAYS}</b> dias OK")
+    return "\n".join(lines)
+
+
+def cmd_signals() -> str:
+    tg_send("⏳ Calculando senales (descarga 6000 velas, ~1 min)...")
+    rc, out = _run([sys.executable, str(ROOT / "tools" / "swing_parity_check.py")],
+                   timeout=300)
+    kv = dict(ln.split(",", 1) for ln in out.splitlines() if "," in ln)
+    if "live_target" not in kv:
+        return f"⚠️ swing_parity_check fallo (rc={rc}):\n<pre>{_esc(out[-1000:])}</pre>"
+    icon = "\U0001F7E2" if rc == 0 else "\U0001F534"
+    signals = kv.get("live_signals", "").replace(";", ", ") or "ninguna"
+    lines = [
+        "\U0001F9ED <b>SENALES ACTUALES</b>",
+        f"Target BTC: <b>{_esc(kv['live_target'])}</b>",
+        f"Senales: {_esc(signals)}",
+        f"Dato: {_esc(kv.get('timestamp', '?')[:16])} UTC",
+        f"{icon} Paridad live/backtest: {'OK' if rc == 0 else 'FAIL'}",
+    ]
+    price = fetch_price()
+    if price is not None:
+        lines.append(f"BTC = ${price:,.0f}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Graficos y backup
+# ---------------------------------------------------------------------------
+
+def _parse_days(parts: list[str], default: int = 30) -> int:
+    if len(parts) > 1 and parts[1].isdigit():
+        return max(2, min(int(parts[1]), 60))
+    return default
+
+
+def cmd_equity(days: int) -> str | None:
+    from tools.tg_charts import build_equity_series, fetch_candles, render_equity_png
+    rebalances = read_rebalances()
+    if not rebalances:
+        return "Sin rebalanceos aun — no hay equity que dibujar."
+    tg_send("⏳ Generando grafico de equity...")
+    candles = fetch_candles(days=days)
+    series = build_equity_series(rebalances, candles)
+    if not series["ts"]:
+        return "Datos insuficientes para el grafico (velas o INIT no cubiertos)."
+    png = render_equity_png(series, days)
+    bot0, bot1 = series["bot"][0], series["bot"][-1]
+    bnh0, bnh1 = series["bnh"][0], series["bnh"][-1]
+    ratio = (bot1 / bot0) / (bnh1 / bnh0) if bot0 and bnh0 and bnh1 else 0
+    caption = (f"Bot ${bot1:,.0f} ({(bot1 / bot0 - 1) * 100:+.2f}%) | "
+               f"B&H ${bnh1:,.0f} ({(bnh1 / bnh0 - 1) * 100:+.2f}%) | "
+               f"bot/B&H {ratio:.3f}")
+    return None if tg_send_photo(png, caption) else "Fallo enviando el grafico."
+
+
+def cmd_chart(days: int) -> str | None:
+    from tools.tg_charts import fetch_candles, render_price_png
+    tg_send("⏳ Generando grafico de precio...")
+    candles = fetch_candles(days=days)
+    if not candles:
+        return "OKX no devolvio velas."
+    png = render_price_png(candles, read_rebalances(), days)
+    caption = f"BTC ${candles[-1][1]:,.0f} | {days}d 1H | rebalanceos marcados"
+    return None if tg_send_photo(png, caption) else "Fallo enviando el grafico."
+
+
+def cmd_backup() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    sent = []
+    for p in (TRADING_DB, PAPER_STATE, REBALANCES, DAILY_CHECKS_LOG):
+        if p.exists() and tg_send_document(f"{stamp}_{p.name}", p.read_bytes(),
+                                           caption=f"backup {stamp} — {p.name}"):
+            sent.append(p.name)
+    if not sent:
+        return "Nada que respaldar (o fallo el envio)."
+    return f"\U0001F4E6 Backup enviado: {_esc(', '.join(sent))}"
+
+
+# ---------------------------------------------------------------------------
+# Operaciones remotas (/restart /update)
+# ---------------------------------------------------------------------------
+
+def cmd_restart() -> str:
+    rc, out = _run(["systemctl", "restart", UNIT_BOT], use_sudo=True, timeout=60)
+    if rc != 0:
+        return f"⚠️ Fallo el restart:\n<pre>{_esc(out[-500:])}</pre>"
+    return f"\U0001F504 {UNIT_BOT} reiniciado."
+
+
+def cmd_update() -> str | None:
+    rc, out = _run(["git", "pull", "--ff-only"], timeout=120)
+    if rc != 0:
+        return f"⚠️ git pull fallo:\n<pre>{_esc(out[-800:])}</pre>"
+    if "Already up to date" in out or "Ya está actualizado" in out:
+        return "\U0001F7E2 Sin cambios (repo al dia)."
+    reply = (f"\U0001F4E5 <b>Actualizado</b>:\n<pre>{_esc(out[-800:])}</pre>\n"
+             + cmd_restart())
+    # Si cambio el propio control remoto, reiniciarse a si mismo (lo mata systemd
+    # y vuelve con el codigo nuevo) — el mensaje sale ANTES del harakiri.
+    if re.search(r"telegram_remote|tg_send|tg_charts", out):
+        tg_send(reply + "\n\U0001F504 Reiniciando tambien el control remoto...",
+                parse_mode="HTML")
+        _run(["systemctl", "restart", UNIT_TG], use_sudo=True, timeout=60)
+        return None
+    return reply
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat, watchdog y estado persistido del propio control remoto
+# ---------------------------------------------------------------------------
+
+def _load_tg_state() -> dict:
+    try:
+        return json.loads(TG_STATE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_tg_state(state: dict) -> None:
+    try:
+        TG_STATE.parent.mkdir(parents=True, exist_ok=True)
+        TG_STATE.write_text(json.dumps(state), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("No se pudo persistir tg_state: {}", exc)
+
+
+def format_heartbeat(rows, balances: dict, price: Decimal | None,
+                     rebalances: list[dict], blocks: list[dict],
+                     now: datetime) -> str:
+    alive = any(
+        r.is_active and r.last_run is not None
+        and (now - (r.last_run if r.last_run.tzinfo else r.last_run.replace(tzinfo=timezone.utc))
+             ).total_seconds() / 60 <= LIVENESS_MAX_AGE_MIN
+        for r in rows
+    )
+    paused = bool(rows) and all(not r.is_active for r in rows)
+    icon = "⏸" if paused else ("\U0001F7E2" if alive else "\U0001F534")
+    state_txt = "pausado" if paused else ("vivo" if alive else "SIN TICK — revisar!")
+    parts = [f"\U0001F493 {icon} {state_txt}"]
+    btc = balances.get("BTC", Decimal("0"))
+    usdt = balances.get("USDT", Decimal("0"))
+    if price is not None:
+        total = btc * price + usdt
+        pct = (btc * price / total * 100) if total > 0 else Decimal("0")
+        parts.append(f"${total:,.0f} ({pct:.0f}% BTC)")
+        if rebalances:
+            init = rebalances[0]
+            ip, ipr = Decimal(str(init.get("portfolio_usdt", 0))), Decimal(str(init.get("price", 0)))
+            if ip > 0 and ipr > 0 and total > 0:
+                parts.append(f"bot/B&H {float(total / ip) / float(price / ipr):.3f}")
+    parts.append(f"parity {parity_streak(blocks)}/{PARITY_TARGET_DAYS}")
+    parts.append(f"{len(rebalances)} rebalanceos")
+    return " · ".join(parts)
+
+
 HELP_TEXT = (
     "\U0001F916 <b>Comandos</b>\n"
+    "\n<b>Estado</b>\n"
     "/status — estado, balances, rendimiento vs B&amp;H\n"
-    "/report [n] — ultimos n rebalanceos (10 por defecto)\n"
+    "/report [n] — ultimos n rebalanceos\n"
+    "/signals — target y senales actuales (calculo live)\n"
+    "/parity — paridad F15: ultimo check y racha /30\n"
+    "\n<b>Graficos</b>\n"
+    "/equity [dias] — equity del bot vs B&amp;H BTC (30 por defecto)\n"
+    "/chart [dias] — precio BTC con rebalanceos marcados\n"
+    "\n<b>VM y servicios</b>\n"
+    "/health — servicios, RAM/disco, errores 24h\n"
+    "/logs [n] — ultimas n lineas del journal (30 por defecto)\n"
+    "/backup — enviar DB + estado como archivos\n"
+    "/restart — reiniciar matibot\n"
+    "/update — git pull + restart\n"
+    "\n<b>Control</b>\n"
     "/pause — pausar el Swing (el proceso sigue; no decide)\n"
     "/resume — reanudar\n"
-    "/help — esta ayuda"
+    "\nAutomatico: alerta de rebalanceo, watchdog sin-tick, heartbeat diario "
+    "08:00 UTC, backup semanal."
 )
+
+BOT_COMMANDS = [
+    ("status", "Estado, balances y rendimiento"),
+    ("report", "Ultimos rebalanceos"),
+    ("equity", "Grafico equity vs B&H"),
+    ("chart", "Grafico precio + rebalanceos"),
+    ("signals", "Target y senales actuales"),
+    ("parity", "Paridad F15 y racha"),
+    ("health", "Salud de VM y servicios"),
+    ("logs", "Journal del bot"),
+    ("backup", "Backup de DB y estado"),
+    ("pause", "Pausar el Swing"),
+    ("resume", "Reanudar el Swing"),
+    ("restart", "Reiniciar matibot"),
+    ("update", "git pull + restart"),
+    ("help", "Ayuda"),
+]
 
 
 # ---------------------------------------------------------------------------
 # Despacho de comandos
 # ---------------------------------------------------------------------------
 
-def handle_command(text: str, get_session) -> str:
+def handle_command(text: str, get_session) -> str | None:
+    """Devuelve la respuesta de texto, o None si el comando ya envio lo suyo
+    (fotos, documentos, o el /update que se reinicia a si mismo)."""
     parts = text.strip().split()
     if not parts:
         return HELP_TEXT
@@ -245,6 +562,28 @@ def handle_command(text: str, get_session) -> str:
         if len(parts) > 1 and parts[1].isdigit():
             n = max(1, min(int(parts[1]), 100))
         return format_report(read_rebalances(), n)
+    if cmd == "/signals":
+        return cmd_signals()
+    if cmd == "/parity":
+        text_log = DAILY_CHECKS_LOG.read_text(encoding="utf-8") if DAILY_CHECKS_LOG.exists() else ""
+        return format_parity(parse_daily_checks(text_log))
+    if cmd == "/equity":
+        return cmd_equity(_parse_days(parts))
+    if cmd == "/chart":
+        return cmd_chart(_parse_days(parts))
+    if cmd == "/health":
+        return format_health()
+    if cmd == "/logs":
+        n = 30
+        if len(parts) > 1 and parts[1].isdigit():
+            n = max(5, min(int(parts[1]), 200))
+        return cmd_logs(n)
+    if cmd == "/backup":
+        return cmd_backup()
+    if cmd == "/restart":
+        return cmd_restart()
+    if cmd == "/update":
+        return cmd_update()
     if cmd == "/pause":
         with get_session() as s:
             names = set_swing_active(s, False)
@@ -279,10 +618,19 @@ def main() -> None:
         logger.warning("No se pudo limpiar backlog de updates: {}", exc)
 
     seen_rebalances = len(read_rebalances())
+    try:
+        tg_api("setMyCommands", {"commands": json.dumps(
+            [{"command": c, "description": d} for c, d in BOT_COMMANDS])})
+    except Exception as exc:
+        logger.warning("setMyCommands fallo: {}", exc)
     tg_send("\U0001F916 Control remoto conectado. /help para comandos.")
     logger.info("telegram_remote arrancado (rebalanceos ya registrados: {})", seen_rebalances)
 
+    tg_state = _load_tg_state()
+
     while True:
+        now = datetime.now(timezone.utc)
+
         # 1) Alertas: rebalanceos nuevos en el JSONL
         try:
             rebalances = read_rebalances()
@@ -291,6 +639,58 @@ def main() -> None:
             seen_rebalances = len(rebalances)
         except Exception as exc:
             logger.warning("Chequeo de rebalanceos fallo: {}", exc)
+
+        # 1b) Watchdog: bot activo pero sin tick -> alerta push (una vez por caida)
+        try:
+            with get_session() as s:
+                rows = swing_bot_rows(s)
+                stale = [
+                    r.strategy_name for r in rows
+                    if r.is_active and r.last_run is not None
+                    and (now - (r.last_run if r.last_run.tzinfo
+                                else r.last_run.replace(tzinfo=timezone.utc))
+                         ).total_seconds() / 60 > LIVENESS_MAX_AGE_MIN
+                ]
+            if stale and not tg_state.get("watchdog_alerted"):
+                tg_send(f"\U0001F534 WATCHDOG: sin tick hace >{LIVENESS_MAX_AGE_MIN} min "
+                        f"en {', '.join(stale)}. Prueba /restart o revisa /logs.")
+                tg_state["watchdog_alerted"] = True
+                _save_tg_state(tg_state)
+            elif not stale and tg_state.get("watchdog_alerted"):
+                tg_send("\U0001F7E2 WATCHDOG: tick recuperado.")
+                tg_state["watchdog_alerted"] = False
+                _save_tg_state(tg_state)
+        except Exception as exc:
+            logger.warning("Watchdog fallo: {}", exc)
+
+        # 1c) Heartbeat diario: 1 mensaje a partir de las HEARTBEAT_HOUR_UTC
+        try:
+            today = now.date().isoformat()
+            if now.hour >= HEARTBEAT_HOUR_UTC and tg_state.get("last_heartbeat") != today:
+                with get_session() as s:
+                    rows = swing_bot_rows(s)
+                    blocks = parse_daily_checks(
+                        DAILY_CHECKS_LOG.read_text(encoding="utf-8")
+                        if DAILY_CHECKS_LOG.exists() else "")
+                    hb = format_heartbeat(rows, read_paper_balances(), fetch_price(),
+                                          read_rebalances(), blocks, now)
+                tg_send(hb, parse_mode="HTML")
+                tg_state["last_heartbeat"] = today
+                _save_tg_state(tg_state)
+        except Exception as exc:
+            logger.warning("Heartbeat fallo: {}", exc)
+
+        # 1d) Backup automatico semanal
+        try:
+            last = tg_state.get("last_backup")
+            due = (last is None
+                   or (now.date() - datetime.fromisoformat(last).date()).days >= BACKUP_EVERY_DAYS)
+            if due:
+                tg_send(cmd_backup(), parse_mode="HTML")
+                tg_state["last_backup"] = now.date().isoformat()
+                _save_tg_state(tg_state)
+        except Exception as exc:
+            logger.warning("Backup automatico fallo: {}", exc)
 
         # 2) Comandos (long-poll 50s: sin puertos abiertos, solo trafico saliente)
         try:
@@ -318,7 +718,8 @@ def main() -> None:
             except Exception as exc:
                 logger.exception("Comando '{}' fallo", text)
                 reply = f"⚠️ Error ejecutando '{_esc(text)}': {_esc(exc)}"
-            tg_send(reply, parse_mode="HTML")
+            if reply:
+                tg_send(reply, parse_mode="HTML")
 
 
 if __name__ == "__main__":
