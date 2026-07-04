@@ -39,7 +39,8 @@ def bot_enable(
     init_db()
     with get_session() as s:
         state = set_bot_active(s, name, symbol.upper(), active=True)
-    console.print(f"[green][OK][/green] Bot [bold]{state.strategy_name}[/bold] activado.")
+        bot_name = state.strategy_name
+    console.print(f"[green][OK][/green] Bot [bold]{bot_name}[/bold] activado.")
 
 
 def bot_disable(
@@ -51,7 +52,8 @@ def bot_disable(
     init_db()
     with get_session() as s:
         state = set_bot_active(s, name, symbol.upper(), active=False)
-    console.print(f"[yellow]○[/yellow] Bot [bold]{state.strategy_name}[/bold] desactivado.")
+        bot_name = state.strategy_name
+    console.print(f"[yellow]○[/yellow] Bot [bold]{bot_name}[/bold] desactivado.")
 
 
 def bot_add(
