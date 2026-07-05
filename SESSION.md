@@ -4,9 +4,11 @@ Complemento de CLAUDE.md. **Este archivo es deliberadamente corto** para no gast
 cada arranque. El detalle historico completo (logs de sesion, tablas de backtests, referencia de
 cada modulo) vive en **`SESSION_ARCHIVE.md`** — leelo SOLO cuando lo necesites, no por defecto.
 
-**Ultima actualizacion: 2026-07-04 (sesion 18 — paper Swing v5 DESPLEGADO en GCP, F13 en curso)**
+**Ultima actualizacion: 2026-07-05 (handoff completo — paper Swing v5 en GCP + Prop/CFT paper preparado)**
 
 Punteros a referencia (leer bajo demanda, NO precargar):
+- `HANDOFF_2026-07-05.md` — documento principal para continuar en otro PC sin perder contexto
+  (branch, setup, estado operativo, Prop/CFT, Swing v6, tests y siguientes pasos).
 - `SESSION_ARCHIVE.md` — logs sesiones 12/13, auditoria 2026-06-30, resultados backtest, referencia
   detallada de Pro Trend v12/v13, macro/market/funding context, indicadores, bugs resueltos.
 - `backtests/STRATEGY_VERSIONS.md` — historial de versiones de estrategia.
@@ -53,10 +55,41 @@ Punteros a referencia (leer bajo demanda, NO precargar):
   Edge standalone BUENO (bybit: PF 1.44, expectancy +30bps, maxDD SOLO 12.96%) pero
   como PROP **RECHAZADO**: gate bybit_cons two-step 27.1% pass / 36.7% breach (vs
   >=60%/<=20%), peor que E9. N2->N4 agota el alfa no-indicador barato. Cierre formal
-  del plan B depende SOLO de N0 (testnet Bybit, BLOQUEADO en Matias: cuenta + API keys):
-  costes reales <=7bps reabre E9 one-step; >=12bps = cierre sin apelacion. N3/N5 no
-  ejecutados (solo si N0 justifica seguir). funding_extreme queda en registry, medido y
-  reversible; dominado por Swing v5 como vehiculo propio (mismo argumento que E9).
+  del plan B depende SOLO de N0. **N0-lite publico ejecutado 2026-07-04** con
+  `tools/bybit_public_cost_probe.py`: 12 snapshots Bybit BTCUSDT perp, ordenes 1k/3k/6k/
+  12.5k/25k; spread p95 0.016bps, profundidad p50 dentro de 1bp ~703k USDT lado debil,
+  coste taker total p95 5.51-5.54bps. Resultado: el supuesto barato `bybit` queda
+  defendible para tamanos E9, pero NO sustituye fills reales ni funding. N0 formal sigue
+  pendiente si se quiere operar: testnet/mainnet/Hyro para API, fills, funding y reglas.
+  Costes reales <=7bps reabren E9 one-step; >=12bps = cierre sin apelacion.
+  **E9+funding medido 2026-07-04**: PropSwing cacheado + `model_funding`; tests 125/125.
+  Hyro 2018-26 bybit two-step 68.9% pass / 24.1% breach; bybit_cons 68.1/26.3.
+  2020-26 bybit 57.6/32.1; bybit_cons 60.3/36.2. Reabre estadisticamente pero NO go:
+  breach >20% y 2024-26 aislado malo (-7.4%, one-step 4.3%, two-step 0%). Comparativa:
+  Breakout descartado para E9 (daily 3% -> breach 41-61%); CFT two-phase es mejor
+  rule-set (2018 73.7/22.3, 2020 64.1/30.0) pero aun breach alto y Bybit personal
+  mantiene riesgo jurisdiccional. **Frontera parcial riesgo/notional 2026-07-04**:
+  auditoria Hyro two-step muestra que los fallos son `breach_total`, concentrados en
+  inicios 2023-25 (2018-22 pasa 100%); no es daily ni trade-loss. Celdas 2018 que
+  parecian buenas no validan 2020: r0.75/n0.5 CFT 53.9/16.8 e Hyro 46.1/18.8;
+  r1.0/n0.4 CFT 59.9/26.5 e Hyro 57.7/26.5. No hay celda >=60% pass y <=20% breach
+  en 2020. **Phase-router probe 2026-07-04** (`tools/prop_phase_matrix.py`): E9 bajo
+  CFT mejora mucho si SOLO se compra challenge en `bear_onset|accumulation` y se evita
+  `post_halving|bull_peak`. E9 CFT 2020-26 combinado bear+accum = 74.5% pass / 16.8%
+  breach; 2018-26 = 85.0% / 9.8%. **Router real ejecutado**: `PropSwingConfig`
+  recibe `entry_halving_phases` (default vacio, reversible); candidato CFT-only
+  `risk_per_trade=0.018`, `max_notional_pct=0.8`, `entry_halving_phases="bear_onset,accumulation"`,
+  `bybit_cons`: 2020-26 74.8% pass / 2.0% breach / 23.2% timeout; shift -60 = 74.2/16.0;
+  shift +60 = 75.5/0.0. 2018-26 default 72.2/5.1; shift -60 71.9/13.9; shift +60
+  71.5/5.1. Tests 125/125. Hyro queda FUERA: mismo candidato 2020 74.7/24.7,
+  2018 62.2/24.4 + trade_loss violations. Siguiente: validar rules reales CFT/Match/MT5
+  y si CFT permite senales propias/manuales; sin confirmacion escrita, no comprar.
+  **Operativa Prop/CFT preparada 2026-07-05**: sin tocar alfa, `PropSwing` persiste estado
+  live/paper (`pos`, dia, funding idx) en BotState `prop_swing`, escribe journal
+  `data/runtime/prop_live_journal.jsonl`, monitor CFT en `core/cft_monitor.py` con estado
+  `data/runtime/prop_cft_status.json`, hard-stop si entra en zona CFT, comandos Telegram
+  `/prop` `/prop_report` `/prop_pause` `/prop_resume`, check diario y setup VM
+  `deploy/setup_prop_cft_paper.sh`. Tests completos: 132/132.
 
 ---
 

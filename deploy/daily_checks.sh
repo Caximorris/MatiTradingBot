@@ -18,9 +18,12 @@ echo "$parity_out" >> "$LOG"
 degr_out=$("$PY" "$APP_DIR/tools/degradation_report.py" 2>&1)
 echo "$degr_out" >> "$LOG"
 
+prop_out=$("$PY" "$APP_DIR/tools/prop_cft_status.py" 2>&1)
+echo "$prop_out" >> "$LOG"
+
 if [ $parity_rc -ne 0 ]; then
     "$PY" "$APP_DIR/tools/tg_send.py" "ALERTA PARIDAD (F15): live y backtest DIVERGEN. Esto es un bug por definicion: pausa el bot (/pause) e investiga. Detalle: ${parity_out}"
 else
     target=$(echo "$parity_out" | grep '^live_target' | cut -d, -f2)
-    "$PY" "$APP_DIR/tools/tg_send.py" "Check diario OK. Paridad F15: OK (target ${target}). Degradacion F19: $(echo "$degr_out" | tail -3)"
+    "$PY" "$APP_DIR/tools/tg_send.py" "Check diario OK. Paridad F15: OK (target ${target}). Degradacion F19: $(echo "$degr_out" | tail -3). Prop/CFT: $(echo "$prop_out" | head -4)"
 fi

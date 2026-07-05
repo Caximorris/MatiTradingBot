@@ -35,9 +35,53 @@ logger.remove()
 
 from core.backtest import BacktestClient, BacktestEngine, fetch_historical_bars
 from core.prop_rules import (
-    ONE_STEP, TWO_STEP_P1, simulate_challenges, trade_pnls_from_result,
+    ONE_STEP, TWO_STEP_P1, PropRulesConfig, simulate_challenges, trade_pnls_from_result,
 )
 from strategies import registry
+
+
+def rule_configs(rule_set: str):
+    """Return [(label, cfg, two_step)] for the selected prop-firm rule model."""
+    if rule_set == "hyro":
+        return [
+            ("one_step_std",   ONE_STEP,    False),
+            ("one_step_swing", ONE_STEP.with_(swing_upgrade=True), False),
+            ("two_step_std",   TWO_STEP_P1, True),
+            ("two_step_swing", TWO_STEP_P1.with_(swing_upgrade=True), True),
+        ]
+    if rule_set == "breakout":
+        base = {
+            "min_trading_days": 0,
+            "max_trade_loss_pct": 1.0,
+            "profit_distribution_pct": 1.0,
+        }
+        return [
+            ("breakout_classic",
+             PropRulesConfig("breakout_classic", daily_dd_pct=0.03,
+                             max_loss_pct=0.06, profit_target_pct=0.10, **base),
+             False),
+            ("breakout_pro",
+             PropRulesConfig("breakout_pro", daily_dd_pct=0.03,
+                             max_loss_pct=0.05, profit_target_pct=0.12, **base),
+             False),
+            ("breakout_turbo",
+             PropRulesConfig("breakout_turbo", daily_dd_pct=0.03,
+                             max_loss_pct=0.03, profit_target_pct=0.09, **base),
+             False),
+        ]
+    if rule_set == "cft":
+        # Crypto Fund Trader 2-Phase: P1 8%, P2 5%, 5 trading days, 5% daily,
+        # 10% total. CFT 1-Phase uses a balance-trailing total DD, which this
+        # simulator does not model exactly, so it is intentionally omitted.
+        return [
+            ("cft_two_phase",
+             PropRulesConfig("cft_two_phase_p1", daily_dd_pct=0.05,
+                             max_loss_pct=0.10, profit_target_pct=0.08,
+                             min_trading_days=5, max_trade_loss_pct=1.0,
+                             profit_distribution_pct=1.0),
+             True),
+        ]
+    raise ValueError(f"rule-set invalido: {rule_set}")
 
 
 def run_backtest(strategy: str, from_dt: datetime, to_dt: datetime, costs: str,
@@ -108,6 +152,8 @@ def main() -> None:
     p.add_argument("--symbols", default="BTC-USDT",
                    help="lista separada por comas; >1 = curva portfolio (sleeves "
                         "independientes de $10k, equity sumada, trades concatenados)")
+    p.add_argument("--rules", default="hyro", choices=("hyro", "breakout", "cft"),
+                   help="rule-set prop a simular (hyro default)")
     args = p.parse_args()
 
     import json
@@ -153,12 +199,7 @@ def main() -> None:
     if args.bull_start:
         filters.append(("+bull", make_bull_start_filter(bars)))
 
-    configs = [
-        ("one_step_std",   ONE_STEP,    False),
-        ("one_step_swing", ONE_STEP.with_(swing_upgrade=True), False),
-        ("two_step_std",   TWO_STEP_P1, True),
-        ("two_step_swing", TWO_STEP_P1.with_(swing_upgrade=True), True),
-    ]
+    configs = rule_configs(args.rules)
     print("label,windows,pass_rate,breach_rate,timeout_rate,median_days_pass,"
           "near_breach_day_pct,worst_daily_dd,by_status")
     for md in max_days_list:

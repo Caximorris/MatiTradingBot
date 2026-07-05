@@ -34,9 +34,11 @@ Filtro de eventos macro (FOMC/CPI) y spread-check son SOLO live — no se modela
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -47,6 +49,8 @@ from strategies.indicators import (
     adx as adx_fn, atr as atr_fn, ema as ema_fn,
     resample_to_4h, resample_to_daily,
 )
+from strategies.funding_extreme import load_funding
+from strategies.macro_context import MacroContext
 
 if TYPE_CHECKING:
     from core.exchange import OKXClient
@@ -84,6 +88,21 @@ class PropSwingConfig:
     max_notional_pct: float = 0.25    # cap duro de notional (funded: margen 25%)
     # -- H2: shorts en regimen bear (espejo; sinteticos, solo backtest hasta P5/Bybit) --
     allow_shorts: bool = False
+    # -- N1-lite: funding Bybit por settlement para perps. Default False preserva
+    #    resultados E9 historicos; activar via --config en runs de decision.
+    model_funding: bool = False
+    # -- Phase-router probe: lista CSV de fases halving donde se permiten NUEVAS
+    #    entradas. Vacio = sin gate. Ej: "bear_onset,accumulation".
+    entry_halving_phases: str = ""
+    # -- Operativa CFT/paper: no cambia senales; solo persistencia, journal y monitor.
+    persist_live_prop_log: bool = True
+    cft_monitor_enabled: bool = False
+    cft_account_size: float = 50000.0
+    cft_phase: str = "p1"
+    cft_daily_dd_pct: float = 0.05
+    cft_max_loss_pct: float = 0.10
+    cft_warn_buffer_pct: float = 0.01
+    cft_halt_buffer_pct: float = 0.003
     # -- H4: squeeze — entrar solo si la vol 4H esta comprimida (breakout tras compresion
     #    tiene mas recorrido; filtra falsos breakouts en chop). ATR14-4H/close en percentil
     #    <= squeeze_max_pctile de los ultimos squeeze_lookback_4h bloques cerrados. --
@@ -140,6 +159,19 @@ class PropSwingBot(BaseStrategy):
         self._entries_today: int = 0
         # PnL realizado por cierre (ts, Decimal neto de fees) — consumido por el sim prop
         self.realized: list[tuple[datetime, Decimal]] = []
+        self._settlements = load_funding(config.symbol)
+        self._settle_idx = 0
+        self._phase_ctx = MacroContext(config.symbol.split("-")[0].upper())
+        self._entry_phases = tuple(
+            p.strip() for p in config.entry_halving_phases.split(",") if p.strip()
+        )
+        self._live_mode = not self._is_backtest_client()
+        self._live_state: dict = {
+            "pos": None, "day": "", "day_start_equity": 0.0,
+            "entries_today": 0, "settle_idx": 0,
+        }
+        if self._live_mode and self._session is not None:
+            self._load_live_state()
 
     @property
     def name(self) -> str:
@@ -168,6 +200,10 @@ class PropSwingBot(BaseStrategy):
         # MTM del short ANTES de leer equity: la barra actual ya refleja su uPnL
         if self._pos is not None and self._pos.get("side") == "short":
             self._mtm_short(price)
+        if self._cfg.model_funding and self._pos is not None:
+            self._accrue_funding(int(last["timestamp"]), price)
+        else:
+            self._advance_settle_idx(int(last["timestamp"]))
         equity = self._equity(price)
 
         # -- Rollover de dia UTC --
@@ -177,11 +213,17 @@ class PropSwingBot(BaseStrategy):
             self._day_start_equity = equity
             self._entries_today = 0
         day_pnl = (equity / self._day_start_equity - 1.0) if self._day_start_equity else 0.0
+        cft_status = self._update_cft_monitor(ts, price, equity)
 
+        if self._pos is not None and cft_status.get("hard_stop"):
+            self._close_all(ts, price, "cft_hard_stop")
+            self._save_live_state()
+            return
         if self._pos is not None:
             self._manage_position(df, last, ts, price, day_pnl)
-        if self._pos is None and ts.hour % 4 == 3:
+        if self._pos is None and ts.hour % 4 == 3 and not self._cft_blocks_entries(cft_status):
             self._try_enter(df, ts, price, equity, day_pnl)
+        self._save_live_state()
 
     # ------------------------------------------------------------------
     # Gestion de la posicion (cada barra 1H)
@@ -245,12 +287,26 @@ class PropSwingBot(BaseStrategy):
             fill = float(r.filled_price or price)
             pnl = Decimal(str(round((fill - pos["entry"]) * float(qty_out)
                                     - float(r.fee), 8)))
-        self.realized.append((ts, pnl))
+        funding_part = self._allocate_funding(pos, qty_out)
+        self.realized.append((ts, pnl - funding_part))
         pos["qty"] -= qty_out
         pos["tp1_done"] = True
         if cfg.be_after_tp1:
             pos["stop"] = pos["entry"]          # break-even
         pos["water_mark"] = price
+        net = pnl - funding_part
+        equity = self._equity(price)
+        self._persist_live_event("tp1", ts, {
+            "side": pos.get("side", "long"),
+            "price": round(price, 2),
+            "qty": str(qty_out),
+            "pnl": float(net),
+            "equity": round(equity, 2),
+        })
+        self._update_cft_monitor(ts, price, equity, {
+            "kind": "tp1", "side": pos.get("side", "long"),
+            "qty": str(qty_out), "pnl": float(net),
+        })
 
     # ------------------------------------------------------------------
     # Entrada (solo en cierre de bloque 4H UTC)
@@ -259,21 +315,30 @@ class PropSwingBot(BaseStrategy):
     def _try_enter(self, df: pd.DataFrame, ts: datetime, price: float,
                    equity: float, day_pnl: float) -> None:
         cfg = self._cfg
+        def skip(reason: str, **extra) -> None:
+            self._persist_live_event("signal", ts, {
+                "decision": "skip", "reason": reason, "price": round(price, 2),
+                "equity": round(equity, 2), "day_pnl": round(day_pnl, 5), **extra,
+            })
+
         if self._entries_today >= cfg.max_entries_per_day:
-            return
+            return skip("max_entries_per_day")
         if day_pnl <= -cfg.daily_loss_stop or day_pnl >= cfg.daily_profit_stop:
-            return
+            return skip("daily_guard")
+        phase = self._halving_phase(ts)
+        if self._entry_phases and phase not in self._entry_phases:
+            return skip("phase_block", phase=phase)
         regime = self._regime(df, ts, check_vol=True)
         if regime == "bull":
             side = "long"
         elif regime == "bear" and cfg.allow_shorts:
             side = "short"
         else:
-            return
+            return skip("no_regime", phase=phase, regime=regime)
 
         df4 = resample_to_4h(df)
         if len(df4) < cfg.ema_pullback_4h + cfg.pullback_lookback_4h + 2:
-            return
+            return skip("insufficient_4h", phase=phase, side=side)
         ema4 = ema_fn(df4["close"], cfg.ema_pullback_4h)
         atr4 = atr_fn(df4["high"], df4["low"], df4["close"], cfg.atr_period)
 
@@ -281,30 +346,30 @@ class PropSwingBot(BaseStrategy):
         c_now, h_prev = float(df4["close"].iloc[-1]), float(df4["high"].iloc[-2])
         ema_now, atr_now = float(ema4.iloc[-1]), float(atr4.iloc[-1])
         if atr_now <= 0 or pd.isna(atr_now) or pd.isna(ema_now):
-            return
+            return skip("invalid_atr_or_ema", phase=phase, side=side)
 
         # H4: filtro squeeze — solo entrar con vol comprimida (percentil del ATR% 4H)
         if cfg.use_squeeze:
             atr_pct = (atr4 / df4["close"]).iloc[-cfg.squeeze_lookback_4h:]
             if len(atr_pct) < cfg.squeeze_lookback_4h or atr_pct.isna().any():
-                return
+                return skip("insufficient_squeeze", phase=phase, side=side)
             rank = float((atr_pct <= atr_pct.iloc[-1]).mean())
             if rank > cfg.squeeze_max_pctile:
-                return
+                return skip("squeeze_block", phase=phase, side=side, squeeze_rank=round(rank, 3))
 
         if cfg.entry_mode == "breakout":
             # E5: breakout Donchian — cierre 4H fuera del rango de los N bloques previos
             n = cfg.breakout_lookback_4h
             if len(df4) < n + 2:
-                return
+                return skip("insufficient_donchian", phase=phase, side=side)
             if side == "long":
                 donchian_high = float(df4["high"].iloc[-(n + 1):-1].max())
                 if not (c_now > donchian_high and c_now > ema_now):
-                    return
+                    return skip("breakout_not_triggered", phase=phase, side=side)
             else:
                 donchian_low = float(df4["low"].iloc[-(n + 1):-1].min())
                 if not (c_now < donchian_low and c_now < ema_now):
-                    return
+                    return skip("breakout_not_triggered", phase=phase, side=side)
         else:
             # v0: pullback a la EMA50-4H + gatillo de reanudacion (espejado para shorts)
             emas = ema4.iloc[-cfg.pullback_lookback_4h:]
@@ -318,13 +383,13 @@ class PropSwingBot(BaseStrategy):
                 l_prev = float(df4["low"].iloc[-2])
                 trigger = c_now < l_prev and c_now < ema_now
             if not (touched and trigger):
-                return
+                return skip("pullback_not_triggered", phase=phase, side=side)
 
         # -- Sizing por riesgo: el stop dimensiona la posicion --
         stop_dist = cfg.atr_stop_mult * atr_now
         stop = price - stop_dist if side == "long" else price + stop_dist
         if stop <= 0:
-            return
+            return skip("invalid_stop", phase=phase, side=side)
         risk_usdt = equity * cfg.risk_per_trade
         qty = risk_usdt / stop_dist
         notional = qty * price
@@ -339,12 +404,19 @@ class PropSwingBot(BaseStrategy):
             qty = usdt * 0.99 / price
         qty_d = Decimal(str(qty)).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
         if qty_d <= 0 or float(qty_d) * price < 10:
-            return
+            return skip("min_notional", phase=phase, side=side)
 
         ok, reason = self.check_risk(cfg.symbol, Decimal(str(notional)))
         if not ok:
             self._log_risk_block(cfg.symbol, reason)
-            return
+            return skip("risk_manager", phase=phase, side=side, risk_reason=reason)
+
+        self._persist_live_event("signal", ts, {
+            "decision": "enter", "side": side, "phase": phase,
+            "price": round(price, 2), "equity": round(equity, 2),
+            "risk_usdt": round(risk_usdt, 2), "notional": round(notional, 2),
+            "stop": round(stop, 2),
+        })
 
         if side == "short":
             self._open_short(ts, price, qty_d, stop_dist, atr_now, ema_now, equity)
@@ -362,15 +434,29 @@ class PropSwingBot(BaseStrategy):
             "tp1": entry + cfg.tp1_r * stop_dist,
             "tp1_done": False, "water_mark": entry,
             "atr_entry": atr_now,
+            "entry_ms": int(ts.timestamp() * 1000),
+            "funding_paid": 0.0,
         }
         self._entries_today += 1
         self._journal_open(
             side="long", ts=ts.isoformat(), price=entry,
             invest=float(r.filled_qty) * entry, stop=self._pos["stop"],
             qty=float(r.filled_qty), balance_before=equity, ls=0, ss=0,
-            indicators={"atr4h": round(atr_now, 2), "ema50_4h": round(ema_now, 2)},
+            indicators={
+                "atr4h": round(atr_now, 2),
+                "ema50_4h": round(ema_now, 2),
+                "halving_phase": phase,
+            },
             tp=self._pos["tp1"],
         )
+        self._persist_live_event("open", ts, {
+            "side": "long", "price": round(entry, 2), "qty": str(r.filled_qty),
+            "stop": round(self._pos["stop"], 2), "tp1": round(self._pos["tp1"], 2),
+            "equity": round(equity, 2), "phase": phase,
+        })
+        self._update_cft_monitor(ts, entry, self._equity(entry), {
+            "kind": "open", "side": "long", "qty": str(r.filled_qty),
+        })
 
     # ------------------------------------------------------------------
     # Shorts sinteticos (solo backtest — ver docstring del modulo)
@@ -397,15 +483,29 @@ class PropSwingBot(BaseStrategy):
             "atr_entry": atr_now,
             "mark": fill,                          # ultimo precio marcado contra balance
             "fee_open_unit": fee_open / q,         # prorrateo del fee de apertura
+            "entry_ms": int(ts.timestamp() * 1000),
+            "funding_paid": 0.0,
         }
         self._entries_today += 1
         self._journal_open(
             side="short", ts=ts.isoformat(), price=fill,
             invest=q * fill, stop=self._pos["stop"],
             qty=q, balance_before=equity, ls=0, ss=0,
-            indicators={"atr4h": round(atr_now, 2), "ema50_4h": round(ema_now, 2)},
+            indicators={
+                "atr4h": round(atr_now, 2),
+                "ema50_4h": round(ema_now, 2),
+                "halving_phase": self._halving_phase(ts),
+            },
             tp=self._pos["tp1"],
         )
+        self._persist_live_event("open", ts, {
+            "side": "short", "price": round(fill, 2), "qty": str(qty_d),
+            "stop": round(self._pos["stop"], 2), "tp1": round(self._pos["tp1"], 2),
+            "equity": round(equity, 2), "phase": self._halving_phase(ts),
+        })
+        self._update_cft_monitor(ts, fill, self._equity(fill), {
+            "kind": "open", "side": "short", "qty": str(qty_d),
+        })
 
     def _mtm_short(self, price: float) -> None:
         """Marca el uPnL del short contra el balance USDT (equity continua para el DD)."""
@@ -414,6 +514,46 @@ class PropSwingBot(BaseStrategy):
         if delta:
             self._client.adjust_balance("USDT", Decimal(str(round(delta, 8))))
         pos["mark"] = price
+
+    def _advance_settle_idx(self, ts_ms: int) -> None:
+        while (self._settle_idx < len(self._settlements)
+               and self._settlements[self._settle_idx][0] <= ts_ms):
+            self._settle_idx += 1
+
+    def _accrue_funding(self, ts_ms: int, price: float) -> None:
+        """Devenga funding Bybit por settlement.
+
+        Lineal USDT: rate>0 => long paga / short cobra. Usamos precio de barra como
+        proxy de mark settlement; el dato de funding solo se aplica cuando el settlement
+        ya quedo atras, sin mirar futuro.
+        """
+        pos = self._pos
+        if pos is None:
+            self._advance_settle_idx(ts_ms)
+            return
+        side_mult = 1.0 if pos.get("side") != "short" else -1.0
+        while (self._settle_idx < len(self._settlements)
+               and self._settlements[self._settle_idx][0] <= ts_ms):
+            s_ts, rate = self._settlements[self._settle_idx]
+            self._settle_idx += 1
+            if s_ts <= pos.get("entry_ms", 0):
+                continue
+            cost = float(pos["qty"]) * price * rate * side_mult
+            if cost:
+                self._client.adjust_balance("USDT", Decimal(str(round(-cost, 8))))
+                pos["funding_paid"] += cost
+
+    @staticmethod
+    def _allocate_funding(pos: dict, qty_out: Decimal) -> Decimal:
+        """Prorratea funding acumulado al tramo cerrado y lo descuenta del realized."""
+        funding = float(pos.get("funding_paid", 0.0))
+        qty_before = float(pos.get("qty", Decimal("0")))
+        if not funding or qty_before <= 0:
+            return Decimal("0")
+        ratio = min(1.0, float(qty_out) / qty_before)
+        part = funding * ratio
+        pos["funding_paid"] = funding - part
+        return Decimal(str(round(part, 8)))
 
     def _cover_short(self, qty: Decimal, price: float) -> Decimal | None:
         """Recompra sintetica de `qty` a mercado (slippage+fee como _fill_market).
@@ -429,6 +569,122 @@ class PropSwingBot(BaseStrategy):
         cli.adjust_balance("USDT", Decimal(str(round(delta, 8))))
         pnl = (pos["entry"] - fill) * q - fee_close - pos["fee_open_unit"] * q
         return Decimal(str(round(pnl, 8)))
+
+    # ------------------------------------------------------------------
+    # Operativa live/paper: estado persistente, journal y monitor CFT
+    # ------------------------------------------------------------------
+
+    def _is_backtest_client(self) -> bool:
+        return self._client.__class__.__name__ == "BacktestClient"
+
+    @staticmethod
+    def _json_pos(pos: dict | None) -> dict | None:
+        if pos is None:
+            return None
+        out = dict(pos)
+        if isinstance(out.get("qty"), Decimal):
+            out["qty"] = str(out["qty"])
+        return out
+
+    @staticmethod
+    def _load_pos(pos: dict | None) -> dict | None:
+        if pos is None:
+            return None
+        out = dict(pos)
+        if "qty" in out:
+            out["qty"] = Decimal(str(out["qty"]))
+        return out
+
+    def _load_live_state(self) -> None:
+        try:
+            from core.database import get_or_create_bot_state
+            bot_state = get_or_create_bot_state(
+                self._session, strategy_name="prop_swing", symbol=self._cfg.symbol,
+            )
+            self._live_state = {**self._live_state, **bot_state.get_config()}
+        except Exception as exc:
+            logger.warning("[{}] No se pudo cargar estado live: {}", self.name, exc)
+            return
+        self._pos = self._load_pos(self._live_state.get("pos"))
+        self._day = str(self._live_state.get("day") or "")
+        self._day_start_equity = float(self._live_state.get("day_start_equity") or 0.0)
+        self._entries_today = int(self._live_state.get("entries_today") or 0)
+        self._settle_idx = int(self._live_state.get("settle_idx") or 0)
+
+    def _save_live_state(self) -> None:
+        if not self._live_mode or self._session is None:
+            return
+        self._live_state.update({
+            "pos": self._json_pos(self._pos),
+            "day": self._day,
+            "day_start_equity": self._day_start_equity,
+            "entries_today": self._entries_today,
+            "settle_idx": self._settle_idx,
+        })
+        try:
+            from core.database import get_or_create_bot_state
+            bot_state = get_or_create_bot_state(
+                self._session, strategy_name="prop_swing", symbol=self._cfg.symbol,
+            )
+            bot_state.set_config(self._live_state)
+        except Exception as exc:
+            logger.warning("[{}] No se pudo guardar estado live: {}", self.name, exc)
+
+    def _persist_live_event(self, kind: str, ts: datetime, payload: dict) -> None:
+        if self._is_backtest_client() or not self._cfg.persist_live_prop_log:
+            return
+        try:
+            out_dir = Path("data") / "runtime"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / "prop_live_journal.jsonl"
+            event = {
+                "ts": ts.isoformat(),
+                "strategy": self.name,
+                "symbol": self._cfg.symbol,
+                "kind": kind,
+                **payload,
+            }
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, ensure_ascii=True) + "\n")
+        except Exception as exc:
+            logger.warning("[{}] No se pudo persistir evento prop: {}", self.name, exc)
+
+    def _cft_cfg(self):
+        from core.cft_monitor import CFTMonitorConfig
+        return CFTMonitorConfig(
+            account_size=self._cfg.cft_account_size,
+            phase=self._cfg.cft_phase,
+            daily_dd_pct=self._cfg.cft_daily_dd_pct,
+            max_loss_pct=self._cfg.cft_max_loss_pct,
+            warn_buffer_pct=self._cfg.cft_warn_buffer_pct,
+            halt_buffer_pct=self._cfg.cft_halt_buffer_pct,
+        )
+
+    def _update_cft_monitor(
+        self, ts: datetime, price: float, equity: float, trade_event: dict | None = None,
+    ) -> dict:
+        if self._is_backtest_client() or not self._cfg.cft_monitor_enabled:
+            return {}
+        try:
+            from core.cft_monitor import update_status
+            return update_status(
+                strategy=self.name, symbol=self._cfg.symbol, ts=ts, equity=equity,
+                cfg=self._cft_cfg(), trade_event=trade_event,
+            )
+        except Exception as exc:
+            logger.warning("[{}] Monitor CFT fallo: {}", self.name, exc)
+            return {}
+
+    def _cft_blocks_entries(self, status: dict) -> bool:
+        if not status:
+            return False
+        if status.get("hard_stop"):
+            self._persist_live_event("cft_block", datetime.now(timezone.utc), {
+                "rule_state": status.get("rule_state"),
+                "min_cushion_pct": status.get("min_cushion_pct"),
+            })
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Helpers
@@ -459,6 +715,9 @@ class PropSwingBot(BaseStrategy):
             return "bear"
         return None
 
+    def _halving_phase(self, ts: datetime) -> str:
+        return self._phase_ctx.halving_phase(ts)[1]
+
     def _equity(self, price: float) -> float:
         balance = self._client.get_balance()
         usdt = float(balance.get("USDT", Decimal("0")))
@@ -474,12 +733,23 @@ class PropSwingBot(BaseStrategy):
             pnl_d = self._cover_short(pos["qty"], price)
             if pnl_d is None:
                 return
-            self.realized.append((ts, pnl_d))
+            funding_part = self._allocate_funding(pos, pos["qty"])
+            net = pnl_d - funding_part
+            self.realized.append((ts, net))
             self._journal_close(
-                ts=ts.isoformat(), price=price, pnl=float(pnl_d), reason=reason,
+                ts=ts.isoformat(), price=price, pnl=float(net), reason=reason,
                 holding_hours=0.0, balance_after=self._equity(price), ls=0, ss=0,
-                indicators={},
+                indicators={"funding_paid": float(funding_part)},
             )
+            equity = self._equity(price)
+            self._persist_live_event("close", ts, {
+                "side": "short", "price": round(price, 2), "qty": str(pos["qty"]),
+                "pnl": float(net), "reason": reason, "equity": round(equity, 2),
+            })
+            self._update_cft_monitor(ts, price, equity, {
+                "kind": "close", "side": "short", "qty": str(pos["qty"]),
+                "pnl": float(net), "reason": reason,
+            })
             self._pos = None
             return
         r = self._client.place_order(self._cfg.symbol, "sell", "market",
@@ -490,10 +760,21 @@ class PropSwingBot(BaseStrategy):
         fill = float(r.filled_price or price)
         pnl = (fill - pos["entry"]) * float(pos["qty"])
         self.log_trade(r, pnl=Decimal(str(round(pnl, 8))))
-        self.realized.append((ts, Decimal(str(round(pnl - float(r.fee), 8)))))
+        funding_part = self._allocate_funding(pos, pos["qty"])
+        net = Decimal(str(round(pnl - float(r.fee), 8))) - funding_part
+        self.realized.append((ts, net))
         self._journal_close(
-            ts=ts.isoformat(), price=fill, pnl=pnl, reason=reason,
+            ts=ts.isoformat(), price=fill, pnl=float(net), reason=reason,
             holding_hours=0.0, balance_after=self._equity(fill), ls=0, ss=0,
-            indicators={},
+            indicators={"funding_paid": float(funding_part)},
         )
+        equity = self._equity(fill)
+        self._persist_live_event("close", ts, {
+            "side": "long", "price": round(fill, 2), "qty": str(pos["qty"]),
+            "pnl": float(net), "reason": reason, "equity": round(equity, 2),
+        })
+        self._update_cft_monitor(ts, fill, equity, {
+            "kind": "close", "side": "long", "qty": str(pos["qty"]),
+            "pnl": float(net), "reason": reason,
+        })
         self._pos = None

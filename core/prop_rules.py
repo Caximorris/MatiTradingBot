@@ -292,7 +292,9 @@ def simulate_challenges(
     # La fase 2 hereda upgrade, buffer y timeout de la fase 1
     p2 = TWO_STEP_P2.with_(swing_upgrade=cfg.swing_upgrade,
                            intrabar_buffer=cfg.intrabar_buffer,
-                           max_days=cfg.max_days)
+                           max_days=cfg.max_days,
+                           max_trade_loss_pct=cfg.max_trade_loss_pct,
+                           profit_distribution_pct=cfg.profit_distribution_pct)
 
     next_start: datetime | None = None
     total_days = 0

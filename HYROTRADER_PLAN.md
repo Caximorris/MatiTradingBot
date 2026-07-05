@@ -713,3 +713,86 @@ la distribucion no cabe en las reglas prop. N2->N4 agota el frente de alfa no-in
 **Valor residual de funding_extreme (no-prop):** rentable con DD 13%, pero como capital propio
 esta dominado por el Swing v5 igual que E9 (mismo argumento de la seccion 14). No adoptar como
 vehiculo propio. Queda en el registry, reversible y medido, por si N0/N1 reabren el frente.
+
+---
+
+## 16. N0-LITE — COSTE PUBLICO BYBIT SIN CUENTA (2026-07-04)
+
+Peticion de Matias: ir al punto 3 antes de abrir cuenta. Implementado
+`tools/bybit_public_cost_probe.py`: consulta solo el order book publico de Bybit
+BTCUSDT linear perp, sin API key, y calcula coste estimado de cruzar mercado contra el
+mid para tamanos E9.
+
+Muestra ejecutada: 12 snapshots, 5s entre snapshots, 2026-07-04 11:02:42 -> 11:03:39
+UTC. Output guardado en `data/runtime/bybit_public_cost_probe_latest.json` (runtime,
+no versionado).
+
+| Metrica | Resultado |
+|---|---:|
+| Mid p50 | 62,455.85 |
+| Spread p50 / p95 | 0.016 / 0.016 bps |
+| Profundidad p50 dentro de 1bp, lado debil | ~703k USDT |
+| Profundidad p50 dentro de 2bp, lado debil | ~1.70M USDT |
+| Profundidad p50 dentro de 5bp, lado debil | ~6.03M USDT |
+| Profundidad p50 dentro de 10bp, lado debil | ~13.33M USDT |
+
+Coste estimado por market order, contra mid, incluyendo taker fee VIP0 5.5bps:
+
+| Notional | Slip p95 peor lado | Coste taker total p95 |
+|---:|---:|---:|
+| 1k USDT | 0.008 bps | 5.508 bps |
+| 3k USDT | 0.008 bps | 5.508 bps |
+| 6k USDT | 0.008 bps | 5.508 bps |
+| 12.5k USDT | 0.008 bps | 5.508 bps |
+| 25k USDT | 0.044 bps | 5.544 bps |
+
+**Lectura:** para tamanos E9 ($3k-$12.5k, incluso $25k), el libro publico actual es
+suficientemente profundo. El supuesto `--costs bybit` (5.5bps fee + 2bps slip = 7.5bps)
+queda conservador frente a esta muestra. `bybit_cons` (5.5+10bps) sigue siendo stress,
+no base case.
+
+**Limites:** esto NO mide fills reales, latencia, rechazos, partial fills, momentos de
+noticias, ni la capa Hyro/Tealstreet/CLEO. Tampoco resuelve funding historico de E9:
+el probe solo responde a spread/profundidad actual. El N0 formal con cuenta/terminal
+sigue siendo necesario antes de operar dinero o comprar challenge, pero ya no hace
+falta para defender que el libro BTCUSDT puede soportar los tamanos E9.
+
+**Implicacion de decision:** el cierre por "costes >=12bps" NO queda apoyado por datos
+publicos de libro en condiciones normales. Si se reabre E9, la siguiente medicion debe
+ser E9 bajo `--costs bybit` + funding historico para PropSwing, y solo despues decidir
+si merece una prueba Hyro/terminal.
+
+---
+
+## 17. E9 + FUNDING Y COMPARATIVA PROP FIRMS (2026-07-04)
+
+Implementado: `BacktestClient.get_ohlcv` cacheado (runner E9 deja de atascarse),
+`PropSwingConfig.model_funding` (default False, activar en decision), y `--rules
+hyro|breakout|cft` en `tools/prop_challenge_sim.py`. Tests: 125/125.
+
+Config E9+funding: `{"entry_mode":"breakout","risk_per_trade":0.0125,"tp1_r":1.5,
+"allow_shorts":true,"max_notional_pct":0.5,"model_funding":true}`.
+
+| Ventana/coste | Hyro one-step | Hyro two-step |
+|---|---:|---:|
+| 2018-26 bybit | 75.7% / 23.1% | 68.9% / 24.1% |
+| 2018-26 bybit_cons | 74.0% / 25.6% | 68.1% / 26.3% |
+| 2020-26 bybit | 68.4% / 30.6% | 57.6% / 32.1% |
+| 2020-26 bybit_cons | 67.4% / 32.2% | 60.3% / 36.2% |
+
+Lectura: costes reales baratos SI reabren E9 estadisticamente, pero NO dan go directo:
+pass >60% en varias celdas, breach sigue >20% y 2024-26 aislado es malo (-7.4%, one-step
+4.3%, two-step 0%). El cuello es max loss total, no daily.
+
+Comparativa externa simulada con E9+bybit+funding:
+- **Breakout** (Classic/Pro/Turbo): 2018-26 = 59/41, 55/45, 43/58; 2020-26 = 47/53,
+  43/57, 39/61. Descartado para E9: daily 3% muerde demasiado.
+- **Crypto Fund Trader 2-phase** (8%+5%, 5d, 5% daily/10% total, sin distribucion en
+  el sim): 2018-26 = 73.7/22.3; 2020-26 = 64.1/30.0. Mejor rule-set, pero breach aun alto
+  y Bybit personal mantiene riesgo jurisdiccional; Match/MT5 no replica perps/funding.
+- **Phase-router CFT**: `entry_halving_phases="bear_onset,accumulation"` + r1.8/n0.8
+  bajo `bybit_cons` pasa stress: 2020-26 74.8/2.0; shift -60 74.2/16.0; 2018 shift
+  -60 71.9/13.9. Candidato vivo, CFT-only; Hyro sigue fuera por breach/trade loss.
+- **Manual Breakout**: viable solo como plan de senales propias + ejecucion manual, pero
+  hay que confirmar soporte/API/bots y que una alerta de sistema propio no se considere
+  senal de tercero. No comprar sin confirmacion escrita.

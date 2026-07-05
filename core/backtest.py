@@ -158,6 +158,7 @@ class BacktestClient:
         self._reserved_base: dict[str, Decimal] = {}
         self._pending_fills: list[OrderResult] = []
         self._executed: list[BacktestTrade] = []
+        self._ohlcv_df: Any | None = None
         self.initial_balance = initial_balance
 
         # Costes configurables
@@ -207,19 +208,20 @@ class BacktestClient:
             import pandas as pd
         except ImportError:
             return None
+        if self._ohlcv_df is None:
+            self._ohlcv_df = pd.DataFrame([
+                {
+                    "timestamp": b.timestamp,
+                    "open": float(b.open),
+                    "high": float(b.high),
+                    "low": float(b.low),
+                    "close": float(b.close),
+                    "volume": float(b.volume),
+                }
+                for b in self._bars
+            ])
         start = max(0, self._idx - limit + 1)
-        bars = self._bars[start : self._idx + 1]
-        return pd.DataFrame([
-            {
-                "timestamp": b.timestamp,
-                "open": float(b.open),
-                "high": float(b.high),
-                "low": float(b.low),
-                "close": float(b.close),
-                "volume": float(b.volume),
-            }
-            for b in bars
-        ])
+        return self._ohlcv_df.iloc[start : self._idx + 1]
 
     def get_balance(self) -> dict[str, Decimal]:
         result = dict(self._balance)

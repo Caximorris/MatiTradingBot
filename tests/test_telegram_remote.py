@@ -10,6 +10,8 @@ from tools.telegram_remote import (
     format_report,
     format_status,
     handle_command,
+    prop_bot_rows,
+    set_prop_active,
     set_swing_active,
     swing_bot_rows,
 )
@@ -61,6 +63,22 @@ def test_pause_and_resume_commands_flip_is_active(db_session):
     assert swing_bot_rows(db_session)[0].is_active is False
     assert "REANUDADO" in handle_command("/resume", get_session)
     assert swing_bot_rows(db_session)[0].is_active is True
+
+
+def test_prop_pause_and_resume_only_touch_prop(db_session):
+    _add_bot(db_session, "prop_swing_btc_usdt", active=True)
+    _add_bot(db_session, "prop_swing", active=False)
+    _add_bot(db_session, "swing_allocator_btc_usdt", active=True)
+
+    @contextmanager
+    def get_session():
+        yield db_session
+
+    assert set_prop_active(db_session, False) == ["prop_swing_btc_usdt"]
+    assert prop_bot_rows(db_session)[0].is_active is False
+    assert swing_bot_rows(db_session)[0].is_active is True
+    assert "PROP REANUDADO" in handle_command("/prop_resume", get_session)
+    assert prop_bot_rows(db_session)[0].is_active is True
 
 
 def test_unknown_command_returns_help(db_session):

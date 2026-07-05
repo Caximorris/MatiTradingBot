@@ -3,6 +3,43 @@
 Bot de trading automatizado para OKX con estrategias de trend following y gestión dinámica de allocation BTC/USDT,
 modo paper trading, backtesting continuo multi-año, informes fiscales automáticos para España (IRPF) y dashboard en terminal.
 
+## Estado Actual / Handoff
+
+**Último handoff:** [`HANDOFF_2026-07-05.md`](HANDOFF_2026-07-05.md). Leerlo antes de continuar
+desde otro PC.
+
+Estado del proyecto:
+
+- **Swing Allocator v5** es el default congelado. No seguir optimizando backtest hasta cerrar paper/forward.
+- **Paper Swing v5** está desplegado en VM GCP `matitrbot` con Telegram, watchdog, backup y checks diarios.
+- **Prop/CFT paper** está preparado operativamente, pero no implica compra de challenge ni live.
+- **Swing v6** existe solo como plan de investigación en [`SWING_V6_PLAN.md`](SWING_V6_PLAN.md).
+- Tests al cierre del handoff: `132 passed`.
+
+Arranque rápido en otro PC:
+
+```bash
+git clone https://github.com/Caximorris/MatiTradingBot.git
+cd MatiTradingBot
+git checkout codex-handoff-prop-cft-swing-v6
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest -q
+```
+
+En Windows PowerShell:
+
+```powershell
+git clone https://github.com/Caximorris/MatiTradingBot.git
+cd MatiTradingBot
+git checkout codex-handoff-prop-cft-swing-v6
+py -3 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m pytest -q
+```
+
 ---
 
 ## Índice
@@ -17,6 +54,7 @@ modo paper trading, backtesting continuo multi-año, informes fiscales automáti
 8. [Backtesting](#8-backtesting)
 9. [Informe fiscal IRPF](#9-informe-fiscal-irpf)
 10. [Estructura del proyecto](#10-estructura-del-proyecto)
+11. [Paper trading en la nube](#11-paper-trading-en-la-nube-validación-forward-del-swing-v5)
 
 ---
 
@@ -81,8 +119,12 @@ COST_BASIS_METHOD=FIFO
 # Verificar configuración
 python main.py mode
 
-# Arrancar la estrategia Pro Trend en paper
-python main.py start --strategy pro --symbol BTC-USDT
+# Registrar/activar Swing Allocator en paper
+python main.py bot add swing BTC-USDT
+python main.py bot enable swing_allocator_btc_usdt BTC-USDT
+
+# Arrancar todos los bots activos
+python main.py start
 
 # Dashboard en otra terminal
 python main.py dashboard
@@ -99,7 +141,8 @@ python main.py trades --limit 20
 > **Lee esto antes:**
 > - Realiza paper trading mínimo 6 meses con la estrategia que vayas a usar.
 > - El bot puede perder dinero. Nunca inviertas más de lo que puedas permitirte perder.
-> - Pro Trend hace ~1-2 trades por año — es normal no ver actividad durante semanas.
+> - `TRADING_MODE=live` requiere confirmación explícita antes de arrancar.
+> - El foco actual es Swing Allocator v5. Pro Trend queda pausado.
 
 1. Obtén API keys en [OKX](https://www.okx.com) con permisos de Lectura + Trading.
 2. Edita el `.env`:
@@ -110,10 +153,10 @@ python main.py trades --limit 20
    OKX_SECRET_KEY=tu_secret_key_real
    OKX_PASSPHRASE=tu_passphrase_real
    ```
-3. Arranca con sizing conservador la primera vez:
+3. Activa solo el bot que vayas a operar y arranca con tamaño conservador:
    ```bash
-   python main.py start --strategy pro --symbol BTC-USDT \
-     --config '{"size_ultra": 0.45, "size_high": 0.40, "size_mid": 0.30}'
+   python main.py bot list
+   python main.py start
    ```
 
 ---
@@ -121,9 +164,11 @@ python main.py trades --limit 20
 ## 6. Comandos principales
 
 ```bash
-# Live trading
-python main.py start --strategy pro --symbol BTC-USDT
-python main.py start --strategy adaptive --symbol BTC-USDT
+# Operacion paper/live
+python main.py bot list
+python main.py bot add swing BTC-USDT
+python main.py bot enable swing_allocator_btc_usdt BTC-USDT
+python main.py start
 python main.py stop
 python main.py status
 
@@ -217,6 +262,41 @@ python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --cos
 # Walk-forward para validar robustez
 python main.py walk-forward --strategy swing --costs realistic
 ```
+
+### Prop Swing / CFT (`--strategy prop`)
+**Estado: candidato paper CFT-only. No comprar challenge sin paper reciente y confirmación operativa.**
+
+Motor discreto 4H heredado de la investigación prop firm. Usa phase-router para permitir entradas
+solo en `bear_onset,accumulation`, shorts sintéticos en backtest, funding modelado y monitor CFT
+operativo.
+
+Config candidata:
+
+```json
+{
+  "entry_mode": "breakout",
+  "risk_per_trade": 0.018,
+  "tp1_r": 1.5,
+  "allow_shorts": true,
+  "max_notional_pct": 0.8,
+  "model_funding": true,
+  "entry_halving_phases": "bear_onset,accumulation"
+}
+```
+
+Setup paper en VM existente:
+
+```bash
+bash deploy/setup_prop_cft_paper.sh
+sudo systemctl restart matibot
+```
+
+Telegram:
+
+- `/prop`
+- `/prop_report`
+- `/prop_pause`
+- `/prop_resume`
 
 ### Adaptive Trend (`--strategy adaptive`)
 **Estado: Funcional. Resultado: +409% (2018–2024).**
@@ -340,6 +420,7 @@ MatiTradingBot/
 │   ├── database.py                 # Trade/Position/BotState + CRUD helpers, WAL SQLite
 │   ├── exchange.py                 # OKXClient (paper+live), OrderResult, RateLimiter
 │   ├── backtest.py                 # BacktestClient + BacktestEngine + fetch_historical_bars
+│   ├── cft_monitor.py              # Monitor operativo CFT paper/funded
 │   └── risk_manager.py             # can_open_position, calculate_position_size
 ├── strategies/
 │   ├── base_strategy.py            # Clase abstracta con journal helpers
@@ -348,6 +429,7 @@ MatiTradingBot/
 │   ├── pro_trend.py                # Estrategia: multi-timeframe, scoring system (v13)
 │   ├── scalp_momentum.py           # Estrategia: day trading 1H con contexto 4H/D
 │   ├── swing_allocator.py          # Estrategia: allocation dinámica BTC/USDT 20-100% (v5)
+│   ├── prop_swing.py               # Estrategia: Prop/CFT 4H discreta con phase-router
 │   ├── macro_context.py            # MVRV + halving cycle (singleton global)
 │   ├── market_context.py           # DXY + NASDAQ-100 + VIX (singleton global)
 │   └── funding_context.py          # Funding rate histórico OKX (singleton global)
@@ -363,15 +445,21 @@ MatiTradingBot/
 ├── tools/                          # Scripts de auditoría/validación (portables Windows+Linux)
 │   ├── swing_parity_check.py       # Paridad live vs backtest (F15) — exit 1 si divergen
 │   ├── degradation_report.py       # Panel de degradación paper/live (F19)
-│   ├── telegram_remote.py          # Control remoto Telegram: /status /report /pause /resume
+│   ├── prop_cft_setup.py           # Registra Prop/CFT paper en BotState
+│   ├── prop_cft_status.py          # Estado del monitor CFT
+│   ├── prop_telegram.py            # Formato Telegram para Prop/CFT
+│   ├── telegram_remote.py          # Control remoto Telegram
 │   └── tg_send.py                  # Envío de alertas Telegram (usado por cron)
 ├── deploy/                         # Despliegue en VM (paper 24/7)
 │   ├── install_vm.sh               # Instalador idempotente Ubuntu (venv+systemd+cron)
+│   ├── setup_prop_cft_paper.sh      # Añade Prop/CFT paper a VM existente
 │   ├── matibot.service             # systemd: bot de trading (Restart=always)
 │   ├── matibot-telegram.service    # systemd: control remoto
 │   └── daily_checks.sh             # cron diario: paridad F15 + degradación F19
 ├── backtests/                      # Trade Journals JSON generados automáticamente
 │   └── STRATEGY_VERSIONS.md        # Historial de versiones y resultados
+├── HANDOFF_2026-07-05.md           # Contexto completo para retomar en otro PC
+├── SWING_V6_PLAN.md                # Plan de investigación v6
 └── reports/                        # Informes fiscales generados
 ```
 

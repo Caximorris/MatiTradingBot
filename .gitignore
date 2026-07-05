@@ -35,6 +35,10 @@ build/
 .vscode/
 .idea/
 
+# Configuracion local de Codex en esta maquina (rutas absolutas, no portable)
+.codex/hooks.json
+.codex/hooks/
+
 # Informes generados
 reports/
 

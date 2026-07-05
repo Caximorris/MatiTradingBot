@@ -77,6 +77,10 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 | Actualizar codigo sin SSH | Telegram `/update` (git pull --ff-only + restart) |
 | Pausar a distancia | Telegram `/pause` (proceso sigue; no decide) |
 | Reanudar | Telegram `/resume` |
+| Estado Prop/CFT | Telegram `/prop` |
+| Eventos PropSwing | Telegram `/prop_report` o `/prop_report 50` |
+| Pausar PropSwing | Telegram `/prop_pause` |
+| Reanudar PropSwing | Telegram `/prop_resume` |
 | Aviso de cada rebalanceo | Automatico (alerta Telegram) |
 | Caida del proceso (sin tick >10 min) | Automatico (watchdog Telegram, alerta y recuperacion) |
 | "Sigue vivo?" sin preguntar | Automatico (heartbeat diario 08:00 UTC) |
@@ -84,6 +88,56 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 | Logs en vivo | SSH: `journalctl -u matibot -f` |
 | Parada total (kill switch) | SSH: `python main.py stop` (deshabilita bots; re-enable para retomar) |
 | Apagar/encender el servicio | SSH: `sudo systemctl stop|start matibot` |
+
+## Prop/CFT paper en la misma VM
+
+El PropSwing CFT queda separado del Swing:
+
+- `/pause` y `/resume` solo afectan al Swing.
+- `/prop_pause` y `/prop_resume` solo afectan al PropSwing.
+- El monitor CFT vive en `data/runtime/prop_cft_status.json`.
+- El journal operativo vive en `data/runtime/prop_live_journal.jsonl`.
+- Los eventos de reglas CFT viven en `data/runtime/prop_cft_events.jsonl`.
+
+Registrar Prop/CFT pausado:
+
+```bash
+bash deploy/setup_prop_cft_paper.sh
+sudo systemctl restart matibot
+```
+
+Registrar y activar Prop/CFT paper:
+
+```bash
+ENABLE_PROP_CFT=true bash deploy/setup_prop_cft_paper.sh
+sudo systemctl restart matibot
+```
+
+Config congelada que instala el script:
+
+```json
+{
+  "entry_mode": "breakout",
+  "risk_per_trade": 0.018,
+  "tp1_r": 1.5,
+  "allow_shorts": true,
+  "max_notional_pct": 0.8,
+  "model_funding": true,
+  "entry_halving_phases": "bear_onset,accumulation",
+  "cft_monitor_enabled": true,
+  "cft_account_size": 50000,
+  "cft_phase": "p1",
+  "cft_daily_dd_pct": 0.06,
+  "cft_max_loss_pct": 0.12
+}
+```
+
+Chequeos:
+
+```bash
+.venv/bin/python tools/prop_cft_status.py
+.venv/bin/python main.py bot list
+```
 
 ## Criterios de cierre (de PLAN_MEJORA_AUDITORIA.md)
 

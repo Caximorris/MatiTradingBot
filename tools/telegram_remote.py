@@ -65,8 +65,25 @@ def swing_bot_rows(session) -> list:
     ]
 
 
+def prop_bot_rows(session) -> list:
+    from core.database import BotState
+    return [
+        r for r in session.query(BotState)
+        .filter(BotState.strategy_name.like("prop_swing%")).all()
+        if r.strategy_name != "prop_swing"
+    ]
+
+
 def set_swing_active(session, active: bool) -> list[str]:
     rows = swing_bot_rows(session)
+    for r in rows:
+        r.is_active = active
+    session.flush()
+    return [r.strategy_name for r in rows]
+
+
+def set_prop_active(session, active: bool) -> list[str]:
+    rows = prop_bot_rows(session)
     for r in rows:
         r.is_active = active
     session.flush()
@@ -503,6 +520,8 @@ HELP_TEXT = (
     "\U0001F916 <b>Comandos</b>\n"
     "\n<b>Estado</b>\n"
     "/status — estado, balances, rendimiento vs B&amp;H\n"
+    "/prop — estado Prop/CFT y ultimos eventos\n"
+    "/prop_report [n] — ultimos eventos PropSwing\n"
     "/report [n] — ultimos n rebalanceos\n"
     "/signals — target y senales actuales (calculo live)\n"
     "/parity — paridad F15: ultimo check y racha /30\n"
@@ -518,12 +537,16 @@ HELP_TEXT = (
     "\n<b>Control</b>\n"
     "/pause — pausar el Swing (el proceso sigue; no decide)\n"
     "/resume — reanudar\n"
+    "/prop_pause — pausar PropSwing\n"
+    "/prop_resume — reanudar PropSwing\n"
     "\nAutomatico: alerta de rebalanceo, watchdog sin-tick, heartbeat diario "
     "08:00 UTC, backup semanal."
 )
 
 BOT_COMMANDS = [
     ("status", "Estado, balances y rendimiento"),
+    ("prop", "Estado Prop/CFT"),
+    ("prop_report", "Eventos PropSwing"),
     ("report", "Ultimos rebalanceos"),
     ("equity", "Grafico equity vs B&H"),
     ("chart", "Grafico precio + rebalanceos"),
@@ -534,6 +557,8 @@ BOT_COMMANDS = [
     ("backup", "Backup de DB y estado"),
     ("pause", "Pausar el Swing"),
     ("resume", "Reanudar el Swing"),
+    ("prop_pause", "Pausar PropSwing"),
+    ("prop_resume", "Reanudar PropSwing"),
     ("restart", "Reiniciar matibot"),
     ("update", "git pull + restart"),
     ("help", "Ayuda"),
@@ -557,6 +582,16 @@ def handle_command(text: str, get_session) -> str | None:
             rows = swing_bot_rows(s)
             return format_status(rows, read_paper_balances(), fetch_price(),
                                  read_rebalances(), datetime.now(timezone.utc))
+    if cmd == "/prop":
+        from tools.prop_telegram import format_prop_status
+        with get_session() as s:
+            return format_prop_status(prop_bot_rows(s), LIVENESS_MAX_AGE_MIN)
+    if cmd == "/prop_report":
+        from tools.prop_telegram import format_prop_report
+        n = 20
+        if len(parts) > 1 and parts[1].isdigit():
+            n = max(1, min(int(parts[1]), 100))
+        return format_prop_report(n)
     if cmd == "/report":
         n = 10
         if len(parts) > 1 and parts[1].isdigit():
@@ -592,6 +627,14 @@ def handle_command(text: str, get_session) -> str | None:
         with get_session() as s:
             names = set_swing_active(s, True)
         return f"▶️ REANUDADO: {_esc(', '.join(names)) or 'nada que reanudar'}"
+    if cmd == "/prop_pause":
+        with get_session() as s:
+            names = set_prop_active(s, False)
+        return f"⏸ PROP PAUSADO: {_esc(', '.join(names)) or 'nada que pausar'}"
+    if cmd == "/prop_resume":
+        with get_session() as s:
+            names = set_prop_active(s, True)
+        return f"▶️ PROP REANUDADO: {_esc(', '.join(names)) or 'nada que reanudar'}"
     return HELP_TEXT
 
 
