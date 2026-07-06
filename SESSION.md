@@ -5,7 +5,8 @@ El detalle historico (logs de sesion, tablas de backtest, referencia por modulo,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`SESSION_ARCHIVE.md`** — leelo BAJO DEMANDA.
 
 **Ultima actualizacion: 2026-07-06** (Swing v6 + aislamiento paper + pipeline funding — MERGEADO A MAIN;
-control remoto Telegram multi-bot `6e95f0d`)
+control remoto Telegram multi-bot `6e95f0d`; + suite de observabilidad forward-test read-only
+`paper-status`/`anomaly-check`/`forward-report`/`data-audit` + `FORWARD_TEST_CONTRACT.md`)
 
 ---
 
@@ -33,7 +34,18 @@ BotState y los distingue por etiqueta (v5/v6/legacy). `/status` resume todos; `/
 <bot>` apuntan a uno; `/bots` lista carteras. Alertas de rebalanceo y heartbeat por bot. Prop sigue en
 `/prop`. Capa pura en `tools/paper_bots.py` + `tools/tg_views.py` (telegram_remote 674 lineas <800).
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `DEPLOY_PAPER.md`.
-Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 153/153.
+Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
+
+**OBSERVABILIDAD FORWARD-TEST (2026-07-06)** — suite read-only que NO toca la estrategia (plan
+`FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md`, fases 1-3). Reglas del test congeladas en
+`FORWARD_TEST_CONTRACT.md` (inicio 2026-07-04, taxonomia fallo-estrategia vs fallo-infra).
+Comandos: `paper-status` (control center v5/v6/legacy), `anomaly-check` (red-flags + Telegram
+dedup), `forward-report` (solo datos post-inicio, filtro duro), `data-audit` (integridad OHLCV,
+nunca re-descarga). Capa pura: `tools/{paper_snapshot,anomaly_check,forward_report,data_audit}.py`
++ `cli/paper_cmds.py`. **Hallazgo de `data-audit`:** cache canonico tiene 474 filas duplicadas
+benignas (identico OHLCV) en el empalme 2017 → 102457 distintas de 102931; NO deduplicar en
+forward-test (mutacion de cache prohibida, ver CLAUDE.md). Pendiente: correr la suite EN la VM
+(datos paper reales viven alli, no en dev).
 
 **Pro Trend v13 — PAUSADO INDEFINIDAMENTE** (decision sesion 14). Codigo congelado y reversible,
 fuera del roadmap activo. Framework de validacion estaba completo. Detalle en archive.
@@ -116,6 +128,10 @@ requiere confirmacion explicita. El paper v5-vs-v6 empieza a dar señal desde ~2
 - `HANDOFF_2026-07-05.md` — doc principal para continuar en otro PC (branch, setup, estado operativo,
   Prop/CFT, Swing v6, tests, siguientes pasos).
 - `DEPLOY_PAPER.md` — runbook y estado del despliegue paper en la VM.
+- `FORWARD_TEST_CONTRACT.md` — reglas CONGELADAS del forward-test (inicio, variantes, fallo
+  estrategia vs infra, playbook de incidentes). Citarlo por seccion en los reportes.
+- `FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md` — roadmap del laboratorio de investigacion +
+  monitorizacion (fases 0-6, tracking con checkboxes; fase 1-3 parcialmente HECHAS).
 - `SWING_V6_PLAN.md` — plan v6 (phase router + funding overlay; criterios de promocion Fase 4).
 - `SWING_PLAN.md` / `AUDITORIA_SWING_V4.md` / `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md` /
   `PLAN_MEJORA_AUDITORIA.md` (F1-F19) — diseño, auditorias y plan del Swing.

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import typer
 
-from cli import backtest_cmds, bot_cmds, compare_cmds, live_cmds, report_cmds
+from cli import backtest_cmds, bot_cmds, compare_cmds, live_cmds, paper_cmds, report_cmds
 
 app = typer.Typer(
     name="okx-trader",
@@ -38,6 +38,7 @@ live_cmds.register(app)
 report_cmds.register(app)
 backtest_cmds.register(app)
 compare_cmds.register(app)
+paper_cmds.register(app)
 bot_cmds.register(bot_app)
 
 

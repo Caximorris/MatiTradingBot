@@ -14,7 +14,12 @@ Estado del proyecto:
 - **Paper Swing v5** está desplegado en VM GCP `matitrbot` con Telegram, watchdog, backup y checks diarios.
 - **Prop/CFT paper** está preparado operativamente, pero no implica compra de challenge ni live.
 - **Swing v6** existe solo como plan de investigación en [`SWING_V6_PLAN.md`](SWING_V6_PLAN.md).
-- Tests al cierre del handoff: `132 passed`.
+- **Forward-test** gobernado por [`FORWARD_TEST_CONTRACT.md`](FORWARD_TEST_CONTRACT.md) (reglas
+  congeladas: inicio 2026-07-04, fallo de estrategia vs fallo de infra). Roadmap de laboratorio
+  en [`FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md`](FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md).
+- **Observabilidad** (read-only, no toca la estrategia): `paper-status`, `anomaly-check`,
+  `forward-report`, `data-audit` (ver sección 6).
+- Tests: `179 passed`.
 
 Arranque rápido en otro PC:
 
@@ -201,6 +206,13 @@ python main.py report --year 2025 --rate 0.91 --losses 500
 
 # Dashboard
 python main.py dashboard
+
+# Observabilidad del forward-test paper (todo read-only, no toca la estrategia)
+python main.py paper-status              # estado de todos los bots (v5/v6/legacy)
+python main.py paper-status --watch 30   # refresco cada 30s
+python main.py anomaly-check             # red-flags de infra/datos/estado (--telegram para avisar)
+python main.py forward-report            # reporte SOLO con datos post-inicio del forward-test
+python main.py data-audit                # integridad del cache OHLCV (--live compara con OKX)
 ```
 
 ---
@@ -339,7 +351,8 @@ indicadores, scores, contexto macro, sizing/gates de entrada y razón de salida 
 ### Swing Allocator v5 post-audit vs BTC Buy & Hold — comparativa completa
 
 Balance inicial **$10,000**, ventana **2015-01-01 → 2026-01-01**, costes **realistic** (0.1% fee + 5 bps
-slippage). Ambas columnas se calculan sobre el **mismo dataset** (102931 velas 1H) y con la **misma
+slippage). Ambas columnas se calculan sobre el **mismo dataset** (102931 filas 1H; 102457
+distintas — 474 duplicados benignos de idéntico OHLCV en el empalme 2017, ver `data-audit`) y con la **misma
 metodología** (Sharpe/Sortino sobre retornos horarios, anualización 8760; drawdown sobre cierres horarios).
 
 | Métrica | Swing Allocator v5 | BTC Buy & Hold | Ventaja Swing |

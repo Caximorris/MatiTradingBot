@@ -63,9 +63,15 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
 - Backtests DETERMINISTAS (desde 2026-07-01): `fetch_historical_bars` cachea OHLCV en
   `data/cache/{symbol}_{bar}.json` (gitignored). Runs con rango cubierto se sirven del cache
   sin red → velas identicas. Para forzar re-descarga: borrar el archivo del cache.
-  DATASET CANONICO (2026-07-02): `BTC-USDT_1H` = 102931 velas (2014-04-25 → 2026-01-01, continuo,
+  DATASET CANONICO (2026-07-02): `BTC-USDT_1H` = 102931 filas (2014-04-25 → 2026-01-01, continuo,
   cero huecos >24h, gap-fill Bitstamp completo). Reemplaza al viejo de 96906 velas. Ventana
   2015-2026 = 96930 velas analizadas tras warmup.
+  NOTA (2026-07-06, hallazgo de `data-audit`): de esas 102931 filas, **474 son timestamps
+  duplicados** (idéntico OHLCV, 0 conflictos de valor) agrupados en el empalme Bitstamp→OKX de
+  2017 → **102457 distintas**. Es redundancia benigna (no altera ningún valor de backtest) pero
+  el conteo "102931" está inflado. NO deduplicar durante el forward-test: sería una mutación del
+  cache canónico prohibida (contrato §4/§6c) y movería la paridad. Revisar solo tras cerrar el
+  paper, vía cambio versionado en git.
   El resultado es SENSIBLE al punto de inicio del histórico (leccion historica: 97105 velas de
   relleno PARCIAL daban PF 2.40 vs 96906 → PF 4.33; el 102931 continuo da PF 4.43): el cache da
   reproducibilidad, no corrección. PF es fragil al arranque — usar CAGR y Max DD como anclas. No
@@ -152,6 +158,12 @@ python main.py baselines --from 2018-01-01 --to 2026-01-01 --costs realistic
 python main.py backtest --strategy scalp --from 2022-01-01 --to 2026-06-01 --timeframe 1H
 python main.py start --strategy pro --symbol BTC-USDT
 python main.py compare --strategies "adaptive,pro" --from 2018 --to 2026
+
+# Observabilidad del forward-test paper (read-only, no toca la estrategia — plan T4/T6/T7/T13)
+python main.py paper-status [--watch 30]   # control center de v5/v6/legacy
+python main.py anomaly-check [--telegram]  # red-flags de infra/datos/estado (dedup)
+python main.py forward-report [--json|--out F|--telegram]  # solo datos post-inicio forward-test
+python main.py data-audit [--live]         # integridad del cache OHLCV (nunca re-descarga)
 ```
 
 ---
