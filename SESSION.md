@@ -4,11 +4,44 @@ Complemento de CLAUDE.md. **Este archivo es deliberadamente corto** para no gast
 cada arranque. El detalle historico completo (logs de sesion, tablas de backtests, referencia de
 cada modulo) vive en **`SESSION_ARCHIVE.md`** — leelo SOLO cuando lo necesites, no por defecto.
 
-**Ultima actualizacion: 2026-07-05 (handoff completo — paper Swing v5 en GCP + Prop/CFT paper preparado)**
+**Ultima actualizacion: 2026-07-06 (Swing v6 + aislamiento paper + pipeline funding MERGEADO A MAIN)**
+
+**HECHO (2026-07-06): merge a main + pipeline de funding vivo para el overlay v6.**
+- La rama `codex-handoff-prop-cft-swing-v6` esta MERGEADA A MAIN (fast-forward @ `2019859`,
+  pusheado a origin). main default sigue siendo v5 intacto: smoke CLI reproduce el ancla exacta
+  ($9.164M / +85.9% / -52.73% / btc_vs_bnh 0.8171 / 96930 velas). Todo lo v6/prop entra detras de
+  flags default `False`. Tests 145/145.
+- **Aislamiento de carteras paper**: `OKXClient(paper_state_name=...)` -> cada bot con
+  `paper_portfolio_id` en su config usa su propio `data/runtime/paper_state_<id>.json`. Los bots
+  legacy SIN `paper_portfolio_id` (el v5 que ya corre en la VM) siguen en `paper_state.json` sin
+  cambios. v6 -> `swing_v6`; Prop/CFT -> `prop_cft`. `tools/swing_paper_setup.py` registra v6
+  (y v5 aislado con `--include-v5`); `tools/prop_cft_setup.py` registra el prop.
+- **Pipeline de funding vivo** (`tools/funding_refresh.py`): descarga settlements nuevos de Bybit
+  y los fusiona en `data/cache/funding_bybit_BTCUSDT.json` (dedup por ts, escritura atomica);
+  `--stale-hours` sale !=0 para alertar. Enganchado en el cron diario (`deploy/daily_checks.sh`)
+  antes de la paridad, con alerta Telegram si el cache se queda atras (umbral 26h).
+- **Fix degradacion silenciosa**: `swing_funding_overlay._cached_events` se keyea por mtime del
+  archivo -> un scheduler que corre semanas recomputa cuando el cron refresca (antes congelaba los
+  eventos del primer tick). Log "overlay skipped" sube de debug a warning.
+- **El cache de funding pasa a gitignore** (`data/cache/funding_bybit_*.json`): lo modifica un cron
+  a diario y chocaria con `/update`. Funding history Bybit es inmutable/re-descargable, el
+  determinismo sobrevive a re-fetch. OJO en la VM: el pull BORRA el archivo -> reconstruir con
+  `python tools/funding_refresh.py` tras el pull (no urgente: overlay dormido hasta accumulation).
+- **v6 NO es ADOPT**: sigue `NEEDS_MORE_VALIDATION` (SWING_V6_PLAN.md). El overlay SOLO dispara en
+  fase `accumulation`; hoy estamos en `bear_onset` (807 dias post-halving), asi que v6 ≡ v5 en vivo
+  hasta ~2026-10-07 (dia 900). El paper v5-vs-v6 solo dara divergencia a partir de entonces.
+- **Deploy VM (los 3 en paper)**: `git pull` -> `pip install -r requirements.txt` (nueva dep
+  `matplotlib`, lazy, no bloquea) -> `python tools/funding_refresh.py` -> `swing_paper_setup.py
+  --enable` (SIN `--include-v5`, para NO crear un v5 fresco y perder el legacy) -> setup prop ->
+  `systemctl restart matibot` -> `bot list` (deben salir los 3). v5 legacy (`paper_state.json` +
+  `trading.db`, gitignored) intacto.
 
 Punteros a referencia (leer bajo demanda, NO precargar):
 - `HANDOFF_2026-07-05.md` — documento principal para continuar en otro PC sin perder contexto
   (branch, setup, estado operativo, Prop/CFT, Swing v6, tests y siguientes pasos).
+- `SWING_V6_PLAN.md` — plan v6: phase policy router (v5_equiv exacto) + funding overlay (V6-2
+  p10/p90 +0.05 ttl 7d en accumulation = candidato vivo, NEEDS_MORE_VALIDATION). Criterios de
+  promocion (Fase 4): requiere evidencia forward/paper post-2026-01-01 para pasar a ADOPT.
 - `SESSION_ARCHIVE.md` — logs sesiones 12/13, auditoria 2026-06-30, resultados backtest, referencia
   detallada de Pro Trend v12/v13, macro/market/funding context, indicadores, bugs resueltos.
 - `backtests/STRATEGY_VERSIONS.md` — historial de versiones de estrategia.
