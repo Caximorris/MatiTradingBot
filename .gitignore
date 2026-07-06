@@ -35,7 +35,8 @@ build/
 .vscode/
 .idea/
 
-# Configuracion local de Codex en esta maquina (rutas absolutas, no portable)
+# Configuracion local de agentes en esta maquina (permisos/rutas absolutas, no portable)
+.claude/settings.local.json
 .codex/hooks.json
 .codex/hooks/
 
