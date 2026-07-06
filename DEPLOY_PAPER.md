@@ -62,12 +62,19 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 
 ## Operacion diaria
 
+> **Multi-bot (v5/v6/legacy):** cada bot swing con `paper_portfolio_id` tiene su cartera
+> aislada (`paper_state_<id>.json`) y el control remoto los distingue. `/status` sin argumento
+> resume TODOS; `/status <bot>`, `/report <bot>`, `/equity <bot>` apuntan a uno. `/bots` lista
+> los registrados y su etiqueta (v5/v6/legacy). Prop sigue en su propio `/prop`.
+
 | Quiero... | Como |
 |---|---|
-| Estado (vivo?, % BTC, valor, vs B&H) | Telegram `/status` (o SSH: `python main.py status`) |
-| Informe de rebalanceos | Telegram `/report` o `/report 25` |
-| Grafico equity bot vs B&H | Telegram `/equity` o `/equity 45` (2-60 dias) |
-| Grafico precio + rebalanceos | Telegram `/chart [dias]` |
+| Resumen de todos los bots | Telegram `/status` |
+| Lista de bots y su cartera | Telegram `/bots` |
+| Estado de un bot (vivo?, % BTC, vs B&H) | Telegram `/status v6` (o SSH: `python main.py status`) |
+| Informe de rebalanceos de un bot | Telegram `/report v6` o `/report v6 25` |
+| Grafico equity bot vs B&H | Telegram `/equity v6` o `/equity v6 45` (2-60 dias) |
+| Grafico precio + rebalanceos | Telegram `/chart [bot] [dias]` |
 | Target y senales AHORA (calculo live) | Telegram `/signals` (~1 min; corre parity check) |
 | Paridad F15: ultimo check y racha /30 | Telegram `/parity` (lee daily_checks.log) |
 | Salud VM (servicios, RAM, disco, errores) | Telegram `/health` |

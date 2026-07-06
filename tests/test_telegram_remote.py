@@ -89,6 +89,65 @@ def test_unknown_command_returns_help(db_session):
     assert "/status" in handle_command("/loquesea", get_session)
 
 
+def test_split_bot_num_is_order_independent_and_clamps():
+    from tools.telegram_remote import _split_bot_num
+    assert _split_bot_num(["/report"], 10, 1, 100) == (None, 10)
+    assert _split_bot_num(["/report", "v6"], 10, 1, 100) == ("v6", 10)
+    assert _split_bot_num(["/report", "25"], 10, 1, 100) == (None, 25)
+    assert _split_bot_num(["/report", "v6", "25"], 10, 1, 100) == ("v6", 25)
+    assert _split_bot_num(["/report", "25", "v6"], 10, 1, 100) == ("v6", 25)  # orden libre
+    assert _split_bot_num(["/report", "500"], 10, 1, 100) == (None, 100)      # clamp alto
+
+
+def _snap_full(label, active=True):
+    from decimal import Decimal
+    return {
+        "label": label, "name": f"swing_allocator_{label}_btc_usdt", "symbol": "BTC-USDT",
+        "is_active": active, "last_run": None, "portfolio_id": f"swing_{label}",
+        "balances": {"BTC": Decimal("0.1"), "USDT": Decimal("100")},
+        "rebalances": [{"strategy": f"swing_allocator_{label}_btc_usdt", "direction": "INIT",
+                        "timestamp": "2026-07-04T08:00:00+00:00", "btc_pct_after": 0.6,
+                        "price": 50000.0, "portfolio_usdt": 5100.0}],
+    }
+
+
+def test_status_and_bots_route_to_summary_detail_and_error(monkeypatch, db_session):
+    from decimal import Decimal
+    import tools.telegram_remote as tr
+    snaps = [_snap_full("v5"), _snap_full("v6")]
+    monkeypatch.setattr(tr, "_load_snapshots", lambda gs: snaps)
+    monkeypatch.setattr(tr, "fetch_price", lambda *a, **k: Decimal("50000"))
+
+    @contextmanager
+    def get_session():
+        yield db_session
+
+    summary = tr.handle_command("/status", get_session)
+    assert "SWING — PAPER" in summary and "v5" in summary and "v6" in summary
+
+    detail = tr.handle_command("/status v6", get_session)
+    assert "SWING v6 — PAPER" in detail
+
+    assert "no encontrado" in tr.handle_command("/status zzz", get_session)
+
+    bots = tr.handle_command("/bots", get_session)
+    assert "paper_state_swing_v6.json" in bots and "legacy" not in bots
+
+
+def test_report_requires_bot_when_multiple(monkeypatch, db_session):
+    import tools.telegram_remote as tr
+    monkeypatch.setattr(tr, "_load_snapshots", lambda gs: [_snap_full("v5"), _snap_full("v6")])
+
+    @contextmanager
+    def get_session():
+        yield db_session
+
+    ambiguous = tr.handle_command("/report", get_session)
+    assert "Indica el bot" in ambiguous and "v5" in ambiguous
+    ok = tr.handle_command("/report v6", get_session)
+    assert "REPORT [v6]" in ok
+
+
 def _row(active=True, last_run=None):
     return SimpleNamespace(
         strategy_name="swing_allocator_btc_usdt", symbol="BTC-USDT",
@@ -176,16 +235,29 @@ def test_build_equity_series_reconstructs_holdings():
     assert build_equity_series([], candles)["ts"] == []
 
 
-def test_format_heartbeat_summarizes():
+def _snap(label="v5", active=True, last_run=None, balances=None, rebalances=None):
+    from decimal import Decimal
+    return {
+        "label": label, "name": f"swing_allocator_{label}_btc_usdt", "symbol": "BTC-USDT",
+        "is_active": active, "last_run": last_run,
+        "balances": balances or {"BTC": Decimal("0.02"), "USDT": Decimal("8000")},
+        "rebalances": rebalances or [],
+    }
+
+
+def test_format_heartbeat_multi_summarizes_each_bot():
     from decimal import Decimal
     from datetime import datetime, timedelta, timezone
-    from tools.telegram_remote import format_heartbeat
+    from tools.telegram_remote import format_heartbeat_multi
     now = datetime(2026, 7, 5, 8, 0, tzinfo=timezone.utc)
-    rows = [_row(True, now - timedelta(minutes=1))]
-    balances = {"BTC": Decimal("0.02"), "USDT": Decimal("8000")}
-    rebalances = [{"timestamp": "2026-07-04T08:59:00+00:00", "portfolio_usdt": 10000.0,
-                   "price": 62578.0}]
-    hb = format_heartbeat(rows, balances, Decimal("62578"), rebalances, [], now)
-    assert "vivo" in hb and "parity 0/30" in hb and "1 rebalanceos" in hb
-    hb_paused = format_heartbeat([_row(False)], balances, None, [], [], now)
-    assert "pausado" in hb_paused
+    rebs = [{"timestamp": "2026-07-04T08:59:00+00:00", "portfolio_usdt": 10000.0,
+             "price": 62578.0}]
+    snaps = [
+        _snap("v5", True, now - timedelta(minutes=1), rebalances=rebs),
+        _snap("v6", False),
+    ]
+    hb = format_heartbeat_multi(snaps, Decimal("62578"), [], now)
+    # v5: total = 0.02*62578 + 8000 = 9251.56 ; ratio = 9251.56/10000 = 0.925
+    assert "v5" in hb and "$9,252" in hb and "(0.925)" in hb
+    assert "v6" in hb and "parity 0/30" in hb
+    assert format_heartbeat_multi([], Decimal("62578"), [], now).startswith("\U0001F493")

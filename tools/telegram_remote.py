@@ -19,7 +19,6 @@ Sin red o con la API caida, reintenta indefinidamente — apto para systemd.
 """
 from __future__ import annotations
 
-import html
 import json
 import re
 import shutil
@@ -27,7 +26,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -36,20 +35,34 @@ sys.path.insert(0, str(ROOT))
 
 from loguru import logger
 
+from tools.paper_bots import bot_label, filter_rebalances, paper_state_path, resolve_bot
 from tools.tg_send import tg_api, tg_credentials, tg_send, tg_send_document, tg_send_photo
+from tools.tg_views import (
+    LIVENESS_MAX_AGE_MIN,
+    PARITY_TARGET_DAYS,
+    _bot_row,
+    _esc,
+    format_heartbeat_multi,
+    format_parity,
+    format_rebalance_alert,
+    format_report,
+    format_status,
+    format_status_summary,
+    parse_daily_checks,
+    parity_streak,
+)
 
-PAPER_STATE = ROOT / "data" / "runtime" / "paper_state.json"
-REBALANCES = ROOT / "data" / "runtime" / "swing_rebalances.jsonl"
+RUNTIME = ROOT / "data" / "runtime"
+PAPER_STATE = RUNTIME / "paper_state.json"   # cartera legacy (bot swing sin paper_portfolio_id)
+REBALANCES = RUNTIME / "swing_rebalances.jsonl"
 DAILY_CHECKS_LOG = ROOT / "data" / "runtime" / "daily_checks.log"
 TG_STATE = ROOT / "data" / "runtime" / "tg_state.json"   # heartbeat/backup/watchdog persistido
 TRADING_DB = ROOT / "trading.db"
 STATE_ROW_NAME = "swing_allocator"   # fila de estado interno — NUNCA pausar/reanudar esta
-LIVENESS_MAX_AGE_MIN = 10            # last_run mas viejo que esto con bot activo = proceso caido
 UNIT_BOT = "matibot"
 UNIT_TG = "matibot-telegram"
 HEARTBEAT_HOUR_UTC = 8               # 1 mensaje/dia: el silencio deja de ser ambiguo
 BACKUP_EVERY_DAYS = 7                # backup automatico semanal al chat
-PARITY_TARGET_DAYS = 30              # criterio de cierre F15
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +103,36 @@ def set_prop_active(session, active: bool) -> list[str]:
     return [r.strategy_name for r in rows]
 
 
+def discover_bots(session) -> list[dict]:
+    """Datos planos de cada bot swing (extraidos DENTRO de la sesion, sin ORM colgante).
+
+    Cada dict: label, name, symbol, is_active, last_run, portfolio_id. Refleja lo que este
+    registrado en BotState — se adapta solo a 1, 2 o 3 carteras sin hardcodear."""
+    out = []
+    for r in swing_bot_rows(session):
+        cfg = r.get_config() or {}
+        out.append({
+            "label": bot_label(r.strategy_name, cfg),
+            "name": r.strategy_name,
+            "symbol": r.symbol,
+            "is_active": r.is_active,
+            "last_run": r.last_run,
+            "portfolio_id": cfg.get("paper_portfolio_id"),
+        })
+    return out
+
+
+def bot_snapshots(bots: list[dict], all_rebalances: list[dict]) -> list[dict]:
+    """Enriquece cada bot con su cartera (paper_state_<id>.json) y sus rebalanceos filtrados."""
+    snaps = []
+    for b in bots:
+        path = paper_state_path(b["portfolio_id"], RUNTIME)
+        snaps.append({**b,
+                      "balances": read_paper_balances(path),
+                      "rebalances": filter_rebalances(all_rebalances, b["name"])})
+    return snaps
+
+
 def read_paper_balances(path: Path = PAPER_STATE) -> dict[str, Decimal]:
     if not path.exists():
         return {}
@@ -126,126 +169,6 @@ def fetch_price(symbol: str = "BTC-USDT") -> Decimal | None:
     except Exception as exc:
         logger.warning("fetch_price fallo: {}", exc)
         return None
-
-
-_DIR_ICON = {"BUY": "\U0001F7E2", "SELL": "\U0001F534", "INIT": "⚪"}  # verde/rojo/blanco
-
-
-def _esc(s) -> str:
-    """Escapa texto dinamico para parse_mode=HTML de Telegram."""
-    return html.escape(str(s), quote=False)
-
-
-def _next_4h_eval(now: datetime) -> tuple[datetime, int]:
-    """Proximo cierre de bloque 4H UTC (00/04/08/12/16/20) y minutos restantes."""
-    base = now.replace(minute=0, second=0, microsecond=0)
-    nxt = base + timedelta(hours=4 - base.hour % 4)
-    return nxt, int((nxt - now).total_seconds() // 60)
-
-
-def format_status(rows, balances: dict, price: Decimal | None,
-                  rebalances: list[dict], now: datetime) -> str:
-    lines = ["\U0001F4CA <b>SWING ALLOCATOR — PAPER</b>", ""]
-    if not rows:
-        lines.append("Sin bots swing configurados (usa: python main.py bot enable ...)")
-        return "\n".join(lines)
-
-    for r in rows:
-        if not r.is_active:
-            icon, estado = "⏸", "PAUSADO"
-        elif r.last_run is None:
-            icon, estado = "\U0001F7E1", "ACTIVO (sin tick aun)"
-        else:
-            last = r.last_run if r.last_run.tzinfo else r.last_run.replace(tzinfo=timezone.utc)
-            age_min = (now - last).total_seconds() / 60
-            if age_min <= LIVENESS_MAX_AGE_MIN:
-                icon, estado = "\U0001F7E2", f"VIVO (ultimo tick hace {age_min:.0f} min)"
-            else:
-                icon, estado = "\U0001F534", f"ACTIVO PERO SIN TICK HACE {age_min:.0f} MIN — revisar proceso!"
-        lines.append(f"{icon} <b>{_esc(r.strategy_name)}</b> [{_esc(r.symbol)}]: {estado}")
-
-    btc = balances.get("BTC", Decimal("0"))
-    usdt = balances.get("USDT", Decimal("0"))
-    lines.append("")
-    if price is not None:
-        total = btc * price + usdt
-        pct = (btc * price / total * 100) if total > 0 else Decimal("0")
-        lines.append(f"\U0001F4B0 <b>Portfolio: ${total:,.2f}</b> ({pct:.1f}% en BTC)")
-        lines.append(f"{btc:.6f} BTC (${btc * price:,.0f}) + {usdt:,.2f} USDT")
-        lines.append(f"BTC = ${price:,.0f}")
-    else:
-        lines.append(f"\U0001F4B0 Balance: {btc:.6f} BTC + {usdt:.2f} USDT")
-        lines.append("(precio BTC no disponible ahora mismo)")
-
-    # Rendimiento desde el INIT: retorno del bot vs B&H BTC (la metrica ancla del Swing)
-    if rebalances and price is not None:
-        init = rebalances[0]
-        init_port = Decimal(str(init.get("portfolio_usdt", 0)))
-        init_price = Decimal(str(init.get("price", 0)))
-        if init_port > 0 and init_price > 0 and total > 0:
-            bot_ret = (total / init_port - 1) * 100
-            bnh_ret = (price / init_price - 1) * 100
-            ratio = float(total / init_port) / float(price / init_price)
-            days = max(0, (now - datetime.fromisoformat(init["timestamp"])).days) \
-                if "timestamp" in init else 0
-            lines.append("")
-            lines.append(f"\U0001F4C8 <b>Rendimiento</b> ({days} dias, {len(rebalances)} rebalanceos)")
-            lines.append(f"Bot {bot_ret:+.2f}% | B&amp;H BTC {bnh_ret:+.2f}% | bot/B&amp;H {ratio:.3f}")
-
-    if rebalances:
-        rb = rebalances[-1]
-        icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
-        lines.append("")
-        lines.append("\U0001F501 <b>Ultimo rebalanceo</b>")
-        lines.append(
-            f"{icon} {rb.get('timestamp', '?')[:16]} {rb.get('direction', '?')} "
-            f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%} "
-            f"@ ${rb.get('price', 0):,.0f}"
-        )
-        if rb.get("signals"):
-            lines.append(f"senales: {_esc(', '.join(rb['signals']))}")
-    else:
-        lines.append("")
-        lines.append("Sin rebalanceos registrados aun.")
-
-    nxt, mins = _next_4h_eval(now)
-    lines.append("")
-    lines.append(f"⏱ Proxima evaluacion 4H: {nxt:%H:%M} UTC (en {mins // 60}h {mins % 60:02d}m)")
-    return "\n".join(lines)
-
-
-def format_report(rebalances: list[dict], n: int = 10) -> str:
-    if not rebalances:
-        return "Sin rebalanceos registrados aun."
-    total = len(rebalances)
-    first_ts = rebalances[0].get("timestamp", "?")[:10]
-    body = []
-    for rb in rebalances[-n:]:
-        icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
-        body.append(_esc(
-            f"{icon} {rb.get('timestamp', '?')[5:16]} {rb.get('direction', '?'):4} "
-            f"{rb.get('btc_pct_before', 0):.0%}→{rb.get('btc_pct_after', 0):.0%} "
-            f"@ ${rb.get('price', 0):,.0f} | ${rb.get('portfolio_usdt', 0):,.0f} "
-            f"| {','.join(rb.get('signals', []))}"
-        ))
-    lines = [f"\U0001F4D2 <b>REPORT</b> — {total} rebalanceo(s) desde {first_ts}", ""]
-    lines.append("<pre>" + "\n".join(body) + "</pre>")
-    if total > n:
-        lines.append(f"... ({total - n} anteriores omitidos; /report {total} para todos)")
-    return "\n".join(lines)
-
-
-def format_rebalance_alert(rb: dict) -> str:
-    icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
-    lines = [
-        f"{icon} <b>REBALANCEO: {_esc(rb.get('direction', '?'))} "
-        f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%}</b>",
-        f"{rb.get('timestamp', '?')[:16]} @ ${rb.get('price', 0):,.0f}",
-        f"\U0001F4B0 Portfolio: ${rb.get('portfolio_usdt', 0):,.0f}",
-    ]
-    if rb.get("signals"):
-        lines.append(f"senales: {_esc(', '.join(rb['signals']))}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -314,56 +237,6 @@ def cmd_logs(n: int) -> str:
 # Paridad F15 y senales
 # ---------------------------------------------------------------------------
 
-def parse_daily_checks(text: str) -> list[dict]:
-    """Bloques del daily_checks.log -> [{ts, parity(bool|None), target}]."""
-    blocks: list[dict] = []
-    cur: dict | None = None
-    for line in text.splitlines():
-        if line.startswith("===== daily_checks"):
-            cur = {"ts": line.split()[2] if len(line.split()) > 2 else "?",
-                   "parity": None, "target": None}
-            blocks.append(cur)
-        elif cur is not None:
-            if line.startswith("live_target,"):
-                cur["target"] = line.split(",", 1)[1].strip()
-            elif line.strip() == "PARITY_OK":
-                cur["parity"] = True
-            elif "PARITY_FAIL" in line:
-                cur["parity"] = False
-    return blocks
-
-
-def parity_streak(blocks: list[dict]) -> int:
-    streak = 0
-    for b in reversed(blocks):
-        if b["parity"] is True:
-            streak += 1
-        else:
-            break
-    return streak
-
-
-def format_parity(blocks: list[dict]) -> str:
-    if not blocks:
-        return ("\U0001F50D <b>PARIDAD F15</b>\n"
-                "Sin checks aun — el cron corre a las 12:10 UTC.")
-    last = blocks[-1]
-    if last["parity"] is True:
-        icon, verdict = "\U0001F7E2", "OK"
-    elif last["parity"] is False:
-        icon, verdict = "\U0001F534", "FAIL — pausa e investiga (bug por definicion)"
-    else:
-        icon, verdict = "\U0001F7E1", "sin resultado (revisar log)"
-    lines = [
-        "\U0001F50D <b>PARIDAD F15</b>",
-        f"{icon} Ultimo check {_esc(last['ts'])}: {verdict}",
-    ]
-    if last["target"]:
-        lines.append(f"Target: {_esc(last['target'])}")
-    lines.append(f"Racha: <b>{parity_streak(blocks)}/{PARITY_TARGET_DAYS}</b> dias OK")
-    return "\n".join(lines)
-
-
 def cmd_signals() -> str:
     tg_send("⏳ Calculando senales (descarga 6000 velas, ~1 min)...")
     rc, out = _run([sys.executable, str(ROOT / "tools" / "swing_parity_check.py")],
@@ -390,15 +263,8 @@ def cmd_signals() -> str:
 # Graficos y backup
 # ---------------------------------------------------------------------------
 
-def _parse_days(parts: list[str], default: int = 30) -> int:
-    if len(parts) > 1 and parts[1].isdigit():
-        return max(2, min(int(parts[1]), 60))
-    return default
-
-
-def cmd_equity(days: int) -> str | None:
+def cmd_equity(days: int, rebalances: list[dict], label: str = "") -> str | None:
     from tools.tg_charts import build_equity_series, fetch_candles, render_equity_png
-    rebalances = read_rebalances()
     if not rebalances:
         return "Sin rebalanceos aun — no hay equity que dibujar."
     tg_send("⏳ Generando grafico de equity...")
@@ -410,19 +276,20 @@ def cmd_equity(days: int) -> str | None:
     bot0, bot1 = series["bot"][0], series["bot"][-1]
     bnh0, bnh1 = series["bnh"][0], series["bnh"][-1]
     ratio = (bot1 / bot0) / (bnh1 / bnh0) if bot0 and bnh0 and bnh1 else 0
-    caption = (f"Bot ${bot1:,.0f} ({(bot1 / bot0 - 1) * 100:+.2f}%) | "
+    tag = f"[{label}] " if label else ""
+    caption = (f"{tag}Bot ${bot1:,.0f} ({(bot1 / bot0 - 1) * 100:+.2f}%) | "
                f"B&H ${bnh1:,.0f} ({(bnh1 / bnh0 - 1) * 100:+.2f}%) | "
                f"bot/B&H {ratio:.3f}")
     return None if tg_send_photo(png, caption) else "Fallo enviando el grafico."
 
 
-def cmd_chart(days: int) -> str | None:
+def cmd_chart(days: int, rebalances: list[dict]) -> str | None:
     from tools.tg_charts import fetch_candles, render_price_png
     tg_send("⏳ Generando grafico de precio...")
     candles = fetch_candles(days=days)
     if not candles:
         return "OKX no devolvio velas."
-    png = render_price_png(candles, read_rebalances(), days)
+    png = render_price_png(candles, rebalances, days)
     caption = f"BTC ${candles[-1][1]:,.0f} | {days}d 1H | rebalanceos marcados"
     return None if tg_send_photo(png, caption) else "Fallo enviando el grafico."
 
@@ -430,7 +297,8 @@ def cmd_chart(days: int) -> str | None:
 def cmd_backup() -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     sent = []
-    for p in (TRADING_DB, PAPER_STATE, REBALANCES, DAILY_CHECKS_LOG):
+    wallets = sorted(RUNTIME.glob("paper_state*.json"))
+    for p in [TRADING_DB, *wallets, REBALANCES, DAILY_CHECKS_LOG]:
         if p.exists() and tg_send_document(f"{stamp}_{p.name}", p.read_bytes(),
                                            caption=f"backup {stamp} — {p.name}"):
             sent.append(p.name)
@@ -487,47 +355,19 @@ def _save_tg_state(state: dict) -> None:
         logger.warning("No se pudo persistir tg_state: {}", exc)
 
 
-def format_heartbeat(rows, balances: dict, price: Decimal | None,
-                     rebalances: list[dict], blocks: list[dict],
-                     now: datetime) -> str:
-    alive = any(
-        r.is_active and r.last_run is not None
-        and (now - (r.last_run if r.last_run.tzinfo else r.last_run.replace(tzinfo=timezone.utc))
-             ).total_seconds() / 60 <= LIVENESS_MAX_AGE_MIN
-        for r in rows
-    )
-    paused = bool(rows) and all(not r.is_active for r in rows)
-    icon = "⏸" if paused else ("\U0001F7E2" if alive else "\U0001F534")
-    state_txt = "pausado" if paused else ("vivo" if alive else "SIN TICK — revisar!")
-    parts = [f"\U0001F493 {icon} {state_txt}"]
-    btc = balances.get("BTC", Decimal("0"))
-    usdt = balances.get("USDT", Decimal("0"))
-    if price is not None:
-        total = btc * price + usdt
-        pct = (btc * price / total * 100) if total > 0 else Decimal("0")
-        parts.append(f"${total:,.0f} ({pct:.0f}% BTC)")
-        if rebalances:
-            init = rebalances[0]
-            ip, ipr = Decimal(str(init.get("portfolio_usdt", 0))), Decimal(str(init.get("price", 0)))
-            if ip > 0 and ipr > 0 and total > 0:
-                parts.append(f"bot/B&H {float(total / ip) / float(price / ipr):.3f}")
-    parts.append(f"parity {parity_streak(blocks)}/{PARITY_TARGET_DAYS}")
-    parts.append(f"{len(rebalances)} rebalanceos")
-    return " · ".join(parts)
-
-
 HELP_TEXT = (
     "\U0001F916 <b>Comandos</b>\n"
-    "\n<b>Estado</b>\n"
-    "/status — estado, balances, rendimiento vs B&amp;H\n"
+    "\n<b>Estado</b> (bot = v5/v6/legacy; /bots para la lista)\n"
+    "/status [bot] — resumen de todos, o detalle de uno\n"
+    "/bots — bots swing registrados y su cartera\n"
     "/prop — estado Prop/CFT y ultimos eventos\n"
     "/prop_report [n] — ultimos eventos PropSwing\n"
-    "/report [n] — ultimos n rebalanceos\n"
-    "/signals — target y senales actuales (calculo live)\n"
+    "/report [bot] [n] — ultimos n rebalanceos de un bot\n"
+    "/signals — target y senales actuales (v5 canonico, calculo live)\n"
     "/parity — paridad F15: ultimo check y racha /30\n"
     "\n<b>Graficos</b>\n"
-    "/equity [dias] — equity del bot vs B&amp;H BTC (30 por defecto)\n"
-    "/chart [dias] — precio BTC con rebalanceos marcados\n"
+    "/equity [bot] [dias] — equity vs B&amp;H BTC (30 por defecto)\n"
+    "/chart [bot] [dias] — precio BTC con rebalanceos marcados\n"
     "\n<b>VM y servicios</b>\n"
     "/health — servicios, RAM/disco, errores 24h\n"
     "/logs [n] — ultimas n lineas del journal (30 por defecto)\n"
@@ -544,7 +384,8 @@ HELP_TEXT = (
 )
 
 BOT_COMMANDS = [
-    ("status", "Estado, balances y rendimiento"),
+    ("status", "Resumen de bots, o /status <bot>"),
+    ("bots", "Bots swing registrados"),
     ("prop", "Estado Prop/CFT"),
     ("prop_report", "Eventos PropSwing"),
     ("report", "Ultimos rebalanceos"),
@@ -569,6 +410,52 @@ BOT_COMMANDS = [
 # Despacho de comandos
 # ---------------------------------------------------------------------------
 
+def _split_bot_num(parts: list[str], default_num: int, lo: int, hi: int) -> tuple[str | None, int]:
+    """parts[1:] en cualquier orden -> (bot_token|None, num). Un digito = num; el resto = bot."""
+    bot, num = None, default_num
+    for p in parts[1:]:
+        if p.isdigit():
+            num = max(lo, min(int(p), hi))
+        elif bot is None:
+            bot = p
+    return bot, num
+
+
+def _load_snapshots(get_session) -> list[dict]:
+    with get_session() as s:
+        bots = discover_bots(s)
+    return bot_snapshots(bots, read_rebalances())
+
+
+def _bots_hint(snaps: list[dict]) -> str:
+    return "Bots: " + ", ".join(_esc(s["label"]) for s in snaps)
+
+
+def _pick_single(snaps: list[dict], token: str | None, usage: str):
+    """Resuelve UN bot. Devuelve el dict, o un str de error/ayuda listo para responder."""
+    if token is not None:
+        bot = resolve_bot(token, snaps)
+        return bot if bot else f"Bot '{_esc(token)}' no encontrado. /bots para la lista."
+    if not snaps:
+        return "Sin bots swing configurados."
+    if len(snaps) == 1:
+        return snaps[0]
+    return f"Indica el bot: {usage}. {_bots_hint(snaps)}"
+
+
+def format_bots(snaps: list[dict]) -> str:
+    if not snaps:
+        return ("Sin bots swing configurados "
+                "(python tools/swing_paper_setup.py --include-v5 --enable).")
+    lines = ["\U0001F5C2 <b>BOTS SWING</b>", ""]
+    for s in snaps:
+        wallet = paper_state_path(s["portfolio_id"], RUNTIME).name
+        state = "activo" if s["is_active"] else "pausado"
+        lines.append(f"• <b>{_esc(s['label'])}</b> — {_esc(s['name'])} "
+                     f"[{state}] · {_esc(wallet)} · {len(s['rebalances'])} reb")
+    return "\n".join(lines)
+
+
 def handle_command(text: str, get_session) -> str | None:
     """Devuelve la respuesta de texto, o None si el comando ya envio lo suyo
     (fotos, documentos, o el /update que se reinicia a si mismo)."""
@@ -578,10 +465,19 @@ def handle_command(text: str, get_session) -> str | None:
     cmd = parts[0].lower().split("@")[0]
 
     if cmd == "/status":
-        with get_session() as s:
-            rows = swing_bot_rows(s)
-            return format_status(rows, read_paper_balances(), fetch_price(),
-                                 read_rebalances(), datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        price = fetch_price()
+        snaps = _load_snapshots(get_session)
+        token = parts[1] if len(parts) > 1 else None
+        if token is None:
+            return format_status_summary(snaps, price, now)
+        bot = resolve_bot(token, snaps)
+        if bot is None:
+            return f"Bot '{_esc(token)}' no encontrado. /bots para la lista."
+        return format_status([_bot_row(bot)], bot["balances"], price, bot["rebalances"],
+                             now, title=f"SWING {bot['label']} — PAPER")
+    if cmd == "/bots":
+        return format_bots(_load_snapshots(get_session))
     if cmd == "/prop":
         from tools.prop_telegram import format_prop_status
         with get_session() as s:
@@ -593,19 +489,30 @@ def handle_command(text: str, get_session) -> str | None:
             n = max(1, min(int(parts[1]), 100))
         return format_prop_report(n)
     if cmd == "/report":
-        n = 10
-        if len(parts) > 1 and parts[1].isdigit():
-            n = max(1, min(int(parts[1]), 100))
-        return format_report(read_rebalances(), n)
+        token, n = _split_bot_num(parts, 10, 1, 100)
+        bot = _pick_single(_load_snapshots(get_session), token, "/report &lt;bot&gt; [n]")
+        if isinstance(bot, str):
+            return bot
+        return format_report(bot["rebalances"], n, label=bot["label"])
     if cmd == "/signals":
         return cmd_signals()
     if cmd == "/parity":
         text_log = DAILY_CHECKS_LOG.read_text(encoding="utf-8") if DAILY_CHECKS_LOG.exists() else ""
         return format_parity(parse_daily_checks(text_log))
     if cmd == "/equity":
-        return cmd_equity(_parse_days(parts))
+        token, days = _split_bot_num(parts, 30, 2, 60)
+        bot = _pick_single(_load_snapshots(get_session), token, "/equity &lt;bot&gt; [dias]")
+        if isinstance(bot, str):
+            return bot
+        return cmd_equity(days, bot["rebalances"], label=bot["label"])
     if cmd == "/chart":
-        return cmd_chart(_parse_days(parts))
+        token, days = _split_bot_num(parts, 30, 2, 60)
+        if token is None:
+            return cmd_chart(days, read_rebalances())   # precio + rebalanceos de todos
+        bot = resolve_bot(token, _load_snapshots(get_session))
+        if bot is None:
+            return f"Bot '{_esc(token)}' no encontrado. /bots para la lista."
+        return cmd_chart(days, bot["rebalances"])
     if cmd == "/health":
         return format_health()
     if cmd == "/logs":
@@ -710,13 +617,11 @@ def main() -> None:
         try:
             today = now.date().isoformat()
             if now.hour >= HEARTBEAT_HOUR_UTC and tg_state.get("last_heartbeat") != today:
-                with get_session() as s:
-                    rows = swing_bot_rows(s)
-                    blocks = parse_daily_checks(
-                        DAILY_CHECKS_LOG.read_text(encoding="utf-8")
-                        if DAILY_CHECKS_LOG.exists() else "")
-                    hb = format_heartbeat(rows, read_paper_balances(), fetch_price(),
-                                          read_rebalances(), blocks, now)
+                blocks = parse_daily_checks(
+                    DAILY_CHECKS_LOG.read_text(encoding="utf-8")
+                    if DAILY_CHECKS_LOG.exists() else "")
+                snaps = _load_snapshots(get_session)
+                hb = format_heartbeat_multi(snaps, fetch_price(), blocks, now)
                 tg_send(hb, parse_mode="HTML")
                 tg_state["last_heartbeat"] = today
                 _save_tg_state(tg_state)
