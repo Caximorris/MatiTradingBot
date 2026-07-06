@@ -35,8 +35,8 @@ def start(
     from core.risk_manager import RiskManager
 
     init_db()
-    client       = _make_client(settings)
-    risk_manager = RiskManager(client=client, app_settings=settings)
+    default_client = _make_client(settings)
+    default_risk_manager = RiskManager(client=default_client, app_settings=settings)
 
     with get_session() as s:
         active_bots = s.query(BotState).filter(BotState.is_active == True).all()
@@ -52,6 +52,16 @@ def start(
     scheduler = BackgroundScheduler(timezone="UTC")
     _running   = True
 
+    clients: dict[tuple[str, str], tuple[object, RiskManager]] = {}
+    for name, symbol, config in bot_configs:
+        portfolio_id = config.get("paper_portfolio_id") if settings.is_paper else None
+        if portfolio_id:
+            bot_client = _make_client(settings, paper_state_name=str(portfolio_id))
+            bot_risk = RiskManager(client=bot_client, app_settings=settings)
+        else:
+            bot_client, bot_risk = default_client, default_risk_manager
+        clients[(name, symbol)] = (bot_client, bot_risk)
+
     def _make_job(strategy_name, symbol, config):
         def job():
             try:
@@ -61,7 +71,8 @@ def start(
                              .first())
                     if not state or not state.is_active:
                         return
-                    strategy = _instantiate_strategy(state, client, risk_manager, session)
+                    bot_client, bot_risk = clients[(strategy_name, symbol)]
+                    strategy = _instantiate_strategy(state, bot_client, bot_risk, session)
                     if strategy:
                         strategy.run()
                         state.last_run = datetime.now(timezone.utc)
@@ -70,8 +81,9 @@ def start(
         return job
 
     for name, symbol, config in bot_configs:
+        job_id = f"{name}_{symbol}".replace("-", "_")
         scheduler.add_job(_make_job(name, symbol, config), "interval",
-                          seconds=tick, id=name, max_instances=1)
+                          seconds=tick, id=job_id, max_instances=1)
         console.print(f"  [green][OK][/green] {name} ({symbol}) — tick cada {tick}s")
 
     scheduler.start()

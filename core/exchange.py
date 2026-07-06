@@ -1,11 +1,4 @@
-"""
-Cliente OKX — abstrae REST para trading en vivo y simulación paper.
-
-En paper mode los métodos de lectura intentan llamar a la API pública de OKX
-(no requiere credenciales) y degradan graciosamente si no hay conexión.
-Los métodos de escritura (place_order, cancel_order) nunca llaman a OKX en paper:
-simulan la operación localmente y devuelven la misma estructura que el modo live.
-"""
+"""Cliente OKX: REST live y simulacion paper."""
 from __future__ import annotations
 
 import json
@@ -41,20 +34,11 @@ except ImportError:
     logger.warning("tenacity no instalado — reintentos automáticos deshabilitados")
 
 
-# ---------------------------------------------------------------------------
-# Constantes de rate limiting (OKX: 20 req / 2 s en endpoints privados)
-# ---------------------------------------------------------------------------
-
 _RATE_MAX_REQUESTS = 20
 _RATE_WINDOW_SECONDS = 2.0
 
-# Comisión simulada en paper mode (taker fee estándar de OKX spot)
 _PAPER_FEE_RATE = Decimal("0.001")  # 0.1 %
 
-
-# ---------------------------------------------------------------------------
-# Excepciones
-# ---------------------------------------------------------------------------
 
 class ExchangeError(Exception):
     """Error retornado por la API de OKX (código != 0)."""
@@ -63,10 +47,6 @@ class ExchangeError(Exception):
 class ExchangeUnavailable(ExchangeError):
     """Exchange no alcanzable: timeout, sin conexión, 5xx."""
 
-
-# ---------------------------------------------------------------------------
-# Tipo de retorno normalizado para órdenes
-# ---------------------------------------------------------------------------
 
 @dataclass
 class OrderResult:
@@ -87,10 +67,6 @@ class OrderResult:
     error: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Rate limiter (ventana deslizante, thread-safe)
-# ---------------------------------------------------------------------------
-
 class _RateLimiter:
     def __init__(self, max_requests: int, window: float) -> None:
         self._max = max_requests
@@ -110,10 +86,6 @@ class _RateLimiter:
             self._times.append(time.monotonic())
 
 
-# ---------------------------------------------------------------------------
-# Retry decorator (no-op si tenacity no está instalado)
-# ---------------------------------------------------------------------------
-
 def _with_retry(func):
     if not _TENACITY_OK:
         return func
@@ -125,25 +97,20 @@ def _with_retry(func):
     )(func)
 
 
-# ---------------------------------------------------------------------------
-# OKXClient
-# ---------------------------------------------------------------------------
-
 class OKXClient:
-    """
-    Interfaz unificada para OKX (REST).
+    """Interfaz unificada para OKX."""
 
-    Las estrategias nunca deben comprobar `is_paper`: llaman a los mismos
-    métodos independientemente del modo — la diferencia está encapsulada aquí.
-    """
-
-    def __init__(self, settings: Settings, persist_paper_state: bool = False) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        persist_paper_state: bool = False,
+        paper_state_name: str | None = None,
+    ) -> None:
         self._settings = settings
         self._is_paper = settings.is_paper
         self._flag = "1" if settings.okx_sandbox else "0"
         self._rate = _RateLimiter(_RATE_MAX_REQUESTS, _RATE_WINDOW_SECONDS)
 
-        # Clientes OKX (inicializados si el paquete está instalado)
         self._market_api: Any = None
         self._trade_api: Any = None
         self._account_api: Any = None
@@ -151,26 +118,21 @@ class OKXClient:
 
         self._init_apis()
 
-        # Estado paper (thread-safe)
         self._paper_lock = threading.Lock()
         self._paper_balance: dict[str, Decimal] = {"USDT": Decimal("10000")}
         self._paper_orders: dict[str, OrderResult] = {}
         self._paper_counter = 0
-        # Persistencia del portfolio paper (fix post-freeze 2026-07-02): sin esto, cada
-        # reinicio del proceso reseteaba el balance simulado a $10k y borraba la posicion.
-        # Opt-in (lo activa _make_client en main.py) para no acoplar tests al filesystem.
-        # OJO: las ordenes LIMIT pendientes NO sobreviven al reinicio (el Swing solo usa market).
-        self._paper_state_path = Path("data") / "runtime" / "paper_state.json"
+        state_file = "paper_state.json"
+        if paper_state_name:
+            safe = self._safe_state_name(paper_state_name)
+            state_file = f"paper_state_{safe}.json"
+        self._paper_state_path = Path("data") / "runtime" / state_file
         self._persist_paper = persist_paper_state and self._is_paper
         if self._persist_paper:
             self._load_paper_state()
 
         mode = "paper" if self._is_paper else "live"
         logger.info("OKXClient inicializado — modo={}, exchange_disponible={}", mode, self._available)
-
-    # -----------------------------------------------------------------------
-    # Inicialización de APIs
-    # -----------------------------------------------------------------------
 
     def _init_apis(self) -> None:
         try:
@@ -204,10 +166,6 @@ class OKXClient:
         except Exception as exc:
             logger.warning("No se pudo conectar a OKX: {} — paper trading funciona igual", exc)
 
-    # -----------------------------------------------------------------------
-    # Helpers internos
-    # -----------------------------------------------------------------------
-
     @staticmethod
     def _check_okx_response(resp: dict) -> dict:
         if resp.get("code") != "0":
@@ -217,7 +175,6 @@ class OKXClient:
         return resp
 
     def _call_api(self, method, *args, **kwargs) -> dict:
-        """Llama a un método OKX con throttle + retry automáticos."""
         @_with_retry
         def _inner():
             self._rate.acquire()
@@ -234,19 +191,15 @@ class OKXClient:
     def _utcnow() -> datetime:
         return datetime.now(timezone.utc)
 
+    @staticmethod
+    def _safe_state_name(value: str) -> str:
+        safe = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in value.lower())
+        return safe.strip("_-") or "default"
+
     def current_time(self) -> datetime:
-        """Tiempo actual — en backtest devuelve el timestamp de la barra, en live el reloj real."""
         return datetime.now(timezone.utc)
 
-    # -----------------------------------------------------------------------
-    # Métodos de lectura — funcionan en paper Y live
-    # -----------------------------------------------------------------------
-
     def get_ticker(self, symbol: str) -> Decimal:
-        """
-        Precio último del par.
-        Retorna Decimal("0") si el exchange no está disponible.
-        """
         if not self._available or self._market_api is None:
             logger.debug("get_ticker({}) — exchange no disponible, retorna 0", symbol)
             return Decimal("0")
@@ -258,10 +211,6 @@ class OKXClient:
             return Decimal("0")
 
     def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100):
-        """
-        Velas OHLCV como DataFrame [timestamp, open, high, low, close, volume].
-        Retorna DataFrame vacío si no hay datos o pandas no está instalado.
-        """
         if not _PANDAS_OK:
             logger.warning("pandas no instalado — get_ohlcv retorna lista vacía")
             return []
@@ -332,10 +281,6 @@ class OKXClient:
             return empty
 
     def get_balance(self) -> dict[str, Decimal]:
-        """
-        Balances disponibles.
-        En paper mode devuelve el balance simulado interno.
-        """
         if self._is_paper:
             with self._paper_lock:
                 return dict(self._paper_balance)
@@ -357,7 +302,6 @@ class OKXClient:
             return {}
 
     def adjust_balance(self, currency: str, delta: Decimal) -> None:
-        """Ajusta el saldo simulado (solo paper mode). No-op en modo live."""
         if not self._is_paper:
             return
         with self._paper_lock:
@@ -367,10 +311,6 @@ class OKXClient:
             self._persist_paper_state()
 
     def get_open_orders(self, symbol: str) -> list[dict]:
-        """
-        Órdenes abiertas para el símbolo.
-        En paper mode devuelve las órdenes limit pendientes simuladas.
-        """
         if self._is_paper:
             with self._paper_lock:
                 return [
@@ -390,10 +330,6 @@ class OKXClient:
             return []
 
     def get_positions(self) -> list[dict]:
-        """
-        Posiciones abiertas.
-        En paper mode las posiciones se gestionan en DB (via position_tracker).
-        """
         if self._is_paper:
             return []
 
@@ -408,10 +344,6 @@ class OKXClient:
             return []
 
     def get_order_history(self, symbol: str, limit: int = 100) -> list[dict]:
-        """
-        Historial de órdenes ejecutadas.
-        En paper mode el historial está en la DB (via trade_logger).
-        """
         if self._is_paper:
             return []
 
@@ -431,11 +363,6 @@ class OKXClient:
             return []
 
     def get_funding_rate(self, symbol: str) -> float:
-        """
-        Funding rate actual del perpetuo de BTC (BTC-USDT-SWAP).
-        Valores tipicos: 0.0001 (0.01%) neutral, >0.0005 sobrecomprado.
-        Devuelve 0.0 en paper mode o si falla la llamada.
-        """
         if self._is_paper or not self._available:
             return 0.0
         try:
@@ -449,10 +376,6 @@ class OKXClient:
             logger.warning("get_funding_rate({}) fallo: {}", symbol, exc)
             return 0.0
 
-    # -----------------------------------------------------------------------
-    # Métodos de escritura — paper simula; live llama a OKX
-    # -----------------------------------------------------------------------
-
     def place_order(
         self,
         symbol: str,
@@ -462,34 +385,14 @@ class OKXClient:
         price: Decimal | None = None,
         strategy: str = "manual",
     ) -> OrderResult:
-        """
-        Coloca una orden (compra o venta).
-
-        Args:
-            symbol:     Par, e.g. "BTC-USDT"
-            side:       "buy" | "sell"
-            order_type: "market" | "limit"
-            size:       Cantidad de la moneda base
-            price:      Precio límite (solo para order_type="limit")
-            strategy:   Nombre de la estrategia que origina la orden
-        """
         if self._is_paper:
             return self._paper_place_order(symbol, side, order_type, size, price, strategy)
         return self._live_place_order(symbol, side, order_type, size, price, strategy)
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
-        """
-        Cancela una orden abierta.
-        En paper mode elimina la orden pendiente del registro local.
-        Retorna True si la cancelación fue exitosa.
-        """
         if self._is_paper:
             return self._paper_cancel_order(order_id, symbol)
         return self._live_cancel_order(order_id, symbol)
-
-    # -----------------------------------------------------------------------
-    # Paper trading — lógica de simulación local
-    # -----------------------------------------------------------------------
 
     def _next_paper_id(self) -> str:
         self._paper_counter += 1

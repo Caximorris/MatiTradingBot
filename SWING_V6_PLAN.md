@@ -335,10 +335,10 @@ Un v6 candidato debe cumplir todo:
 
 | ID | Config base | Cambio | Prioridad | Resultado esperado | Estado |
 |---|---|---|---:|---|---|
-| V6-0 | v5 | Ninguno; baseline | P0 | Reproducir anclas | pendiente |
-| V6-1 | v5 | `use_phase_policy_router=true`, `v5_equiv` | P0 | Paridad exacta | pendiente |
-| V6-2 | V6-1 | Funding overlay +0.05, ttl 7d, phases bear+accum | P1 | Mejor recompra sin exceso de churn | pendiente |
-| V6-3 | V6-1 | Funding overlay +0.10, ttl 7d | P2 | Variante agresiva | pendiente |
+| V6-0 | v5 | Ninguno; baseline | P0 | Reproducir anclas | ejecutado |
+| V6-1 | v5 | `use_phase_policy_router=true`, `v5_equiv` | P0 | Paridad exacta | ejecutado; paridad exacta |
+| V6-2 | V6-1 | Funding overlay +0.05, ttl 7d, phases accumulation, p10/p90 | P1 | Mejor recompra sin exceso de churn | NEEDS_MORE_VALIDATION |
+| V6-3 | V6-1 | Funding overlay +0.10, ttl 7d, phases accumulation, p10/p90 | P2 | Variante agresiva | REJECT como default: exceso de churn |
 | V6-4 | V6-1 | Accumulation bear target 0.30/0.35 | P2 | Mas USDT si bear persiste | pendiente |
 | V6-5 | V6-1 | Bull peak neutral 0.75 | P3 | Menor exposicion tarde-ciclo | pendiente |
 | V6-6 | V6-1 | Chop guard reporting only | P1 | Diagnostico, no alpha | pendiente |
@@ -350,6 +350,28 @@ No testear de entrada:
 - latch del bull peak cap: descartado.
 - suprimir todo regime en bear_onset: descartado.
 - shorts o perps dentro de Swing: fuera de tesis.
+
+### Ejecucion 2026-07-06
+
+Screen de funding:
+
+- `bear_onset,accumulation` no queda limpio: `funding_high` en `bear_onset` sale negativo a 7d.
+- `accumulation` queda vivo en p05/p95 y p10/p90; p10/p90 da mas muestra y mejor resultado.
+
+Anclas V6-2 p10/p90, `funding_overlay_delta=0.05`, `ttl=7d`, `phases=accumulation`:
+
+| Ventana | Coste | v5 final | v6 final | CAGR v5/v6 | Max DD v5/v6 | Rebalances v5/v6 | ACB trades v5/v6 | BTC ratio v5/v6 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 2015-2026 | realistic | $9.138M | $9.505M | 85.84 / 86.51 | 52.73 / 52.73 | 136 / 136 | 70 / 70 | 0.8171 / 0.8499 |
+| 2018-2026 | realistic | $219.8k | $229.0k | 47.14 / 47.90 | 53.72 / 53.72 | 103 / 103 | 53 / 53 | 0.8432 / 0.8785 |
+| 2015-2026 | conservative | $8.897M | $9.255M | 85.40 / 86.06 | 52.88 / 52.88 | 136 / 136 | 70 / 70 | 0.7961 / 0.8281 |
+
+Rolling starts anuales 2018-2024:
+
+- `+0.05`: 8/8 `NEEDS_MORE_VALIDATION`, sin `REJECT`; mejora final y BTC ratio en 7/8, sin efecto en el start 2024-12-30.
+- `+0.10`: mejora final, pero da `REJECT` en 4/8 por exceder el limite de churn (>20% rebalanceos).
+
+Decision: V6-2 p10/p90 `+0.05` es el candidato vivo. V6-3 `+0.10` no debe ser default sin evidencia forward o una regla adicional que controle churn.
 
 ---
 
@@ -373,7 +395,7 @@ Funding overlay candidato:
 
 ```bash
 python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --costs realistic \
-  --config '{"use_phase_policy_router": true, "phase_policy_profile": "v5_equiv", "use_funding_overlay": true, "funding_overlay_delta": 0.05, "funding_overlay_ttl_days": 7, "funding_overlay_phases": "bear_onset,accumulation"}'
+  --config '{"use_phase_policy_router": true, "phase_policy_profile": "v5_equiv", "use_funding_overlay": true, "funding_overlay_delta": 0.05, "funding_overlay_ttl_days": 7, "funding_overlay_phases": "accumulation", "funding_low_pctile": 0.10, "funding_high_pctile": 0.90}'
 ```
 
 Sensitivity de calendario:
@@ -386,6 +408,20 @@ Rolling starts:
 
 ```bash
 python tools/swing_rolling_start_matrix.py --start-every-days 30 --costs realistic
+```
+
+Paper aislado:
+
+```bash
+python tools/swing_paper_setup.py --enable
+```
+
+Esto registra `swing_allocator_v6_btc_usdt` con `instance_id=v6` y
+`paper_portfolio_id=swing_v6`. Si no existe un v5 legacy corriendo y se quiere registrar una
+instancia v5 aislada nueva:
+
+```bash
+python tools/swing_paper_setup.py --include-v5 --enable
 ```
 
 ---
@@ -420,7 +456,7 @@ Orden recomendado:
 Primer posible hito de decision:
 
 ```text
-Si funding overlay +0.05 en bear_onset/accumulation:
+Si funding overlay +0.05 en accumulation p10/p90:
 - no empeora 2015/2018/conservative,
 - mantiene btc_vs_bnh_ratio,
 - no añade >20% rebalanceos,

@@ -35,6 +35,7 @@ def main() -> int:
         "max_notional_pct": 0.8,
         "model_funding": True,
         "entry_halving_phases": "bear_onset,accumulation",
+        "paper_portfolio_id": "prop_cft",
         "persist_live_prop_log": True,
         "cft_monitor_enabled": True,
         "cft_account_size": args.account_size,

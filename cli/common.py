@@ -159,11 +159,11 @@ def _load_settings():
         raise typer.Exit(1)
 
 
-def _make_client(settings):
+def _make_client(settings, paper_state_name: str | None = None):
     from core.exchange import OKXClient
     # persist_paper_state=True: el portfolio paper sobrevive a reinicios del proceso
     # (data/runtime/paper_state.json). Los tests crean OKXClient sin persistencia.
-    return OKXClient(settings, persist_paper_state=True)
+    return OKXClient(settings, persist_paper_state=True, paper_state_name=paper_state_name)
 
 
 def _setup_logging(verbose: bool) -> None:

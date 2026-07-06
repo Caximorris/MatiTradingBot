@@ -1,17 +1,7 @@
-"""
-BTC Swing Allocator — gestion dinamica de allocation BTC/USDT.
+"""BTC Swing Allocator: dynamic BTC/USDT allocation.
 
-Mantiene siempre un porcentaje minimo en BTC y ajusta entre 20-100%
-segun senales macro, de valoracion, y tecnicas.
-
-Objetivo: batir BTC Buy & Hold acumulando mas BTC en correcciones.
-Diferencia vs Pro Trend: nunca sale del todo — ajusta el porcentaje.
-
-VERSION ACTUAL: v5 post-audit (2026-07-02, congelada). v5 = v4 estructural
-(min_btc_pct=0.20, delta_bear_onset=-0.30, regime_off_on_bear_onset=True,
-bull_peak_ema50_cap=0.85) + daily_on_closed_only=True (F8, anti-lookahead).
-Rollback a v4 congelado: --config '{"daily_on_closed_only": false}'.
-Anclas v5 2015-2026 realistic: CAGR +85.84% / Max DD -52.73% / 70 rebalanceos.
+Current default: v5 post-audit, frozen. Rollback to v4:
+--config '{"daily_on_closed_only": false}'.
 """
 from __future__ import annotations
 
@@ -26,21 +16,13 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
-
 @dataclass
 class SwingAllocatorConfig:
     symbol: str = "BTC-USDT"
 
     # -- Limites de allocation --
     base_btc_pct:  float = 0.60   # punto neutral (sin senales)
-    # v4 DEFAULT (2026-07-01, sesion 14): floor bajado 0.30->0.20. Las senales nunca calculan por
-    # debajo de 0.20 (0.60-0.20regime-0.30bear_onset), asi que 0.30 clampeaba y bloqueaba el estado
-    # de mas defensa en bear profundo. Bajarlo desbloquea "mas USDT en bear -> recompra mas barata".
-    # Mejora AMBAS anclas: 2015 real +3.8pp CAGR / -0.9pp DD. WF 4/4, ETH inerte. Rollback: 0.30.
+    # v4 default: floor 0.20 desbloquea la defensa profunda. Rollback: 0.30.
     min_btc_pct:   float = 0.20   # hard floor
     max_btc_pct:   float = 1.00   # hard ceiling — hasta 100%
 
@@ -60,30 +42,26 @@ class SwingAllocatorConfig:
     use_halving:   bool = True    # fases de halving — contexto de ciclo
     use_funding:   bool = False   # funding rate — experimental
     use_dxy:       bool = False   # DXY direction — experimental
+    instance_id:   str = ""       # live/paper namespace for parallel experiments
+    use_phase_policy_router: bool = False  # v6 research: table-driven regime+halving target
+    phase_policy_profile: str = "v5_equiv"
+    use_funding_overlay: bool = False
+    funding_overlay_phases: str = "accumulation"
+    funding_overlay_delta: float = 0.05
+    funding_low_pctile: float = 0.10
+    funding_high_pctile: float = 0.90
+    funding_overlay_lookback_settlements: int = 90
+    funding_overlay_ttl_days: int = 7
+    funding_overlay_dedup_days: int = 7
 
-    # -- Mitigacion Q4 2025 — v2 DEFAULT desde 2026-07-01 (reversible: False vuelve a v1) --
-    # Cuando bear_onset esta activo, suprime SOLO la rama regime_bull (ruido de EMA-cross al alza
-    # en lateral, causa del ping-pong 60%<->30% en Q4 2025). regime_bear se mantiene (defensa real
-    # en bear market). Version anterior (suprimir todo regime) rompia 2022 — ver sesion 13.
-    # Validado go/no-go completo: 2015-26 +80.6% CAGR / -55.23% DD, 2018-26 +41.5% / -53.42%,
-    # WF 4/4 TEST positivo, ETH identico a v1 (sin halvings). Estructural: bear_onset = distribucion.
+    # v2: en bear_onset suprime SOLO regime_bull; regime_bear se mantiene. False vuelve a v1.
     regime_off_on_bear_onset: bool = True
 
-    # -- Late-cycle DD control -- v3 DEFAULT desde 2026-07-01.
-    # En bull_peak, si BTC pierde la EMA50D del dia anterior cerrado, capea solo el target
-    # maximo a 85%. Mantiene min_btc_pct=30% y evita caps globales que destruyeron CAGR.
-    # Reversible: False vuelve a v2.
+    # v3: en bull_peak, perder EMA50D cerrada capea solo el target maximo a 85%.
     bull_peak_ema50_cap_enabled: bool = True
     bull_peak_ema50_cap:         float = 0.85
 
-    # -- Latch del cap (PROBADO Y DESCARTADO 2026-07-01, sesion 14. default False = v3 intacto) --
-    # Idea: una vez que el cap dispara en bull_peak, mantener target <= cap hasta que la fase cambie,
-    # para matar el ping-pong sell-85%/rebuy-100% (24 disparos -> 3 con el latch, mecanismo OK).
-    # RESULTADO: PEOR. El latch dispara EARLY (2017-01-07 @$827, 2021-04-18 @$55k, 2024-12-30 @$92k)
-    # y te deja en 85% durante TODO el rally parabolico posterior (BTC $827->$19k en 2017). Sacrifica
-    # 15% del mayor tramo alcista de cada ciclo. 2015 realistic: CAGR 81.39%->76.8% (-4.6pp), Max DD
-    # -53.64%->-54.02% (ni mejora el DD). conservative 80.93%->76.5%. El rebuy-a-100% del v3 era
-    # CORRECTO: reentra antes de la siguiente pierna. Q4 2025 mejora aislado = overfit, no adoptar.
+    # Latch del cap probado y descartado: default False mantiene v3 intacto.
     bull_peak_cap_latch: bool = False
 
     # -- Deltas de cada senal (cuanto mueve el target) --
@@ -114,24 +92,20 @@ class SwingAllocatorConfig:
     funding_high:   float = 0.0005   # mismo umbral que Pro Trend
 
     # -- Flags de correccion de auditoria (F8/F9). --
-    # daily_on_closed_only: calcula TODOS los indicadores diarios solo con dias cerrados
-    # (F8 adoptado: cumple la regla invariante #1; rollback: False).
-    # Este flag es el UNICO delta de comportamiento v4->v5 (2026-07-02): False = v4 congelado.
+    # F8: indicadores diarios solo con dias cerrados. False reproduce v4 congelado.
     daily_on_closed_only: bool = True
     # clock_aligned_cadence: evalua en horas UTC multiplos de 4 en vez de _bar_count % 4
     # (F9 medido y NO adoptado: no redujo sensibilidad al offset).
     clock_aligned_cadence: bool = False
 
     # -- Umbrales de fase de halving (F4 auditoria) --
-    # Defaults = comportamiento historico exacto. Solo para sensitivity — el 540 es el parametro
-    # mas fragil del sistema (AUDITORIA_SWING_V4.md, B2). Se aplican via macro_context (global).
+    # Defaults historicos; solo para sensitivity.
     phase_post_end:  int = 180
     phase_peak_end:  int = 540
     phase_onset_end: int = 900
 
     # -- Historial para indicadores de largo plazo --
-    # OJO (C7 auditoria): la "EMA200D" resultante es una EMA TRUNCADA a esta ventana (~250 dias);
-    # no converge a la EMA200 canonica y cambiar lookback_hours cambia las senales.
+    # OJO: EMA200D truncada a esta ventana; cambiar lookback_hours cambia senales.
     lookback_hours:   int  = 6000    # ~250 dias en 1H — suficiente para EMA200D
     pi_cycle_enabled: bool = True    # auto-False para no-BTC en main.py
 
@@ -158,17 +132,8 @@ class SwingAllocatorConfig:
     def to_dict(self) -> dict:
         return asdict(self)
 
-
-# ---------------------------------------------------------------------------
-# Bot
-# ---------------------------------------------------------------------------
-
 class SwingAllocatorBot:
-    """
-    Gestiona la allocation BTC/USDT dinamicamente segun senales de mercado.
-    Siempre mantiene min_btc_pct en BTC — nunca sale del todo.
-    Compatible con BacktestEngine (requiere run() y name).
-    """
+    """Gestiona la allocation BTC/USDT dinamicamente segun senales de mercado."""
 
     def __init__(self, client, config: SwingAllocatorConfig, session=None, risk_manager=None) -> None:
         self._client  = client
@@ -185,11 +150,9 @@ class SwingAllocatorBot:
         self._last_rebalance: datetime | None = None
         self._bar_count       = 0
         self._cap_latched     = False   # trinquete del cap dentro de una fase bull_peak
+        self._instance_id     = self._sanitize_instance_id(config.instance_id)
 
-        # Estado persistente live/paper (fix post-freeze 2026-07-02): el scheduler de `start`
-        # re-instancia la estrategia en CADA tick, asi que initialized/last_rebalance/cadencia
-        # deben sobrevivir en BotState (mismo patron que Pro Trend). En backtest el engine usa
-        # una unica instancia viva y este bloque es inerte.
+        # Estado persistente live/paper: `start` re-instancia la estrategia en cada tick.
         self._live_mode = not self._is_backtest_client()
         self._live_state: dict = {
             "initialized": False, "last_rebalance": None, "last_eval_block": None,
@@ -206,11 +169,18 @@ class SwingAllocatorBot:
 
     @property
     def name(self) -> str:
-        return f"swing_allocator_{self._cfg.symbol.lower().replace('-', '_')}"
+        sym = self._cfg.symbol.lower().replace("-", "_")
+        mid = f"_{self._instance_id}" if self._instance_id else ""
+        return f"swing_allocator{mid}_{sym}"
 
-    # -----------------------------------------------------------------------
-    # Loop principal — llamado en cada barra por BacktestEngine
-    # -----------------------------------------------------------------------
+    @property
+    def _state_name(self) -> str:
+        return f"swing_allocator_{self._instance_id}" if self._instance_id else "swing_allocator"
+
+    @staticmethod
+    def _sanitize_instance_id(value: str) -> str:
+        safe = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in str(value).lower())
+        return safe.strip("_")
 
     def run(self) -> None:
         self._bar_count += 1
@@ -307,10 +277,6 @@ class SwingAllocatorBot:
 
         self._mark_initialized()
 
-    # -----------------------------------------------------------------------
-    # Calculo del target
-    # -----------------------------------------------------------------------
-
     def _compute_target(self, current_pct: float) -> float:
         """
         Agrega deltas de senales sobre la base. Aplica hard limits.
@@ -329,18 +295,27 @@ class SwingAllocatorBot:
             logger.debug("[{}] Error al obtener indicadores: {}", self.name, exc)
             ind = h4 = macro = market = None
 
-        # Mitigacion Q4 2025 (quirurgica): si bear_onset activo y flag on, se suprime SOLO
-        # la rama regime_bull (ruido de EMA-cross al alza en lateral, causa del ping-pong Q4 2025)
-        # pero se MANTIENE regime_bear (senal defensiva real en bear market — su supresion rompio
-        # 2022 en la version anterior). Ver analisis sesion 13.
+        # Mitigacion Q4 2025: suprime solo regime_bull en bear_onset.
         phase = macro.get("halving_phase", "") if macro else ""
         bear_onset_active = bool(cfg.use_halving and phase == "bear_onset")
         suppress_bull = cfg.regime_off_on_bear_onset and bear_onset_active
 
         price = float(self._client.get_ticker(self._cfg.symbol))
 
+        used_phase_policy = False
+        if cfg.use_phase_policy_router and cfg.use_halving and macro:
+            try:
+                from strategies.swing_phase_policy import phase_policy_target, regime_state
+                regime = regime_state(ind, price, cfg.adx_min_trend, cfg.use_regime)
+                routed = phase_policy_target(cfg.phase_policy_profile, phase, regime)
+                if routed is not None:
+                    target, active = routed
+                    used_phase_policy = True
+            except Exception as exc:
+                logger.debug("[{}] Phase policy router fallback: {}", self.name, exc)
+
         # --- Regimen macro: EMA50D/200D + ADX ---
-        if cfg.use_regime and ind:
+        if not used_phase_policy and cfg.use_regime and ind:
             ema50  = ind.get("ema50d",  0.0)
             ema200 = ind.get("ema200d", 0.0)
             adx_v  = ind.get("adx",     0.0)
@@ -355,7 +330,7 @@ class SwingAllocatorBot:
                 active.append("regime_bear")
 
         # --- Halving phase ---
-        if cfg.use_halving and macro:
+        if not used_phase_policy and cfg.use_halving and macro:
             if phase in ("post_halving", "bull_peak"):
                 target += cfg.delta_post_halving
                 active.append(f"halving_{phase}")
@@ -415,6 +390,20 @@ class SwingAllocatorBot:
                 target += cfg.delta_funding_neg
                 active.append(f"funding_neg_{funding:.4f}")
 
+        if cfg.use_funding_overlay:
+            try:
+                from strategies.swing_funding_overlay import funding_overlay_adjustment
+                adj, reason = funding_overlay_adjustment(
+                    cfg.symbol, self._client.current_time(), phase, cfg
+                )
+                if reason:
+                    target += adj
+                    active.append(reason)
+            except Exception as exc:
+                # Warning, no debug: si el overlay esta activo y falla, v6 degrada a v5
+                # en silencio. En vivo esto debe verse (ej. cache de funding ausente/corrupto).
+                logger.warning("[{}] Funding overlay skipped: {}", self.name, exc)
+
         # --- DXY direction (experimental) ---
         if cfg.use_dxy and market:
             dxy_change = market.get("dxy_change") or 0.0
@@ -426,8 +415,6 @@ class SwingAllocatorBot:
                 active.append(f"dxy_weak_{dxy_change:.1f}")
 
         # --- Late-cycle de-risk: cap after losing the previous full day's EMA50D ---
-        # Con bull_peak_cap_latch=True, el cap se mantiene aunque el precio recupere la EMA50D,
-        # hasta que la fase deje de ser bull_peak (evita el ping-pong sell-85%/rebuy-100%).
         ema50_closed = ind.get("ema50d_closed") if ind else None
         if phase != "bull_peak":
             self._cap_latched = False   # reset al salir de bull_peak
@@ -452,10 +439,6 @@ class SwingAllocatorBot:
         )
 
         return target, active
-
-    # -----------------------------------------------------------------------
-    # Ejecucion del rebalanceo
-    # -----------------------------------------------------------------------
 
     def _rebalance(self, target: float, current: float, signals: list[str]) -> None:
         balance  = self._client.get_balance()
@@ -578,18 +561,11 @@ class SwingAllocatorBot:
     def _is_backtest_client(self) -> bool:
         return self._client.__class__.__name__ == "BacktestClient"
 
-    # -----------------------------------------------------------------------
-    # Persistencia de estado live/paper (fix post-freeze 2026-07-02)
-    # El estado vive en una fila BotState propia ("swing_allocator", symbol) con
-    # is_active=False — separada de la fila del bot activado, que guarda la config
-    # del usuario. Mismo patron que Pro Trend. En backtest todo esto es no-op.
-    # -----------------------------------------------------------------------
-
     def _load_live_state(self) -> None:
         try:
             from core.database import get_or_create_bot_state
             bot_state = get_or_create_bot_state(
-                self._session, strategy_name="swing_allocator", symbol=self._cfg.symbol,
+                self._session, strategy_name=self._state_name, symbol=self._cfg.symbol,
             )
             self._live_state = {**self._live_state, **bot_state.get_config()}
         except Exception as exc:
@@ -613,7 +589,7 @@ class SwingAllocatorBot:
         try:
             from core.database import get_or_create_bot_state
             bot_state = get_or_create_bot_state(
-                self._session, strategy_name="swing_allocator", symbol=self._cfg.symbol,
+                self._session, strategy_name=self._state_name, symbol=self._cfg.symbol,
             )
             bot_state.set_config(self._live_state)
         except Exception as exc:
@@ -631,10 +607,6 @@ class SwingAllocatorBot:
     def _consume_eval_block(self, block: str) -> None:
         self._live_state["last_eval_block"] = block
         self._save_live_state()
-
-    # -----------------------------------------------------------------------
-    # Indicadores — con cache para evitar O(n^2)
-    # -----------------------------------------------------------------------
 
     def _get_daily_indicators(self) -> dict | None:
         current_dt = self._client.current_time()
@@ -751,10 +723,6 @@ class SwingAllocatorBot:
         except Exception as exc:
             logger.debug("[{}] Error market context: {}", self.name, exc)
             return None
-
-    # -----------------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------------
 
     def _current_btc_pct(self) -> float:
         balance = self._client.get_balance()

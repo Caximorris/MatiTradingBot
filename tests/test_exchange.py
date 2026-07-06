@@ -66,6 +66,24 @@ def test_set_paper_balance(client):
     assert balance["USDT"] == Decimal("10000")  # no afecta otras monedas
 
 
+def test_paper_state_name_isolates_persisted_balances(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    settings = _paper_settings()
+    with patch("core.exchange.OKXClient._init_apis"):
+        v5 = OKXClient(settings, persist_paper_state=True, paper_state_name="swing_v5")
+        v6 = OKXClient(settings, persist_paper_state=True, paper_state_name="swing_v6")
+        v5.set_paper_balance("USDT", Decimal("111"))
+        v6.set_paper_balance("USDT", Decimal("222"))
+
+        v5_reload = OKXClient(settings, persist_paper_state=True, paper_state_name="swing_v5")
+        v6_reload = OKXClient(settings, persist_paper_state=True, paper_state_name="swing_v6")
+
+    assert v5_reload.get_balance()["USDT"] == Decimal("111")
+    assert v6_reload.get_balance()["USDT"] == Decimal("222")
+    assert (tmp_path / "data" / "runtime" / "paper_state_swing_v5.json").exists()
+    assert (tmp_path / "data" / "runtime" / "paper_state_swing_v6.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # Tests de market orders (compra)
 # ---------------------------------------------------------------------------
