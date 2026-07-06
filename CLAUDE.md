@@ -70,6 +70,13 @@ Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/sig
   relleno PARCIAL daban PF 2.40 vs 96906 → PF 4.33; el 102931 continuo da PF 4.43): el cache da
   reproducibilidad, no corrección. PF es fragil al arranque — usar CAGR y Max DD como anclas. No
   mezclar caches entre maquinas.
+  NOTA (2026-07-06): el cache OHLCV `data/cache/BTC-USDT_1H.json` esta VERSIONADO en git (no es
+  gitignored) — git es el backup del dataset canonico. Un prefetch de `tools/strategy_audit.py` lo
+  extendio a 104932 velas al pedir warmup antes del inicio canonico; se RESTAURO con
+  `git checkout HEAD -- data/cache/BTC-USDT_1H.json` (vuelve a 102931). El ancla v5 reproducia identica
+  ($9,164,157.14) incluso con el cache extendido — el conteo "velas analizadas" no es ancla. Las
+  herramientas de reporte (`backtest_report.py`, `strategy_audit.py`) ahora CLAMPAN al rango del cache
+  (`report_common.cache_bounds`) y NO re-descargan, para no volver a mutarlo.
 - Maximo 800 lineas por archivo
 - `transient=True` en Rich Progress. Evitar Unicode en Windows (cp1252)
 - EFICIENCIA DE TOKENS: NUNCA hacer `Read` de un journal crudo (`backtests/journal_*.json`, hasta

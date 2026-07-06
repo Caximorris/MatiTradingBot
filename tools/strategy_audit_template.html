@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root { --bg:#0d1017; --panel:#14171f; --border:#262b36; --text:#d6dae3; --muted:#9aa0ab;
+    --dim:#6f7582; --up:#26a69a; --down:#ef5350; --accent:#5b8dee; --gold:#e6b34d; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,'Segoe UI',Roboto,sans-serif; font-size:14px; line-height:1.5; }
+  .wrap { max-width:1080px; margin:0 auto; padding:28px 24px 60px; }
+  h1 { font-size:20px; margin:0 0 2px; color:#eceff4; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:20px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.6px; color:var(--muted);
+    margin:28px 0 10px; border-bottom:1px solid var(--border); padding-bottom:6px; }
+  .verdict { border-radius:10px; padding:16px 20px; margin:8px 0 4px; border:1px solid var(--border); }
+  .verdict .vt { font-size:18px; font-weight:700; }
+  .verdict .vd { font-size:12.5px; color:var(--muted); margin-top:6px; }
+  .verdict.pass { background:rgba(38,166,154,0.10); border-color:rgba(38,166,154,0.5); }
+  .verdict.pass .vt { color:var(--up); }
+  .verdict.warn { background:rgba(230,179,77,0.10); border-color:rgba(230,179,77,0.5); }
+  .verdict.warn .vt { color:var(--gold); }
+  .verdict.fail { background:rgba(239,83,80,0.10); border-color:rgba(239,83,80,0.5); }
+  .verdict.fail .vt { color:var(--down); }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  .metrics th, .metrics td { padding:6px 10px; text-align:right; border-bottom:1px solid var(--border); }
+  .metrics thead th { color:var(--muted); font-weight:600; font-size:12px; }
+  .metrics .rowlbl { text-align:left; color:var(--muted); font-weight:500; }
+  .metrics tbody th.rowlbl { text-align:left; }
+  .metrics td { color:var(--text); font-variant-numeric:tabular-nums; }
+  .metrics tr td:first-of-type { color:#eceff4; font-weight:600; }
+  .checklist td { padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; }
+  .checklist .cname { color:#eceff4; font-weight:600; width:280px; }
+  .checklist .cev { color:var(--muted); font-size:12.5px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:5px; font-size:11px; font-weight:700;
+    letter-spacing:0.4px; }
+  .badge.pass { background:rgba(38,166,154,0.18); color:var(--up); }
+  .badge.warn { background:rgba(230,179,77,0.18); color:var(--gold); }
+  .badge.fail { background:rgba(239,83,80,0.18); color:var(--down); }
+  .badge.info { background:rgba(91,141,238,0.18); color:var(--accent); }
+  .refs { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12.5px; }
+  .refs code, pre code { color:var(--gold); }
+  code { background:#1d222c; padding:1px 5px; border-radius:3px; font-size:12px; }
+  pre { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px 14px;
+    overflow-x:auto; font-size:12px; color:var(--text); }
+  .dim { color:var(--dim); font-size:12px; }
+  #chart { width:100%; height:320px; margin-top:6px; }
+  .legend { color:var(--dim); font-size:11.5px; margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>__LABEL__</h1>
+  <div class="sub">Auditoria pre-paper · generado __GENERATED__ · bateria de 5 backtests + checklist de invariantes</div>
+
+  __VERDICT__
+
+  <h2>Metricas de la bateria</h2>
+  __METRICS__
+  <div class="legend">A base = ventana primaria + coste primario · B stress = coste conservador/adverso ·
+    C = out-of-sample 2018-26 · D/E = inicio desplazado ±60d (fragilidad de calendario).
+    PF es contable, no ancla de decision. Anclas = CAGR, Max DD, vs B&amp;H.</div>
+
+  <h2>Equity del run base vs Buy &amp; Hold (log) + drawdown</h2>
+  <div id="chart"></div>
+
+  <h2>Checklist de auditoria</h2>
+  __CHECKLIST__
+
+  <h2>Estado documentado y referencias</h2>
+  __CONTEXT__
+
+  <h2>Config auditada (exactamente la que iria a paper)</h2>
+  <pre><code>__CONFIG__</code></pre>
+</div>
+<script>
+const C = __CHART__;
+const chart = echarts.init(document.getElementById('chart'), null, {renderer:'canvas'});
+window.addEventListener('resize', () => chart.resize());
+const ACCENT='#5b8dee', DOWN='#ef5350', AXIS='#9aa0ab', GRID='#1d222c';
+chart.setOption({
+  backgroundColor:'transparent', animation:false,
+  grid:[{left:64,right:64,top:10,height:'62%'},{left:64,right:64,top:'74%',height:'18%'}],
+  axisPointer:{link:[{xAxisIndex:'all'}]},
+  tooltip:{trigger:'axis', backgroundColor:'rgba(17,20,28,0.96)', borderColor:'#2a2e39',
+    textStyle:{color:'#d6dae3',fontSize:12}},
+  xAxis:[
+    {type:'category',data:C.dates,gridIndex:0,axisLabel:{show:false},axisLine:{lineStyle:{color:'#262b36'}}},
+    {type:'category',data:C.dates,gridIndex:1,axisLabel:{color:AXIS},axisLine:{lineStyle:{color:'#262b36'}}},
+  ],
+  yAxis:[
+    {type:'log',logBase:10,scale:true,gridIndex:0,position:'right',
+     axisLabel:{color:AXIS,formatter:v=>v>=1e6?'$'+(v/1e6).toFixed(1)+'M':'$'+(v/1e3).toFixed(0)+'k'},
+     splitLine:{lineStyle:{color:GRID}}},
+    {type:'value',max:0,gridIndex:1,position:'right',axisLabel:{color:AXIS,formatter:'{value}%'},
+     splitLine:{show:false}},
+  ],
+  dataZoom:[{type:'inside',xAxisIndex:[0,1]},{type:'slider',xAxisIndex:[0,1],bottom:0,height:16,
+    left:64,right:64,backgroundColor:'#12151d',fillerColor:'rgba(91,141,238,0.14)',
+    borderColor:'#262b36',handleStyle:{color:ACCENT},textStyle:{color:AXIS,fontSize:10}}],
+  series:[
+    {name:'Estrategia',type:'line',data:C.equity,xAxisIndex:0,yAxisIndex:0,symbol:'none',
+     lineStyle:{color:ACCENT,width:1.6},endLabel:{show:true,formatter:'Estrategia',color:ACCENT,fontSize:11}},
+    {name:'Buy & Hold',type:'line',data:C.bnh,xAxisIndex:0,yAxisIndex:0,symbol:'none',
+     lineStyle:{color:'#8b93a3',width:1.2,type:'dashed'},endLabel:{show:true,formatter:'B&H',color:'#8b93a3',fontSize:11}},
+    {name:'Drawdown',type:'line',data:C.dd,xAxisIndex:1,yAxisIndex:1,symbol:'none',
+     lineStyle:{color:DOWN,width:1},areaStyle:{color:'rgba(239,83,80,0.22)'}},
+  ],
+});
+</script>
+</body>
+</html>

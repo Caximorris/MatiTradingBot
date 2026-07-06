@@ -75,8 +75,10 @@ un backtest puntual.
 
 ### 4. Determinismo de datos
 - Backtests deterministas via cache OHLCV (`data/cache/`). Runs con rango cacheado = velas identicas.
-- Resultado SENSIBLE al punto de inicio (dataset canonico: 102931 velas; viejo 96906). No mezclar
-  caches entre maquinas.
+- Resultado SENSIBLE al punto de inicio (dataset canonico: 102931 velas; viejo 96906). El cache OHLCV
+  esta VERSIONADO en git (restaurable con `git checkout`). Las herramientas de reporte clampan al rango
+  del cache y NO re-descargan (incidente 2026-07-06 restaurado, ver nota CLAUDE.md). No mezclar caches
+  entre maquinas.
 - Backtests CONTINUOS — nunca reiniciar balance en frontera de año/mes.
 
 ---

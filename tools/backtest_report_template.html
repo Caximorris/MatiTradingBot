@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg:#0d1017; --panel:#14171f; --border:#262b36; --text:#d6dae3;
+    --muted:#9aa0ab; --dim:#6f7582; --up:#26a69a; --down:#ef5350;
+    --accent:#5b8dee; --gold:#e6b34d;
+  }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--text);
+               font-family:-apple-system,'Segoe UI',Roboto,sans-serif; }
+  #header { padding:12px 24px 8px; border-bottom:1px solid var(--border); }
+  .row1 { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .row1 h1 { font-size:16px; margin:0; font-weight:600; color:#eceff4; }
+  .anchor-cards { display:flex; gap:8px; flex-wrap:wrap; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:6px;
+          padding:4px 12px; text-align:center; }
+  .card .lbl { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:0.5px; }
+  .card .val { font-size:14px; font-weight:600; }
+  .pos { color:var(--up); } .neg { color:var(--down); } .neu { color:var(--text); }
+  .row2 { margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;
+          font-size:12px; color:var(--muted); }
+  .row2 .sec b { color:var(--text); font-weight:600; }
+  .row3 { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .grp { font-size:11px; color:var(--dim); }
+  .preset { cursor:pointer; background:var(--panel); color:var(--muted);
+          border:1px solid var(--border); border-radius:5px; padding:3px 12px;
+          font-size:12px; transition: all .12s; }
+  .preset:hover { color:var(--text); border-color:var(--accent); }
+  .preset.active { color:#fff; background:var(--accent); border-color:var(--accent); }
+  .mk { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); }
+  #chart { width:100vw; height:calc(100vh - 104px); }
+</style>
+</head>
+<body>
+<div id="header">
+  <div class="row1">
+    <h1>__TITLE__</h1>
+    <div class="anchor-cards">__ANCHORS__</div>
+  </div>
+  <div class="row2">__SECONDARY__</div>
+  <div class="row3">
+    <span class="grp">RANGO:</span>
+    __PRESETS__
+    <span style="color:var(--border)">|</span>
+    <span class="grp">VELAS:</span>
+    <button class="preset tf active" onclick="setTF('1D',this)">1D</button>
+    <button class="preset tf" onclick="setTF('1S',this)">1S</button>
+    <button class="preset tf" onclick="setTF('1M',this)">1M</button>
+    <span style="color:var(--border)">|</span>
+    <button class="preset" id="scalebtn" onclick="toggleScale()">Escala: Log</button>
+    <button class="preset active" id="bhbtn" onclick="toggleBH()">B&amp;H</button>
+    <button class="preset active" id="mkbtn" onclick="toggleMarkers()">Marcadores</button>
+    <button class="preset" onclick="resetView()">&#8634; Reset</button>
+    <button class="preset" onclick="exportPNG()">&#8681; PNG</button>
+    <span class="mk" style="margin-left:12px"><span style="color:var(--up)">&#9650;</span> compra/entrada</span>
+    <span class="mk"><span style="color:var(--down)">&#9660;</span> venta/salida</span>
+    <span class="mk"><span style="color:var(--accent)">&#9670;</span> init</span>
+  </div>
+</div>
+<div id="chart"></div>
+<script>
+const D = __DATA__;   // dates, candles [o,c,l,h], equity, bnh, dd, markers, kind, symbol, base
+const chart = echarts.init(document.getElementById('chart'), null, {renderer:'canvas'});
+window.addEventListener('resize', () => chart.resize());
+
+const UP='#26a69a', DOWN='#ef5350', ACCENT='#5b8dee', GOLD='#e6b34d';
+const GRID_LINE='#1d222c', AXIS_TEXT='#9aa0ab', TITLE_TEXT='#6f7582';
+const mkColor = {entry:UP, exit:DOWN, init:ACCENT};
+
+let TF='1D', logScale=true, showBH=true, showMk=true, V=null;
+
+function bucketKey(d, tf){
+  if (tf==='1D') return d;
+  if (tf==='1M') return d.slice(0,7);
+  const dt = new Date(d + 'T00:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() - (dt.getUTCDay() + 6) % 7);
+  return dt.toISOString().slice(0,10);
+}
+function buildView(tf){
+  const dates=[], candles=[], equity=[], bnh=[], dd=[]; let key=null;
+  for (let i=0;i<D.dates.length;i++){
+    const k=bucketKey(D.dates[i],tf), c=D.candles[i];
+    if (k!==key){ key=k; dates.push(D.dates[i]); candles.push([c[0],c[1],c[2],c[3]]);
+      equity.push(D.equity[i]); bnh.push(D.bnh[i]); dd.push(D.dd[i]); }
+    else { const j=candles.length-1, cc=candles[j];
+      cc[1]=c[1]; cc[2]=Math.min(cc[2],c[2]); cc[3]=Math.max(cc[3],c[3]);
+      dates[j]=D.dates[i]; equity[j]=D.equity[i]; bnh[j]=D.bnh[i]; dd[j]=Math.min(dd[j],D.dd[i]); }
+  }
+  return {dates, candles, equity, bnh, dd};
+}
+function idxOf(d){ let lo=0,hi=V.dates.length-1;
+  while(lo<hi){const m=(lo+hi)>>1; if(V.dates[m]<d)lo=m+1; else hi=m;} return lo; }
+function fmtMoney(v){ if(v>=1e6)return '$'+(v/1e6).toFixed(2)+'M';
+  if(v>=1e3)return '$'+(v/1e3).toFixed(1)+'k'; return '$'+v.toFixed(0); }
+
+function mkPoints(){
+  return D.markers.map(m => ({
+    value:[V.dates[Math.min(idxOf(m.date),V.dates.length-1)], m.price],
+    itemStyle:{color:mkColor[m.kind]||GOLD, borderColor:'#0d1017', borderWidth:1},
+    symbol: m.kind==='init' ? 'diamond' : 'triangle',
+    symbolRotate: m.kind==='exit' ? 180 : 0, meta:m,
+  }));
+}
+function dataWindow(params){
+  const p0=Array.isArray(params)?params[0]:params, i=p0.dataIndex;
+  if(i==null||!V.dates[i])return '';
+  const c=V.candles[i], chg=((c[1]-c[0])/c[0]*100), cc=chg>=0?UP:DOWN;
+  const ratio=V.bnh[i]>0?(V.equity[i]/V.bnh[i]):0;
+  return `<div style="min-width:230px">
+    <div style="font-weight:600;margin-bottom:6px">${V.dates[i]}
+      <span style="color:#6f7582;font-weight:normal">(${TF})</span></div>
+    <div style="display:grid;grid-template-columns:auto auto;gap:2px 18px;font-size:12px">
+      <span style="color:#9aa0ab">Open / Close</span>
+      <span>${fmtMoney(c[0])} / <b style="color:${cc}">${fmtMoney(c[1])}</b>
+        <span style="color:${cc}">(${chg>=0?'+':''}${chg.toFixed(1)}%)</span></span>
+      <span style="color:#9aa0ab">High / Low</span><span>${fmtMoney(c[3])} / ${fmtMoney(c[2])}</span>
+      <span style="color:#9aa0ab">Equity</span><b style="color:${ACCENT}">${fmtMoney(V.equity[i])}</b>
+      <span style="color:#9aa0ab">Buy &amp; Hold</span><span>${fmtMoney(V.bnh[i])} (x${ratio.toFixed(2)})</span>
+      <span style="color:#9aa0ab">Drawdown</span><b style="color:${DOWN}">${V.dd[i]}%</b>
+    </div></div>`;
+}
+
+V = buildView(TF);
+const option = {
+  backgroundColor:'#0d1017', animation:false,
+  title:[
+    {text:'PRECIO '+D.symbol+' — velas + marcadores', top:6},
+    {text:'EQUITY — estrategia vs Buy & Hold, escala log', top:'57%'},
+    {text:'DRAWDOWN — caida desde maximo', top:'85%'},
+  ].map(t=>({...t,left:70,textStyle:{color:TITLE_TEXT,fontSize:10.5,fontWeight:'normal'}})),
+  axisPointer:{link:[{xAxisIndex:'all'}], lineStyle:{color:'#565b66'}, label:{backgroundColor:'#2a2e39'}},
+  tooltip:{trigger:'axis', axisPointer:{type:'cross'}, backgroundColor:'rgba(17,20,28,0.96)',
+    borderColor:'#2a2e39', textStyle:{color:'#d6dae3',fontSize:12}, formatter:dataWindow},
+  grid:[
+    {left:70,right:80,top:26,height:'46%'},
+    {left:70,right:80,top:'61%',height:'20%'},
+    {left:70,right:80,top:'89%',height:'8%'},
+  ],
+  xAxis:[0,1,2].map(i=>({type:'category',data:V.dates,gridIndex:i,boundaryGap:i===0,
+    axisLine:{lineStyle:{color:'#262b36'}}, axisLabel:{show:i===2,color:AXIS_TEXT},
+    axisTick:{show:false}, splitLine:{show:false}})),
+  yAxis:[
+    {gridIndex:0,scale:true,type:'log',logBase:10,position:'right',
+     axisLabel:{color:AXIS_TEXT,formatter:v=>fmtMoney(v)}, splitLine:{lineStyle:{color:GRID_LINE}}},
+    {gridIndex:1,scale:true,type:'log',logBase:10,position:'right',
+     axisLabel:{color:AXIS_TEXT,formatter:v=>fmtMoney(v)}, splitLine:{lineStyle:{color:GRID_LINE}}},
+    {gridIndex:2,max:0,position:'right',
+     axisLabel:{color:AXIS_TEXT,formatter:'{value}%'}, splitLine:{show:false}},
+  ],
+  dataZoom:[
+    {type:'inside',xAxisIndex:[0,1,2]},
+    {type:'slider',xAxisIndex:[0,1,2],bottom:4,height:20,left:70,right:80,
+     backgroundColor:'#12151d', fillerColor:'rgba(91,141,238,0.14)', borderColor:'#262b36',
+     handleStyle:{color:ACCENT}, textStyle:{color:AXIS_TEXT,fontSize:10},
+     dataBackground:{lineStyle:{color:'#3a3f4b'},areaStyle:{color:'#1a1e27'}}},
+  ],
+  series:[
+    {name:'Precio',type:'candlestick',data:V.candles,xAxisIndex:0,yAxisIndex:0,
+     itemStyle:{color:UP,color0:DOWN,borderColor:UP,borderColor0:DOWN}},
+    {name:'Marcadores',type:'scatter',data:mkPoints(),xAxisIndex:0,yAxisIndex:0,symbolSize:9,z:10,
+     tooltip:{trigger:'item',formatter:p=>{const m=p.data.meta,dc=mkColor[m.kind]||GOLD;
+       const pnl=m.pnl!=null?`<br/>PnL: <b style="color:${m.pnl>=0?UP:DOWN}">${m.pnl>=0?'+':''}${m.pnl.toFixed(0)} USDT</b>`:'';
+       return `<div style="min-width:220px"><div style="margin-bottom:4px">
+         <b style="color:${dc}">${m.side}</b> <span style="color:#9aa0ab">— ${m.ts} UTC</span></div>
+         Precio: <b>${fmtMoney(m.price)}</b>${pnl}<br/>
+         <span style="color:#9aa0ab;font-size:11px">${m.info}</span></div>`; }}},
+    {name:'Equity',type:'line',data:V.equity,xAxisIndex:1,yAxisIndex:1,symbol:'none',
+     lineStyle:{color:ACCENT,width:1.8},
+     endLabel:{show:true,formatter:'Estrategia',color:ACCENT,fontSize:11,fontWeight:600,distance:4}},
+    {name:'Buy & Hold',type:'line',data:V.bnh,xAxisIndex:1,yAxisIndex:1,symbol:'none',
+     lineStyle:{color:'#8b93a3',width:1.3,type:'dashed'},
+     endLabel:{show:true,formatter:'B&H',color:'#8b93a3',fontSize:11,distance:4}},
+    {name:'Drawdown',type:'line',data:V.dd,xAxisIndex:2,yAxisIndex:2,symbol:'none',
+     lineStyle:{color:DOWN,width:1}, areaStyle:{color:'rgba(239,83,80,0.22)'},
+     markLine:{silent:true,symbol:'none',lineStyle:{color:DOWN,type:'dotted',width:1},
+       label:{color:DOWN,fontSize:10,position:'insideStartBottom',formatter:p=>p.value+'%'},
+       data:[{type:'min'}]}},
+  ],
+};
+chart.setOption(option);
+
+function setTF(tf,btn){ TF=tf; V=buildView(tf);
+  chart.setOption({xAxis:[{data:V.dates},{data:V.dates},{data:V.dates}],
+    series:[{data:V.candles},{data:showMk?mkPoints():[]},{data:V.equity},
+            {data:showBH?V.bnh:[]},{data:V.dd}]});
+  document.querySelectorAll('.tf').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active'); }
+function zoomTo(f,t,btn){ const s=f?idxOf(f):0, e=t?idxOf(t):V.dates.length-1;
+  chart.dispatchAction({type:'dataZoom',dataZoomIndex:0,startValue:s,endValue:e});
+  document.querySelectorAll('.row3 .preset').forEach(b=>{const oc=b.getAttribute('onclick')||'';
+    if(oc.startsWith('zoomTo'))b.classList.remove('active');}); if(btn)btn.classList.add('active'); }
+function toggleScale(){ logScale=!logScale; const t=logScale?'log':'value';
+  const opt=chart.getOption(); opt.yAxis[0].type=t; opt.yAxis[1].type=t;
+  chart.setOption(opt,{notMerge:true});
+  document.getElementById('scalebtn').textContent='Escala: '+(logScale?'Log':'Lineal'); }
+function toggleBH(){ showBH=!showBH;
+  chart.setOption({series:[{},{},{},{data:showBH?V.bnh:[]},{}]});
+  document.getElementById('bhbtn').classList.toggle('active',showBH); }
+function toggleMarkers(){ showMk=!showMk;
+  chart.setOption({series:[{},{data:showMk?mkPoints():[]},{},{},{}]});
+  document.getElementById('mkbtn').classList.toggle('active',showMk); }
+function resetView(){ chart.dispatchAction({type:'dataZoom',dataZoomIndex:0,start:0,end:100});
+  document.querySelectorAll('.row3 .preset').forEach(b=>{const oc=b.getAttribute('onclick')||'';
+    if(oc.startsWith('zoomTo'))b.classList.toggle('active',b.textContent==='Todo');}); }
+function exportPNG(){ const url=chart.getDataURL({pixelRatio:2,backgroundColor:'#0d1017'});
+  const a=document.createElement('a'); a.href=url;
+  a.download='backtest_'+D.symbol.replace('-','')+'_'+V.dates[0]+'_'+V.dates[V.dates.length-1]+'.png';
+  a.click(); }
+</script>
+</body>
+</html>
