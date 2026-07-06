@@ -45,7 +45,7 @@ reports/
 # Cache OHLCV en disco (~7MB por par). SI se versiona a proposito: es el dataset
 # CANONICO (102931 velas BTC). Versionarlo da determinismo ENTRE maquinas — sin esto,
 # re-descargar en otro PC cambia el conteo de velas y rompe la reproducibilidad de v4.
-# Son datos de precio publicos, sin secretos. (Repo privado.)
+# Son datos de precio publicos, sin secretos — seguros para repo publico.
 # data/cache/  <- intencionadamente NO ignorado
 # EXCEPCION: el cache de funding SI se ignora. Un cron lo refresca a diario en la VM
 # (tools/funding_refresh.py) para el overlay del Swing v6; versionarlo lo haria chocar

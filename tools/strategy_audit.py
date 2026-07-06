@@ -3,7 +3,7 @@
 AUDITOR EXHAUSTIVO de una estrategia — informe HTML pre-paper.
 
 No es un visor: corre una BATERIA y aplica el checklist de invariantes/auditorias del
-proyecto (CLAUDE.md reglas invariantes + AUDITORIA_SWING_V4/V5 + PLAN_MEJORA_AUDITORIA F1-F19)
+proyecto (CLAUDE.md reglas invariantes + docs/swing/audits.md (v4/v5) + docs/swing/audits.md F1-F19)
 para dar un VEREDICTO de robustez antes de llevar la estrategia a paper.
 
 Bateria (BTC):
@@ -53,12 +53,12 @@ AUDIT_CONTEXT: dict[str, dict] = {
     "swing": {
         "label": "Swing Allocator v6 (phase router + funding overlay)",
         "status": "NEEDS_MORE_VALIDATION",
-        "status_note": ("v6 sigue como candidato vivo (SWING_V6_PLAN.md): el overlay de funding solo "
+        "status_note": ("v6 sigue como candidato vivo (docs/swing/v6-plan.md): el overlay de funding solo "
                         "dispara en fase accumulation. Para pasar a ADOPT exige evidencia forward/paper "
                         "posterior a 2026-01-01, no mas backtest (ventana 2015-2026 CERRADA, regla 5)."),
         "dd_bootstrap": "MaxDD bootstrap x1000 (F7): p50 -53%, p95 -68%, p99 -74%. Dimensionar con p95/p99.",
-        "refs": ["SWING_V6_PLAN.md", "AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md",
-                 "PLAN_MEJORA_AUDITORIA.md (F1-F19)", "CLAUDE.md reglas invariantes"],
+        "refs": ["docs/swing/v6-plan.md", "docs/swing/audits.md",
+                 "docs/swing/audits.md (F1-F19)", "CLAUDE.md reglas invariantes"],
     },
     "prop": {
         "label": "Prop Swing (HyroTrader/CFT, entry breakout + shorts sinteticos)",
@@ -66,9 +66,9 @@ AUDIT_CONTEXT: dict[str, dict] = {
         "status_note": ("Edge standalone real (bybit: PF ~1.44, DD bajo) PERO como PROP el gate two-step "
                         "cae por debajo del 60% pass y supera el 20% breach bajo bybit_cons. El gate "
                         "prop-firm (Monte Carlo de reglas) NO se recomputa aqui: ver tools/prop_challenge_sim.py "
-                        "y HYROTRADER_PLAN.md. Sin confirmacion escrita de reglas CFT/Match, NO comprar challenge."),
+                        "y docs/prop/hyrotrader-plan.md. Sin confirmacion escrita de reglas CFT/Match, NO comprar challenge."),
         "dd_bootstrap": "N/A (motor de trades, no allocator). Riesgo dominado por reglas prop, no por MaxDD historico.",
-        "refs": ["HYROTRADER_PLAN.md", "tools/prop_challenge_sim.py", "tools/prop_phase_matrix.py",
+        "refs": ["docs/prop/hyrotrader-plan.md", "tools/prop_challenge_sim.py", "tools/prop_phase_matrix.py",
                  "CLAUDE.md reglas invariantes"],
     },
 }

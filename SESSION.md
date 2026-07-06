@@ -2,11 +2,11 @@
 
 Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cada arranque.
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
-bloques HECHO/Descartado de sesiones 12-18) vive en **`SESSION_ARCHIVE.md`** — leelo BAJO DEMANDA.
+bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
 **Ultima actualizacion: 2026-07-06** (Swing v6 + aislamiento paper + pipeline funding — MERGEADO A MAIN;
 control remoto Telegram multi-bot `6e95f0d`; + suite de observabilidad forward-test read-only
-`paper-status`/`anomaly-check`/`forward-report`/`data-audit` + `FORWARD_TEST_CONTRACT.md`)
+`paper-status`/`anomaly-check`/`forward-report`/`data-audit` + `docs/forward-test/contract.md`)
 
 ---
 
@@ -22,7 +22,7 @@ v5 = v4 estructural + `daily_on_closed_only=True` (unico delta de comportamiento
   da **$9.164M / +85.9%** en 2015-26 realistic (96930 velas vs 96907 del tool; +0.29% USD por warmup,
   NO regresion; DD/ratio/reb identicos). Smoke por CLI compara vs $9.164M; por tool vs $9.137M.
 
-**Swing v6 — NO ADOPT** (`NEEDS_MORE_VALIDATION`, ver `SWING_V6_PLAN.md`). Todo v6/prop entra tras
+**Swing v6 — NO ADOPT** (`NEEDS_MORE_VALIDATION`, ver `docs/swing/v6-plan.md`). Todo v6/prop entra tras
 flags default `False`; main sigue siendo v5 intacto. v6 = phase router (v5_equiv exacto) + funding
 overlay que SOLO dispara en fase `accumulation`. Hoy estamos en `bear_onset` (807d post-halving) →
 **v6 ≡ v5 en vivo hasta ~2026-10-07** (dia 900); el paper v5-vs-v6 solo divergira desde entonces.
@@ -33,12 +33,12 @@ Control remoto Telegram **multi-bot** (2026-07-06, commit `6e95f0d`): descubre l
 BotState y los distingue por etiqueta (v5/v6/legacy). `/status` resume todos; `/status|/report|/equity
 <bot>` apuntan a uno; `/bots` lista carteras. Alertas de rebalanceo y heartbeat por bot. Prop sigue en
 `/prop`. Capa pura en `tools/paper_bots.py` + `tools/tg_views.py` (telegram_remote 674 lineas <800).
-Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `DEPLOY_PAPER.md`.
+Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
 Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
 
 **OBSERVABILIDAD FORWARD-TEST (2026-07-06)** — suite read-only que NO toca la estrategia (plan
-`FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md`, fases 1-3). Reglas del test congeladas en
-`FORWARD_TEST_CONTRACT.md` (inicio 2026-07-04, taxonomia fallo-estrategia vs fallo-infra).
+`docs/forward-test/research-lab-plan.md`, fases 1-3). Reglas del test congeladas en
+`docs/forward-test/contract.md` (inicio 2026-07-04, taxonomia fallo-estrategia vs fallo-infra).
 Comandos: `paper-status` (control center v5/v6/legacy), `anomaly-check` (red-flags + Telegram
 dedup), `forward-report` (solo datos post-inicio, filtro duro), `data-audit` (integridad OHLCV,
 nunca re-descarga). Capa pura: `tools/{paper_snapshot,anomaly_check,forward_report,data_audit}.py`
@@ -81,7 +81,7 @@ un backtest puntual.
   `entry_score_min=9`, `adx_min_entry=15.0`, `trailing_stop_pct=0.22`, `trailing_stop_pct_bull=0.28`,
   `cooldown_atr_stop_days=30`, `macd_exit_enabled=False`, `allow_shorts=False`,
   `disable_external_filters=False`.
-- Swing v1/v2 config exactas: ver "SWING ALLOCATOR — REFERENCIA" en SESSION_ARCHIVE.md.
+- Swing v1/v2 config exactas: ver "SWING ALLOCATOR — REFERENCIA" en docs/archive/session-archive.md.
 
 ### 5. Out-of-sample — ventana 2015-2026 CERRADA para optimizacion (auditoria 2026-07-02)
 - Ningun cambio de estrategia se adopta por mejorar 2015-2026. Esa ventana solo se usa para MEDIR
@@ -115,7 +115,7 @@ requiere confirmacion explicita. El paper v5-vs-v6 empieza a dar señal desde ~2
 - **Q4 2025 ping-pong:** residual estructural, sin via viva. Descartados cooldown=7d, ADX gate,
   cap-bear_onset. Detalle en archive.
 - **Pro Trend bugfixes candidatos** (P1, sin backtest aislado): fix MACD 4H key, fix VIX sizing cap.
-- **Limpieza/refactor de codigo:** backlog en `REFACTOR_BACKLOG.md`. Difiere al cierre del paper
+- **Limpieza/refactor de codigo:** backlog en `docs/archive/refactor-backlog.md`. Difiere al cierre del paper
   (no romper determinismo/paridad). Codigo muerto confirmado: `execution/order_manager.py` +
   `position_tracker.py` (0 refs, pendiente OK para borrar).
 - **Descartado y NO reintentar:** latch del cap, regime_delta 0.15, VIX, MVRV, Pi Cycle, floor<0.20,
@@ -125,21 +125,21 @@ requiere confirmacion explicita. El paper v5-vs-v6 empieza a dar señal desde ~2
 
 ## PUNTEROS A REFERENCIA (leer bajo demanda, NO precargar)
 
-- `HANDOFF_2026-07-05.md` — doc principal para continuar en otro PC (branch, setup, estado operativo,
+- `docs/handoff.md` — doc principal para continuar en otro PC (branch, setup, estado operativo,
   Prop/CFT, Swing v6, tests, siguientes pasos).
-- `DEPLOY_PAPER.md` — runbook y estado del despliegue paper en la VM.
-- `FORWARD_TEST_CONTRACT.md` — reglas CONGELADAS del forward-test (inicio, variantes, fallo
+- `docs/ops/deploy-paper.md` — runbook y estado del despliegue paper en la VM.
+- `docs/forward-test/contract.md` — reglas CONGELADAS del forward-test (inicio, variantes, fallo
   estrategia vs infra, playbook de incidentes). Citarlo por seccion en los reportes.
-- `FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md` — roadmap del laboratorio de investigacion +
+- `docs/forward-test/research-lab-plan.md` — roadmap del laboratorio de investigacion +
   monitorizacion (fases 0-6, tracking con checkboxes; fase 1-3 parcialmente HECHAS).
-- `SWING_V6_PLAN.md` — plan v6 (phase router + funding overlay; criterios de promocion Fase 4).
-- `SWING_PLAN.md` / `AUDITORIA_SWING_V4.md` / `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md` /
-  `PLAN_MEJORA_AUDITORIA.md` (F1-F19) — diseño, auditorias y plan del Swing.
-- `HYROTRADER_PLAN.md` — estrategia prop firm (Bybit/CFT/Hyro). Estado: motor `funding_extreme` da
+- `docs/swing/v6-plan.md` — plan v6 (phase router + funding overlay; criterios de promocion Fase 4).
+- `docs/swing/plan.md` — diseño del Swing. `docs/swing/audits.md` — auditorias v4/v5 + plan de
+  mejora F1-F19 (consolidado de los antiguos AUDITORIA_SWING_V4/V5 y PLAN_MEJORA_AUDITORIA).
+- `docs/prop/hyrotrader-plan.md` — estrategia prop firm (Bybit/CFT/Hyro). Estado: motor `funding_extreme` da
   edge standalone real (PF 1.44, DD 13%) pero RECHAZADO como prop (gate two-step ~27% pass / 37%
   breach vs >=60%/<=20%). Router CFT-only (`entry_halving_phases=bear_onset,accumulation`) es el mejor
   candidato pero requiere validar reglas reales CFT/Match/MT5 — sin confirmacion escrita, NO comprar.
-- `SESSION_ARCHIVE.md` — logs sesiones 12-18, auditorias, resultados backtest, referencia por modulo,
+- `docs/archive/session-archive.md` — logs sesiones 12-18, auditorias, resultados backtest, referencia por modulo,
   detalle prop/Hyro, bloques HECHO/Descartado migrados.
 - `backtests/STRATEGY_VERSIONS.md` — historial de versiones.
 - Journals: NO hacer `Read` del JSON crudo (>10 MB). Usar `python tools/journal_summary.py <ruta>`
@@ -155,4 +155,4 @@ requiere confirmacion explicita. El paper v5-vs-v6 empieza a dar señal desde ~2
   `funding_context.py`. Overlay v6: `swing_funding_overlay.py`.
 - Backtest: `core/backtest.py`. Cache: `data/ohlcv_cache.py`. Prop: `core/prop_rules.py`,
   `core/cft_monitor.py`. Journals: `reporting/trade_journal.py`, `reporting/swing_journal.py`.
-- Umbrales y config detallada de cada modulo: SESSION_ARCHIVE.md.
+- Umbrales y config detallada de cada modulo: docs/archive/session-archive.md.

@@ -110,7 +110,7 @@ Seven are registered; only one is active.
 |---|---|---|
 | `swing_allocator` | Dynamic BTC/cash allocation | **Default, frozen at v5** |
 | `pro_trend` | Multi-timeframe trend following (1856 lines) | Paused indefinitely, frozen at v13 |
-| `prop_swing` / `funding_extreme` | Prop-firm challenge (someone else's capital) | Research — **rejected** (edge real, pass/breach gates not met) |
+| `prop_swing` / `funding_extreme` | Prop-firm challenge (someone else's capital) | **Running in paper** (CFT-only candidate); backtest gates not yet met — no challenge purchased |
 | `adaptive_trend`, `scalp_momentum`, `range_reversion` | Older experiments | Dormant |
 
 **External-context feeds** (all offset to avoid lookahead): `macro_context.py` (MVRV + halving,
@@ -178,12 +178,14 @@ python tools/journal_summary.py <path>
 
 ## Live deployment (paper)
 
-Three paper bots (Swing **v5 / v6 / legacy**) run 24/7 on a GCP free-tier VM, each with an isolated
-fake wallet (`paper_state_<id>.json`), controlled remotely via a multi-bot Telegram interface
-(`/status`, `/report`, `/equity`, `/bots`) that pushes rebalance alerts and daily heartbeats.
-systemd (`Restart=always`) keeps the processes alive; a daily cron runs parity + degradation checks.
+Paper bots run 24/7 on a GCP free-tier VM, each with an isolated fake wallet
+(`paper_state_<id>.json`): three Swing variants (**v5 / v6 / legacy**) plus the **Prop/CFT**
+candidate (its own `/prop` controls and CFT rule monitor). They're controlled remotely via a
+multi-bot Telegram interface (`/status`, `/report`, `/equity`, `/bots`, `/prop`) that pushes
+rebalance alerts and daily heartbeats. systemd (`Restart=always`) keeps the processes alive; a daily
+cron runs parity + degradation checks.
 
-No API keys live on the server (paper uses only public OKX data). Runbook: [`DEPLOY_PAPER.md`](DEPLOY_PAPER.md).
+No API keys live on the server (paper uses only public OKX data). Runbook: [`docs/ops/deploy-paper.md`](docs/ops/deploy-paper.md).
 
 ---
 
@@ -191,9 +193,12 @@ No API keys live on the server (paper uses only public OKX data). Runbook: [`DEP
 
 - **Swing v6** — an experimental successor (phase-router + funding overlay) that, *by design*,
   behaves identically to v5 until ~Oct 2026, so the paper A/B test produces no signal until then.
-  Research plan: [`SWING_V6_PLAN.md`](SWING_V6_PLAN.md).
-- **Prop firm (Hyro / CFT / Bybit)** — an attempt to pass a funded-account challenge. Verdict: the
-  edge is real, but the pass/breach rate doesn't meet the firm's gates. **Parked.**
+  Research plan: [`docs/swing/v6-plan.md`](docs/swing/v6-plan.md).
+- **Prop firm (Hyro / CFT / Bybit)** — an attempt to pass a funded-account challenge. Backtest
+  verdict: the edge is real, but the pass/breach rate doesn't yet meet the firm's gates, so **no
+  challenge has been purchased**. The CFT-only candidate is nonetheless **running in paper** on the
+  same VM (isolated wallet, its own `/prop` Telegram controls and CFT rule monitor) to gather forward
+  data before committing real capital.
 
 ---
 
@@ -201,11 +206,13 @@ No API keys live on the server (paper uses only public OKX data). Runbook: [`DEP
 
 | Doc | What's in it |
 |---|---|
+| [`docs/`](docs/) | Index of all deeper docs (design, audits, ops, forward-test, archive) |
 | [`CLAUDE.md`](CLAUDE.md) / [`SESSION.md`](SESSION.md) | Living project brain: conventions, invariants, current state |
-| [`HANDOFF_2026-07-05.md`](HANDOFF_2026-07-05.md) | Full context to resume from another machine |
-| [`FORWARD_TEST_CONTRACT.md`](FORWARD_TEST_CONTRACT.md) | Frozen rules of the forward test (start 2026-07-04) |
-| [`SWING_PLAN.md`](SWING_PLAN.md) / [`SWING_V6_PLAN.md`](SWING_V6_PLAN.md) | Allocator design + go/no-go criteria |
-| [`DEPLOY_PAPER.md`](DEPLOY_PAPER.md) | Cloud paper-trading runbook |
+| [`docs/handoff.md`](docs/handoff.md) | Full context to resume from another machine |
+| [`docs/forward-test/contract.md`](docs/forward-test/contract.md) | Frozen rules of the forward test (start 2026-07-04) |
+| [`docs/swing/plan.md`](docs/swing/plan.md) / [`docs/swing/v6-plan.md`](docs/swing/v6-plan.md) | Allocator design + go/no-go criteria |
+| [`docs/swing/audits.md`](docs/swing/audits.md) | Quantitative audit of the Swing Allocator (v4 + v5 freeze + F1–F19 plan) |
+| [`docs/ops/deploy-paper.md`](docs/ops/deploy-paper.md) | Cloud paper-trading runbook |
 
 ---
 

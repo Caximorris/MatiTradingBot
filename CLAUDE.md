@@ -3,7 +3,7 @@
 Bot de trading automatizado para OKX. Python 3.12+. Windows 10, PowerShell.
 Leer este archivo Y `SESSION.md` antes de tocar cualquier archivo.
 `SESSION.md` es corto (estado vivo + reglas invariantes). El detalle historico completo esta en
-`SESSION_ARCHIVE.md` — leerlo SOLO bajo demanda, no por defecto (ahorro de tokens).
+`docs/archive/session-archive.md` — leerlo SOLO bajo demanda, no por defecto (ahorro de tokens).
 
 ---
 
@@ -46,7 +46,7 @@ Archivos clave:
 - `strategies/market_context.py` — DXY + NASDAQ + VIX (Yahoo Finance)
 - `strategies/funding_context.py` — funding rate historico OKX
 - `reporting/swing_journal.py` — journal de rebalanceos (Swing Allocator)
-- `SWING_PLAN.md` — diseño completo y plan de validacion del Swing Allocator
+- `docs/swing/plan.md` — diseño completo y plan de validacion del Swing Allocator
 
 Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/signal_follower.py`
 
