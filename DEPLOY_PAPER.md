@@ -20,8 +20,9 @@ VM Linux gratuita (Oracle Free / GCP e2-micro)
 Estado persistente (sobrevive a reinicios de proceso y de VM):
 ├── trading.db                        → BotState: is_active, estado del Swing (initialized,
 │                                        last_rebalance, last_eval_block)
-├── data/runtime/paper_state.json     → portfolio paper (balances simulados)
-├── data/runtime/swing_rebalances.jsonl → cada rebalanceo ejecutado (fuente de /report y F19)
+├── data/runtime/paper_state.json     → portfolio paper del bot legacy (sin paper_portfolio_id)
+├── data/runtime/paper_state_<id>.json → portfolio paper de cada bot aislado (swing_v6, prop_cft...)
+├── data/runtime/swing_rebalances.jsonl → cada rebalanceo (tag `strategy` por bot; fuente /report y F19)
 └── data/runtime/daily_checks.log     → historial de checks diarios
 ```
 

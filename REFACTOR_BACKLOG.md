@@ -16,7 +16,10 @@
   `StrategyMeta`. Carga diferida (importlib), no infla arranque. main.py no se toca. 7 motores enganchados.
 - Datos: `data/cache` + pipeline funding (`tools/funding_refresh.py`) + contextos modulares
   (macro/market/funding). Anadir fuente = nuevo modulo de contexto.
-- Telegram: `tools/telegram_remote.py` con handlers de comandos. Anadir comando = nuevo handler.
+- Telegram: `tools/telegram_remote.py` (orquestacion: red/DB/loop + handlers) + `tools/tg_views.py`
+  (formateo HTML puro) + `tools/paper_bots.py` (capa de datos multi-bot: rutas/etiquetas/filtros).
+  Anadir comando = nuevo handler; anadir vista = funcion pura en tg_views. Multi-bot descubierto
+  dinamicamente desde BotState (sin hardcodear bots).
 - La tarea de "escalabilidad" es DOCUMENTAR estos 3 puntos de extension, no construir nada.
 
 ## Codigo muerto confirmado (borrable, git lo preserva)
@@ -29,7 +32,8 @@
 - `tools/` (34 scripts): separar operativos de research. NO mover sin auditar `deploy/daily_checks.sh`,
   skills y hooks que invocan por ruta (`funding_refresh`, `swing_parity_check`, `degradation_report`,
   `journal_summary`, `tg_*`, `swing_paper_setup`, `prop_cft_setup`, `swing_chart`).
-  - Operativos (NO mover): los de arriba + `tg_send`.
+  - Operativos (NO mover): los de arriba + `tg_send`, `tg_views`, `tg_charts`, `paper_bots`
+    (importados por `telegram_remote` en la VM).
   - Research one-off (mover a `tools/research/`): `prop_phase_matrix`, `prop_breach_audit`,
     `prop_challenge_sim`, `prop_phase_frontier`, `prop_router_vs_swing`, `bybit_public_cost_probe`,
     `alpha_screens`, `sens_phases`, `bootstrap_equity`, `stress_usdt_depeg`, `swing_benchmarks`,

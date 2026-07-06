@@ -4,7 +4,8 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`SESSION_ARCHIVE.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-06** (Swing v6 + aislamiento paper + pipeline funding — MERGEADO A MAIN)
+**Ultima actualizacion: 2026-07-06** (Swing v6 + aislamiento paper + pipeline funding — MERGEADO A MAIN;
+control remoto Telegram multi-bot `6e95f0d`)
 
 ---
 
@@ -27,9 +28,12 @@ overlay que SOLO dispara en fase `accumulation`. Hoy estamos en `bear_onset` (80
 
 **PAPER DESPLEGADO** — VM GCP e2-micro us-central1 (free tier), Debian 13, VM `matitrbot`. Los 3 bots
 en paper con carteras aisladas (`paper_state_<id>.json`; v5 legacy sigue en `paper_state.json`).
-Control remoto Telegram completo (heartbeat 08:00 UTC, watchdog, /equity /chart /parity /prop, etc.).
+Control remoto Telegram **multi-bot** (2026-07-06, commit `6e95f0d`): descubre los bots swing desde
+BotState y los distingue por etiqueta (v5/v6/legacy). `/status` resume todos; `/status|/report|/equity
+<bot>` apuntan a uno; `/bots` lista carteras. Alertas de rebalanceo y heartbeat por bot. Prop sigue en
+`/prop`. Capa pura en `tools/paper_bots.py` + `tools/tg_views.py` (telegram_remote 674 lineas <800).
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `DEPLOY_PAPER.md`.
-Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 145/145.
+Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 153/153.
 
 **Pro Trend v13 — PAUSADO INDEFINIDAMENTE** (decision sesion 14). Codigo congelado y reversible,
 fuera del roadmap activo. Framework de validacion estaba completo. Detalle en archive.

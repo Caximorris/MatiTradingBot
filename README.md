@@ -448,7 +448,11 @@ MatiTradingBot/
 │   ├── prop_cft_setup.py           # Registra Prop/CFT paper en BotState
 │   ├── prop_cft_status.py          # Estado del monitor CFT
 │   ├── prop_telegram.py            # Formato Telegram para Prop/CFT
-│   ├── telegram_remote.py          # Control remoto Telegram
+│   ├── swing_paper_setup.py        # Registra bots swing v5/v6 aislados en BotState
+│   ├── telegram_remote.py          # Control remoto Telegram (orquestación: red/DB/loop)
+│   ├── paper_bots.py               # Capa de datos multi-bot (rutas/etiquetas/filtros)
+│   ├── tg_views.py                 # Formateo de vistas Telegram (HTML puro)
+│   ├── tg_charts.py                # Gráficos equity/precio para Telegram
 │   └── tg_send.py                  # Envío de alertas Telegram (usado por cron)
 ├── deploy/                         # Despliegue en VM (paper 24/7)
 │   ├── install_vm.sh               # Instalador idempotente Ubuntu (venv+systemd+cron)
@@ -479,11 +483,17 @@ Resumen de operación una vez desplegado:
 
 | Acción | Cómo |
 |---|---|
-| Estado (vivo, % BTC, valor) | Telegram `/status` |
-| Informe de rebalanceos | Telegram `/report` |
+| Resumen de todos los bots | Telegram `/status` |
+| Lista de bots y su cartera | Telegram `/bots` |
+| Estado / informe de un bot | Telegram `/status v6`, `/report v6` |
 | Pausar / reanudar a distancia | Telegram `/pause` / `/resume` |
-| Alertas | Automáticas: cada rebalanceo + paridad diaria (12:10 UTC) |
+| Alertas | Automáticas: cada rebalanceo (por bot) + paridad diaria (12:10 UTC) |
 | Kill switch total | SSH: `python main.py stop` |
+
+**Multi-bot:** cada bot swing con `paper_portfolio_id` corre en su cartera aislada
+(`paper_state_<id>.json`); el control remoto los descubre desde `BotState` y los distingue por
+etiqueta (v5/v6/legacy). `/status` sin argumento resume todos; añade el bot para el detalle. Prop
+mantiene su propio `/prop`.
 
 Notas clave: en paper **no hay API keys** en el servidor (solo datos públicos de OKX);
 `OKX_SANDBOX=false` obligatorio para que los datos sean del exchange real; el estado
