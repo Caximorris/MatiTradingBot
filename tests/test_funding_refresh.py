@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import tools.funding_refresh as fr
+from strategies import swing_funding_overlay as ov
+
+
+def _write_cache(path, rows):
+    json.dump([[ts, rate] for ts, rate in rows], open(path, "w", encoding="utf-8"))
+
+
+def test_refresh_merges_new_settlements_and_dedups(tmp_path, monkeypatch):
+    cache = tmp_path / "funding_bybit_BTCUSDT.json"
+    _write_cache(cache, [(1000, 0.01), (2000, 0.02)])
+    monkeypatch.setattr(fr, "_cache_path", lambda sym: cache)
+
+    # Bybit devuelve descendente; una sola pagina que solapa lo conocido (3000 nuevo, 2000 ya esta).
+    pages = iter([[(3000, 0.03), (2000, 0.02)]])
+    monkeypatch.setattr(fr, "_fetch_page", lambda sym, end: next(pages, []))
+
+    r = fr.refresh("BTCUSDT")
+
+    assert r["added"] == 1
+    assert r["total"] == 3
+    rows = json.load(open(cache, encoding="utf-8"))
+    assert [ts for ts, _ in rows] == [1000, 2000, 3000]  # ordenado ascendente, sin duplicar 2000
+
+
+def test_refresh_backfills_when_cache_missing(tmp_path, monkeypatch):
+    cache = tmp_path / "funding_bybit_BTCUSDT.json"
+    monkeypatch.setattr(fr, "_cache_path", lambda sym: cache)
+    pages = iter([[(2000, 0.02), (1000, 0.01)], []])  # segunda pagina vacia -> fin
+    monkeypatch.setattr(fr, "_fetch_page", lambda sym, end: next(pages, []))
+
+    r = fr.refresh("BTCUSDT")
+
+    assert r["added"] == 2
+    assert r["total"] == 2
+
+
+def test_overlay_cache_invalidates_when_file_changes(tmp_path, monkeypatch):
+    cache = tmp_path / "funding_bybit_BTCUSDT.json"
+    monkeypatch.setattr(ov, "funding_cache_path", lambda sym: cache)
+    ov._cached_events.cache_clear()
+
+    # 100 settlements planos + un pico alto al final -> hay evento en accumulation.
+    base = [(1_000_000_000_000 + i * 8 * 3600 * 1000, 0.0) for i in range(100)]
+    base.append((base[-1][0] + 8 * 3600 * 1000, 0.05))
+    _write_cache(cache, base)
+
+    cfg = SimpleNamespace(
+        funding_overlay_lookback_settlements=90, funding_low_pctile=0.10,
+        funding_high_pctile=0.90, funding_overlay_dedup_days=7, funding_overlay_ttl_days=7,
+        funding_overlay_phases="accumulation", funding_overlay_delta=0.05,
+    )
+    from datetime import datetime, timezone
+    now = datetime.fromtimestamp(base[-1][0] / 1000 + 3600, tz=timezone.utc)
+
+    ov.funding_overlay_adjustment("BTCUSDT", now, "accumulation", cfg)
+    misses_before = ov._cached_events.cache_info().misses
+
+    # Reescribir el archivo cambia el mtime -> debe recomputar (no servir cache viejo).
+    import os
+    os.utime(cache, (base[-1][0] / 1000 + 10, base[-1][0] / 1000 + 10))
+    ov.funding_overlay_adjustment("BTCUSDT", now, "accumulation", cfg)
+    misses_after = ov._cached_events.cache_info().misses
+
+    assert misses_after == misses_before + 1

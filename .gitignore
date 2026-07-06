@@ -47,6 +47,11 @@ reports/
 # re-descargar en otro PC cambia el conteo de velas y rompe la reproducibilidad de v4.
 # Son datos de precio publicos, sin secretos. (Repo privado.)
 # data/cache/  <- intencionadamente NO ignorado
+# EXCEPCION: el cache de funding SI se ignora. Un cron lo refresca a diario en la VM
+# (tools/funding_refresh.py) para el overlay del Swing v6; versionarlo lo haria chocar
+# con /update (git pull). El funding history de Bybit es inmutable y re-descargable, asi
+# que el determinismo sobrevive a un re-fetch (a diferencia del OHLCV con gap-fill).
+data/cache/funding_bybit_*.json
 
 # Journals de backtest: reproducibles desde el cache determinista y pesados (hasta
 # ~10MB). Por defecto NO se versionan para no inflar el repo. Los journals canonicos
