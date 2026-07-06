@@ -175,6 +175,37 @@ def equity_series(result: Any, candles: list) -> dict[str, list]:
     return {"dates": dates, "equity": equity, "bnh": bnh, "dd": dd}
 
 
+# Halvings BTC (el ultimo es estimado). Mismo set que tools/swing_chart.py.
+HALVINGS = ["2012-11-28", "2016-07-09", "2020-05-11", "2024-04-20", "2028-03-15"]
+
+
+def phase_bands(symbol: str, from_dt: datetime, to_dt: datetime,
+                config: dict | None = None) -> list[dict]:
+    """Bandas de fase del ciclo de halving dentro de [from,to]. Solo BTC; [] para el resto."""
+    if not symbol.upper().startswith("BTC"):
+        return []
+    config = config or {}
+    post = int(config.get("phase_post_end", 180))
+    peak = int(config.get("phase_peak_end", 540))
+    onset = int(config.get("phase_onset_end", 900))
+    hs = [datetime.strptime(h, "%Y-%m-%d").replace(tzinfo=timezone.utc) for h in HALVINGS]
+    bands = []
+    for i, h in enumerate(hs):
+        nxt = hs[i + 1] if i + 1 < len(hs) else h + timedelta(days=1600)
+        segs = [
+            ("post_halving", h, h + timedelta(days=post)),
+            ("bull_peak", h + timedelta(days=post), h + timedelta(days=peak)),
+            ("bear_onset", h + timedelta(days=peak), h + timedelta(days=onset)),
+            ("accumulation", h + timedelta(days=onset), nxt),
+        ]
+        for name, a, b in segs:
+            a2, b2 = max(a, from_dt), min(b, to_dt)
+            if a2 < b2:
+                bands.append({"name": name, "from": a2.strftime("%Y-%m-%d"),
+                              "to": b2.strftime("%Y-%m-%d")})
+    return bands
+
+
 def extract_markers(strategy: Any) -> tuple[list[dict], str]:
     """
     Marcadores normalizados agnosticos al formato:

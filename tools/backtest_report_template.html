@@ -26,13 +26,25 @@
   .row2 .sec b { color:var(--text); font-weight:600; }
   .row3 { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .grp { font-size:11px; color:var(--dim); }
-  .preset { cursor:pointer; background:var(--panel); color:var(--muted);
+  .preset, #helpbtn { cursor:pointer; background:var(--panel); color:var(--muted);
           border:1px solid var(--border); border-radius:5px; padding:3px 12px;
           font-size:12px; transition: all .12s; }
-  .preset:hover { color:var(--text); border-color:var(--accent); }
+  .preset:hover, #helpbtn:hover { color:var(--text); border-color:var(--accent); }
   .preset.active { color:#fff; background:var(--accent); border-color:var(--accent); }
+  #helpbtn { margin-left:auto; }
   .mk { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); }
-  #chart { width:100vw; height:calc(100vh - 104px); }
+  #help { display:none; position:fixed; top:70px; right:20px; width:470px; max-height:78vh;
+          overflow-y:auto; background:var(--panel); border:1px solid var(--border);
+          border-radius:8px; padding:16px 20px; font-size:12.5px; line-height:1.55;
+          z-index:100; box-shadow:0 8px 30px rgba(0,0,0,0.6); }
+  #help .close { position:sticky; top:0; float:right; cursor:pointer; color:var(--dim);
+                 font-size:18px; line-height:1; background:var(--panel); padding:0 2px; }
+  #help .close:hover { color:var(--text); }
+  #help h3 { margin:12px 0 4px; font-size:13px; color:#eceff4; }
+  #help h3:first-of-type { margin-top:0; }
+  #help code { background:#1d222c; padding:1px 5px; border-radius:3px; color:var(--gold); font-size:11.5px; }
+  #help p { margin:3px 0; color:var(--muted); }
+  #chart { width:100vw; height:calc(100vh - 118px); }
 </style>
 </head>
 <body>
@@ -50,6 +62,7 @@
     <button class="preset tf active" onclick="setTF('1D',this)">1D</button>
     <button class="preset tf" onclick="setTF('1S',this)">1S</button>
     <button class="preset tf" onclick="setTF('1M',this)">1M</button>
+    <button class="preset tf" onclick="setTF('6M',this)">6M</button>
     <span style="color:var(--border)">|</span>
     <button class="preset" id="scalebtn" onclick="toggleScale()">Escala: Log</button>
     <button class="preset active" id="bhbtn" onclick="toggleBH()">B&amp;H</button>
@@ -59,23 +72,61 @@
     <span class="mk" style="margin-left:12px"><span style="color:var(--up)">&#9650;</span> compra/entrada</span>
     <span class="mk"><span style="color:var(--down)">&#9660;</span> venta/salida</span>
     <span class="mk"><span style="color:var(--accent)">&#9670;</span> init</span>
+    <button id="helpbtn" onclick="toggleHelp()">? Ayuda</button>
   </div>
+</div>
+<div id="help">
+  <span class="close" onclick="toggleHelp()">&times;</span>
+  <h3>Los 3 paneles</h3>
+  <p><b>1 &middot; Precio</b> — velas en el timeframe elegido (1D/1S/1M/6M), escala log. Cada marcador
+     es una operacion: <span style="color:var(--up)">&#9650;</span> compra/entrada,
+     <span style="color:var(--down)">&#9660;</span> venta/salida,
+     <span style="color:var(--accent)">&#9670;</span> asignacion inicial. Su tooltip muestra precio,
+     PnL (si cierra) y el motivo. En BTC, el fondo sombreado marca la fase del ciclo de halving
+     (verde=post_halving, &aacute;mbar=bull_peak, rojo=bear_onset, sin color=accumulation).</p>
+  <p><b>2 &middot; Equity</b> — valor del portfolio contra Buy &amp; Hold, escala log.</p>
+  <p><b>3 &middot; Drawdown</b> — ca&iacute;da desde el &uacute;ltimo m&aacute;ximo de equity
+     (en timeframes altos se muestra el peor valor del periodo).</p>
+  <h3>Controles</h3>
+  <p><b>Rueda del rat&oacute;n</b> — zoom horizontal (tiempo) en los 3 paneles a la vez.</p>
+  <p><b>Arrastrar</b> — pan horizontal. Tambi&eacute;n con el slider inferior.</p>
+  <p><b>Arrastrar el eje</b> (los n&uacute;meros de la derecha, precio o equity) — estira o comprime
+     la escala vertical. <b>Doble clic en el eje</b> — vuelve a auto-escala.</p>
+  <p><b>Shift + rueda</b> — zoom vertical centrado en el cursor (paneles de precio y equity).</p>
+  <p><b>VELAS 1D/1S/1M/6M</b> — reagrega precio y series al timeframe elegido.</p>
+  <p><b>Escala Log/Lineal</b> — cambia los ejes de precio y equity. <b>B&amp;H / Marcadores</b> —
+     muestra u oculta la l&iacute;nea de Buy &amp; Hold y los marcadores. <b>Reset</b> — vista
+     completa. <b>PNG</b> — captura.</p>
+  <h3>C&oacute;mo leer las m&eacute;tricas</h3>
+  <p>Anclas de decisi&oacute;n: <b>CAGR</b>, <b>Max DD</b>, <b>Calmar</b> y <b>vs B&amp;H</b>
+     (x&lt;1 = acabas por debajo de holdear). <b>PF</b> es contable, fr&aacute;gil al punto de
+     inicio &mdash; no lo uses como veredicto.</p>
+  <p>Costes seg&uacute;n el modo del backtest (fee + slippage; bybit/bybit_cons para perps).</p>
 </div>
 <div id="chart"></div>
 <script>
-const D = __DATA__;   // dates, candles [o,c,l,h], equity, bnh, dd, markers, kind, symbol, base
+const D = __DATA__;   // dates, candles [o,c,l,h], equity, bnh, dd, markers, phases, symbol, base
 const chart = echarts.init(document.getElementById('chart'), null, {renderer:'canvas'});
 window.addEventListener('resize', () => chart.resize());
 
 const UP='#26a69a', DOWN='#ef5350', ACCENT='#5b8dee', GOLD='#e6b34d';
 const GRID_LINE='#1d222c', AXIS_TEXT='#9aa0ab', TITLE_TEXT='#6f7582';
 const mkColor = {entry:UP, exit:DOWN, init:ACCENT};
+const PHASE_STYLE = {
+  post_halving:'rgba(38,166,154,0.07)', bull_peak:'rgba(230,179,77,0.08)', bear_onset:'rgba(239,83,80,0.07)',
+};
+
+function toggleHelp(){ const h=document.getElementById('help');
+  h.style.display = h.style.display==='block' ? 'none' : 'block'; }
+document.addEventListener('keydown', e => {
+  if (e.key==='Escape') document.getElementById('help').style.display='none'; });
 
 let TF='1D', logScale=true, showBH=true, showMk=true, V=null;
 
 function bucketKey(d, tf){
   if (tf==='1D') return d;
   if (tf==='1M') return d.slice(0,7);
+  if (tf==='6M') return d.slice(0,4) + (d.slice(5,7) <= '06' ? 'H1' : 'H2');
   const dt = new Date(d + 'T00:00:00Z');
   dt.setUTCDate(dt.getUTCDate() - (dt.getUTCDay() + 6) % 7);
   return dt.toISOString().slice(0,10);
@@ -105,6 +156,13 @@ function mkPoints(){
     symbolRotate: m.kind==='exit' ? 180 : 0, meta:m,
   }));
 }
+function phaseAreas(){
+  return (D.phases||[]).filter(p => p.name!=='accumulation').map(p => [
+    {name:p.name, xAxis:V.dates[idxOf(p.from)], itemStyle:{color:PHASE_STYLE[p.name]},
+     label:{show:true, position:'insideTop', color:TITLE_TEXT, fontSize:10}},
+    {xAxis:V.dates[Math.min(idxOf(p.to), V.dates.length-1)]},
+  ]);
+}
 function dataWindow(params){
   const p0=Array.isArray(params)?params[0]:params, i=p0.dataIndex;
   if(i==null||!V.dates[i])return '';
@@ -128,7 +186,7 @@ V = buildView(TF);
 const option = {
   backgroundColor:'#0d1017', animation:false,
   title:[
-    {text:'PRECIO '+D.symbol+' — velas + marcadores', top:6},
+    {text:'PRECIO '+D.symbol+' — velas + marcadores'+((D.phases&&D.phases.length)?' · fondo = fase de halving':''), top:6},
     {text:'EQUITY — estrategia vs Buy & Hold, escala log', top:'57%'},
     {text:'DRAWDOWN — caida desde maximo', top:'85%'},
   ].map(t=>({...t,left:70,textStyle:{color:TITLE_TEXT,fontSize:10.5,fontWeight:'normal'}})),
@@ -160,7 +218,8 @@ const option = {
   ],
   series:[
     {name:'Precio',type:'candlestick',data:V.candles,xAxisIndex:0,yAxisIndex:0,
-     itemStyle:{color:UP,color0:DOWN,borderColor:UP,borderColor0:DOWN}},
+     itemStyle:{color:UP,color0:DOWN,borderColor:UP,borderColor0:DOWN},
+     markArea:{silent:true, data:phaseAreas()}},
     {name:'Marcadores',type:'scatter',data:mkPoints(),xAxisIndex:0,yAxisIndex:0,symbolSize:9,z:10,
      tooltip:{trigger:'item',formatter:p=>{const m=p.data.meta,dc=mkColor[m.kind]||GOLD;
        const pnl=m.pnl!=null?`<br/>PnL: <b style="color:${m.pnl>=0?UP:DOWN}">${m.pnl>=0?'+':''}${m.pnl.toFixed(0)} USDT</b>`:'';
@@ -185,16 +244,79 @@ chart.setOption(option);
 
 function setTF(tf,btn){ TF=tf; V=buildView(tf);
   chart.setOption({xAxis:[{data:V.dates},{data:V.dates},{data:V.dates}],
-    series:[{data:V.candles},{data:showMk?mkPoints():[]},{data:V.equity},
-            {data:showBH?V.bnh:[]},{data:V.dd}]});
+    series:[{data:V.candles, markArea:{silent:true,data:phaseAreas()}},
+            {data:showMk?mkPoints():[]},{data:V.equity},{data:showBH?V.bnh:[]},{data:V.dd}]});
   document.querySelectorAll('.tf').forEach(b=>b.classList.remove('active'));
   if(btn)btn.classList.add('active'); }
 function zoomTo(f,t,btn){ const s=f?idxOf(f):0, e=t?idxOf(t):V.dates.length-1;
   chart.dispatchAction({type:'dataZoom',dataZoomIndex:0,startValue:s,endValue:e});
   document.querySelectorAll('.row3 .preset').forEach(b=>{const oc=b.getAttribute('onclick')||'';
     if(oc.startsWith('zoomTo'))b.classList.remove('active');}); if(btn)btn.classList.add('active'); }
-function toggleScale(){ logScale=!logScale; const t=logScale?'log':'value';
-  const opt=chart.getOption(); opt.yAxis[0].type=t; opt.yAxis[1].type=t;
+
+// ---------------------------------------------------------------------------
+// Zoom/pan VERTICAL manual (dataZoom de ECharts no soporta ejes log).
+// Shift+rueda = zoom | arrastrar eje = estirar escala | doble clic eje = auto.
+// Paneles con eje manipulable: precio (yAxis 0) y equity (yAxis 1).
+// ---------------------------------------------------------------------------
+const PANELS = [[0,0],[1,1]];   // [gridIndex, yAxisIndex]
+const yLock = {0:null, 1:null};
+function gridRect(i){ try { return chart.getModel().getComponent('grid', i).coordinateSystem.getRect(); }
+  catch(e){ return null; } }
+function panelAt(x,y){ for (const [gi,ai] of PANELS){ const r=gridRect(gi);
+  if (r && x>=r.x && x<=r.x+r.width && y>=r.y && y<=r.y+r.height) return {axis:ai, rect:r}; } return null; }
+function axisZoneAt(x,y){ for (const [gi,ai] of PANELS){ const r=gridRect(gi);
+  if (r && y>=r.y && y<=r.y+r.height && x>r.x+r.width && x<=chart.getWidth()) return {axis:ai, rect:r}; } return null; }
+function spanOf(h){ const top=chart.convertFromPixel({yAxisIndex:h.axis}, h.rect.y);
+  const bot=chart.convertFromPixel({yAxisIndex:h.axis}, h.rect.y+h.rect.height); return [bot, top]; }
+const toS = v => logScale ? Math.log10(Math.max(v,1e-9)) : v;
+const fromS = v => logScale ? Math.pow(10,v) : v;
+function setYLock(axis,mn,mx){ yLock[axis]={min:mn,max:mx};
+  const patch=[{},{},{}]; patch[axis]={min:mn,max:mx}; chart.setOption({yAxis:patch}); }
+function clearYLocks(){ yLock[0]=yLock[1]=null;
+  chart.setOption({yAxis:[{min:null,max:null},{min:null,max:null},{}]}); }
+
+const dom = chart.getDom();
+dom.addEventListener('wheel', e => {
+  if (!e.shiftKey) return; const h=panelAt(e.offsetX,e.offsetY); if(!h) return;
+  e.preventDefault(); e.stopPropagation();
+  const [mn,mx]=spanOf(h), cv=chart.convertFromPixel({yAxisIndex:h.axis}, e.offsetY);
+  const f=e.deltaY>0?1.2:1/1.2, a=toS(mn), b=toS(mx), c=toS(cv);
+  setYLock(h.axis, fromS(c+(a-c)*f), fromS(c+(b-c)*f));
+}, {passive:false, capture:true});
+
+let drag=null, axisDrag=null;
+const canvas = dom.querySelector('canvas');
+dom.addEventListener('mousedown', e => {
+  const az=axisZoneAt(e.offsetX,e.offsetY);
+  if (az){ e.preventDefault(); e.stopPropagation(); const [mn,mx]=spanOf(az);
+    axisDrag={h:az, y0:e.clientY, a:toS(mn), b:toS(mx)}; return; }
+  if (!e.shiftKey) return; const h=panelAt(e.offsetX,e.offsetY); if(!h) return;
+  e.preventDefault(); e.stopPropagation(); const [mn,mx]=spanOf(h);
+  drag={h, y0:e.clientY, a:toS(mn), b:toS(mx), perPix:(toS(mx)-toS(mn))/h.rect.height};
+}, {capture:true});
+window.addEventListener('mousemove', e => {
+  if (axisDrag){ const f=Math.exp((e.clientY-axisDrag.y0)/180), c=(axisDrag.a+axisDrag.b)/2;
+    setYLock(axisDrag.h.axis, fromS(c-(c-axisDrag.a)*f), fromS(c+(axisDrag.b-c)*f)); return; }
+  if (!drag) return; const d=(e.clientY-drag.y0)*drag.perPix;
+  setYLock(drag.h.axis, fromS(drag.a+d), fromS(drag.b+d)); });
+window.addEventListener('mouseup', () => { drag=null; axisDrag=null; });
+dom.addEventListener('mousemove', e => {
+  if (canvas) canvas.style.cursor = (axisDrag || axisZoneAt(e.offsetX,e.offsetY)) ? 'ns-resize' : '';
+}, {capture:true});
+dom.addEventListener('dblclick', e => {
+  const az=axisZoneAt(e.offsetX,e.offsetY); if(!az) return;
+  e.preventDefault(); e.stopPropagation(); yLock[az.axis]=null;
+  const patch=[{},{},{}]; patch[az.axis]={min:null,max:null}; chart.setOption({yAxis:patch});
+}, {capture:true});
+
+function toggleScale(){ logScale=!logScale; const t=logScale?'log':'value', lbl=logScale?'log':'lineal';
+  yLock[0]=yLock[1]=null;
+  // Workaround BUG ECharts: cambiar type de yAxis log con merge corrompe el pipeline.
+  const opt=chart.getOption();
+  opt.yAxis[0].type=t; opt.yAxis[0].min=null; opt.yAxis[0].max=null;
+  opt.yAxis[1].type=t; opt.yAxis[1].min=null; opt.yAxis[1].max=null;
+  opt.title[0].text='PRECIO '+D.symbol+' — velas + marcadores'+((D.phases&&D.phases.length)?' · fondo = fase de halving':'');
+  opt.title[1].text='EQUITY — estrategia vs Buy & Hold, escala '+lbl;
   chart.setOption(opt,{notMerge:true});
   document.getElementById('scalebtn').textContent='Escala: '+(logScale?'Log':'Lineal'); }
 function toggleBH(){ showBH=!showBH;
@@ -204,6 +326,7 @@ function toggleMarkers(){ showMk=!showMk;
   chart.setOption({series:[{},{data:showMk?mkPoints():[]},{},{},{}]});
   document.getElementById('mkbtn').classList.toggle('active',showMk); }
 function resetView(){ chart.dispatchAction({type:'dataZoom',dataZoomIndex:0,start:0,end:100});
+  clearYLocks();
   document.querySelectorAll('.row3 .preset').forEach(b=>{const oc=b.getAttribute('onclick')||'';
     if(oc.startsWith('zoomTo'))b.classList.toggle('active',b.textContent==='Todo');}); }
 function exportPNG(){ const url=chart.getDataURL({pixelRatio:2,backgroundColor:'#0d1017'});

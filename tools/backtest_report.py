@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tools.report_common import (
-    daily_candles, equity_series, extract_markers, parse_utc, run_strategy,
+    daily_candles, equity_series, extract_markers, parse_utc, phase_bands, run_strategy,
 )
 
 TEMPLATE = Path(__file__).with_name("backtest_report_template.html")
@@ -123,6 +123,7 @@ def build_html(run, series, candles, markers, kind) -> str:
         "candles": [[o, c, l, h] for _d, o, h, l, c in candles],  # ECharts [open,close,low,high]
         "equity": series["equity"], "bnh": series["bnh"], "dd": series["dd"],
         "markers": markers,
+        "phases": phase_bands(run.symbol, run.from_dt, run.to_dt, run.config),
     }
     return (TEMPLATE.read_text(encoding="utf-8")
             .replace("__TITLE__", title)
