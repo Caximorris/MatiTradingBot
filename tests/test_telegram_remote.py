@@ -209,6 +209,38 @@ def test_parse_daily_checks_and_streak():
     assert "PARIDAD" in format_parity([])
 
 
+def test_format_parity_flags_stale_check():
+    """Regresion 2026-07-11: el cron perdio +x 5 dias; /parity mostraba 'OK' en verde sin
+    avisar porque no comparaba la antiguedad del ultimo check contra `now`."""
+    from datetime import datetime, timezone
+
+    from tools.telegram_remote import format_parity, parse_daily_checks
+    log = "===== daily_checks 2026-07-06T12:10:01Z =====\nlive_target,0.2000\nPARITY_OK\n"
+    blocks = parse_daily_checks(log)
+    fresh_now = datetime(2026, 7, 6, 14, 0, tzinfo=timezone.utc)
+    stale_now = datetime(2026, 7, 11, 8, 0, tzinfo=timezone.utc)
+    assert "VIEJO" not in format_parity(blocks, now=fresh_now)
+    assert "VIEJO" in format_parity(blocks, now=stale_now)
+    # sin `now` (comportamiento anterior) no debe romper ni marcar viejo
+    assert "VIEJO" not in format_parity(blocks)
+
+
+def test_format_anomalies_empty_and_populated():
+    from tools.anomaly_check import Alert
+    from tools.tg_views import format_anomalies
+
+    assert "Sin anomalias" in format_anomalies([])
+
+    alerts = [
+        Alert("CRITICAL", "negative-balance", "USDT en -5", "Parar e investigar", bot="v5"),
+        Alert("HIGH", "daily-check-stale", "hace 120h", "Revisar cron"),
+    ]
+    out = format_anomalies(alerts)
+    assert "negative-balance" in out and "[v5]" in out
+    assert "daily-check-stale" in out
+    assert "2 hallazgo" in out
+
+
 def test_build_equity_series_reconstructs_holdings():
     from tools.tg_charts import build_equity_series
     h = 3_600_000

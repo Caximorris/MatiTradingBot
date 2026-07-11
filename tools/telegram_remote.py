@@ -42,6 +42,7 @@ from tools.tg_views import (
     PARITY_TARGET_DAYS,
     _bot_row,
     _esc,
+    format_anomalies,
     format_heartbeat_multi,
     format_parity,
     format_rebalance_alert,
@@ -259,6 +260,21 @@ def cmd_signals() -> str:
     return "\n".join(lines)
 
 
+def cmd_audit(get_session) -> str:
+    """Plan T13.1 via Telegram: mismo motor de deteccion que `okx-trader anomaly-check`
+    (tools.anomaly_check.check_anomalies), incluye el chequeo de cron/daily_checks.log."""
+    from tools.anomaly_check import check_anomalies, daily_check_age_minutes
+    from tools.paper_snapshot import build_snapshots
+    now = datetime.now(timezone.utc)
+    price = fetch_price()
+    with get_session() as s:
+        snaps = build_snapshots(s, price=price, now=now)
+    text_log = DAILY_CHECKS_LOG.read_text(encoding="utf-8") if DAILY_CHECKS_LOG.exists() else ""
+    age = daily_check_age_minutes(parse_daily_checks(text_log), now)
+    alerts = check_anomalies(snaps, price=price, now=now, daily_check_age_min=age)
+    return format_anomalies(alerts)
+
+
 # ---------------------------------------------------------------------------
 # Graficos y backup
 # ---------------------------------------------------------------------------
@@ -365,6 +381,7 @@ HELP_TEXT = (
     "/report [bot] [n] — ultimos n rebalanceos de un bot\n"
     "/signals — target y senales actuales (v5 canonico, calculo live)\n"
     "/parity — paridad F15: ultimo check y racha /30\n"
+    "/audit — red-flags de infra/datos/estado (incluye cron stale)\n"
     "\n<b>Graficos</b>\n"
     "/equity [bot] [dias] — equity vs B&amp;H BTC (30 por defecto)\n"
     "/chart [bot] [dias] — precio BTC con rebalanceos marcados\n"
@@ -393,6 +410,7 @@ BOT_COMMANDS = [
     ("chart", "Grafico precio + rebalanceos"),
     ("signals", "Target y senales actuales"),
     ("parity", "Paridad F15 y racha"),
+    ("audit", "Red-flags de infra/datos/estado"),
     ("health", "Salud de VM y servicios"),
     ("logs", "Journal del bot"),
     ("backup", "Backup de DB y estado"),
@@ -498,7 +516,9 @@ def handle_command(text: str, get_session) -> str | None:
         return cmd_signals()
     if cmd == "/parity":
         text_log = DAILY_CHECKS_LOG.read_text(encoding="utf-8") if DAILY_CHECKS_LOG.exists() else ""
-        return format_parity(parse_daily_checks(text_log))
+        return format_parity(parse_daily_checks(text_log), now=datetime.now(timezone.utc))
+    if cmd == "/audit":
+        return cmd_audit(get_session)
     if cmd == "/equity":
         token, days = _split_bot_num(parts, 30, 2, 60)
         bot = _pick_single(_load_snapshots(get_session), token, "/equity &lt;bot&gt; [dias]")

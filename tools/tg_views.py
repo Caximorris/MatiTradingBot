@@ -177,6 +177,27 @@ def format_report(rebalances: list[dict], n: int = 10, label: str | None = None)
     return "\n".join(lines)
 
 
+_ANOMALY_ICON = {"CRITICAL": "\U0001F6A8", "HIGH": "\U0001F534",
+                 "MEDIUM": "\U0001F7E1", "LOW": "\U000026AA"}
+
+
+def format_anomalies(alerts: list) -> str:
+    """Renderiza alertas de tools.anomaly_check.check_anomalies (plan T13.1) para /audit.
+
+    No importa tools.anomaly_check (mismo criterio que el resto del modulo: solo HTML puro,
+    sin dependencias de deteccion) — los objetos Alert solo se leen por atributo."""
+    if not alerts:
+        return "\U0001F7E2 <b>AUDITORIA</b>\nSin anomalias detectadas."
+    lines = [f"\U0001F50E <b>AUDITORIA</b> — {len(alerts)} hallazgo(s)", ""]
+    for a in alerts:
+        icon = _ANOMALY_ICON.get(a.severity, "\U000026AA")
+        tag = f" [{_esc(a.bot)}]" if a.bot else ""
+        lines.append(f"{icon} <b>{_esc(a.severity)}</b>{tag} {_esc(a.code)}")
+        lines.append(f"   {_esc(a.message)}")
+        lines.append(f"   → {_esc(a.action)}")
+    return "\n".join(lines)
+
+
 def format_rebalance_alert(rb: dict) -> str:
     icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
     tag = f" [{bot_label(rb['strategy'], None)}]" if rb.get("strategy") else ""
@@ -220,7 +241,13 @@ def parity_streak(blocks: list[dict]) -> int:
     return streak
 
 
-def format_parity(blocks: list[dict]) -> str:
+# Cron corre 1x/dia (12:10 UTC); 26h de margen antes de considerar el check "viejo".
+# Mismo umbral que tools.anomaly_check.DAILY_CHECK_STALE_MIN — no importar cross-modulo solo
+# por una constante (tg_views es HTML puro, anomaly_check es deteccion; se mantienen separados).
+PARITY_STALE_MIN = 26 * 60
+
+
+def format_parity(blocks: list[dict], now: datetime | None = None) -> str:
     if not blocks:
         return ("\U0001F50D <b>PARIDAD F15</b>\n"
                 "Sin checks aun — el cron corre a las 12:10 UTC.")
@@ -235,6 +262,22 @@ def format_parity(blocks: list[dict]) -> str:
         "\U0001F50D <b>PARIDAD F15</b>",
         f"{icon} Ultimo check {_esc(last['ts'])}: {verdict}",
     ]
+    # Bug real 2026-07-11: el cron perdio +x 5 dias y esto seguia mostrando "OK" en verde
+    # porque antes solo miraba el ULTIMO resultado, nunca su antiguedad.
+    if now is not None:
+        try:
+            ts = datetime.fromisoformat(last["ts"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_min = (now - ts).total_seconds() / 60
+            if age_min > PARITY_STALE_MIN:
+                lines.append(
+                    f"\U0001F534 <b>VIEJO: hace {age_min / 60:.1f}h</b> "
+                    f"(esperado &lt;{PARITY_STALE_MIN / 60:.0f}h) — el cron probablemente "
+                    f"no esta corriendo. Revisar crontab y permisos de daily_checks.sh."
+                )
+        except (KeyError, ValueError, TypeError):
+            pass
     if last["target"]:
         lines.append(f"Target: {_esc(last['target'])}")
     lines.append(f"Racha: <b>{parity_streak(blocks)}/{PARITY_TARGET_DAYS}</b> dias OK")

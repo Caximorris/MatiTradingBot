@@ -1,8 +1,8 @@
-"""Comandos de observabilidad del paper forward-test (plan T4.1/T6.1/T7.1/T13.1).
+"""Comandos de observabilidad del paper forward-test (plan T4.1/T5.1/T6.1/T7.1/T13.1).
 
 Todos READ-ONLY: leen DB + data/runtime + ticker publico. No tocan la logica de trading ni
 pausan bots. La logica pura vive en tools/{paper_snapshot,anomaly_check,forward_report,
-data_audit}.py; aqui solo va el render Rich y el cableado de Telegram.
+data_audit,decision_explain}.py; aqui solo va el render Rich y el cableado de Telegram.
 """
 from __future__ import annotations
 
@@ -100,6 +100,18 @@ def paper_status(
 _SEV_COLOR = {"CRITICAL": "bold red", "HIGH": "red", "MEDIUM": "yellow", "LOW": "dim"}
 
 
+def _daily_check_age_min(now: datetime) -> float | None:
+    """Minutos desde el ultimo bloque de data/runtime/daily_checks.log. None si no existe."""
+    from tools.anomaly_check import daily_check_age_minutes
+    from tools.paper_snapshot import RUNTIME
+    from tools.tg_views import parse_daily_checks
+    log_path = RUNTIME / "daily_checks.log"
+    if not log_path.exists():
+        return None
+    blocks = parse_daily_checks(log_path.read_text(encoding="utf-8"))
+    return daily_check_age_minutes(blocks, now)
+
+
 def anomaly_check(
     telegram: bool = typer.Option(False, "--telegram", help="Enviar CRITICAL/HIGH al chat (dedup)."),
 ):
@@ -108,7 +120,8 @@ def anomaly_check(
                                      load_state, save_state)
     now = datetime.now(timezone.utc)
     snaps, price = _build(now)
-    alerts = check_anomalies(snaps, price=price, now=now)
+    alerts = check_anomalies(snaps, price=price, now=now,
+                             daily_check_age_min=_daily_check_age_min(now))
 
     if not alerts:
         console.print("[green]Sin anomalias.[/green]")
@@ -189,8 +202,42 @@ def data_audit(
     raise typer.Exit(1 if dirty else 0)
 
 
+def explain(
+    bot: str = typer.Option("", "--bot", "-b",
+                            help="Etiqueta del bot (v5, v6, legacy...). Vacio = cualquiera."),
+    date: str = typer.Option("", "--date", "-d",
+                             help="Filtra por fecha YYYY-MM-DD. Vacio = el mas reciente."),
+):
+    """Explica en texto plano UN rebalanceo ya ejecutado (lee swing_rebalances.jsonl)."""
+    from core.database import get_session, init_db
+    from tools.decision_explain import explain_rebalance, find_rebalance
+    from tools.paper_bots import resolve_bot
+    from tools.paper_snapshot import discover_bots, read_rebalances
+
+    init_db()
+    with get_session() as s:
+        bots = discover_bots(s)
+    rebalances = read_rebalances()
+
+    strategy_name = None
+    if bot:
+        matched = resolve_bot(bot, bots)
+        if matched is None:
+            labels = ", ".join(b["label"] for b in bots) or "ninguno"
+            console.print(f"[red]Bot '{bot}' no encontrado.[/red] Bots: {labels}")
+            raise typer.Exit(1)
+        strategy_name = matched["name"]
+
+    entry = find_rebalance(rebalances, strategy=strategy_name, date=date or None)
+    if entry is None:
+        console.print("[yellow]Sin rebalanceos que coincidan con el filtro.[/yellow]")
+        raise typer.Exit(1)
+    console.print(explain_rebalance(entry))
+
+
 def register(app: typer.Typer) -> None:
     app.command(name="paper-status")(paper_status)
     app.command(name="anomaly-check")(anomaly_check)
     app.command(name="forward-report")(forward_report)
     app.command(name="data-audit")(data_audit)
+    app.command(name="explain")(explain)

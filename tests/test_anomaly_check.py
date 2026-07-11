@@ -84,3 +84,42 @@ def test_dedup_resends_when_message_changes():
     a2 = ac.Alert("HIGH", "bot-stale-tick", "msg-B", "act", bot="v5")
     again, _ = ac.filter_new_alerts([a2], state, now=NOW)
     assert again == [a2]
+
+
+def test_daily_check_stale_flagged():
+    """Regresion 2026-07-11: el cron perdio +x 5 dias y /parity seguia mostrando 'OK' en verde
+    porque solo miraba el resultado, nunca la antiguedad del ultimo check."""
+    alerts = ac.check_anomalies([_snap()], price=Decimal("40000"), now=NOW,
+                                daily_check_age_min=ac.DAILY_CHECK_STALE_MIN + 1)
+    a = next(a for a in alerts if a.code == "daily-check-stale")
+    assert a.severity == "HIGH"
+
+
+def test_daily_check_fresh_not_flagged():
+    alerts = ac.check_anomalies([_snap()], price=Decimal("40000"), now=NOW,
+                                daily_check_age_min=60.0)
+    assert not any(a.code == "daily-check-stale" for a in alerts)
+
+
+def test_daily_check_none_not_flagged():
+    """None = no evaluado (p.ej. dev sin cron) -> no debe fabricar una alerta falsa."""
+    alerts = ac.check_anomalies([_snap()], price=Decimal("40000"), now=NOW,
+                                daily_check_age_min=None)
+    assert not any(a.code == "daily-check-stale" for a in alerts)
+
+
+def test_daily_check_age_minutes_from_blocks():
+    blocks = [
+        {"ts": "2026-07-06T12:10:01+00:00", "parity": True, "target": "0.2000"},
+    ]
+    age = ac.daily_check_age_minutes(blocks, NOW)
+    # NOW = 2026-07-20T12:00, ultimo check 2026-07-06T12:10 -> ~14 dias
+    assert age > 60 * 24 * 13
+
+
+def test_daily_check_age_minutes_empty_blocks():
+    assert ac.daily_check_age_minutes([], NOW) is None
+
+
+def test_daily_check_age_minutes_bad_timestamp():
+    assert ac.daily_check_age_minutes([{"ts": "?"}], NOW) is None

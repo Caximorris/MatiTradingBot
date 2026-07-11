@@ -25,6 +25,10 @@ V6_DIVERGENCE_DATE = datetime(2026, 10, 7, tzinfo=timezone.utc)
 ANOMALY_STATE = RUNTIME / "anomaly_state.json"
 DEFAULT_DEDUP_TTL_MIN = 360   # 6h: misma alerta no se reenvia antes de esto (salvo cambio de msg)
 
+# El cron corre 1x/dia (12:10 UTC). 26h da margen sin ser tan laxo como para tardar un dia
+# entero en avisar. Mismo umbral que funding_refresh.py --stale-hours (misma cadencia).
+DAILY_CHECK_STALE_MIN = 26 * 60
+
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
@@ -51,10 +55,13 @@ def _sev_rank(a: Alert) -> int:
 
 def check_anomalies(snaps: list[dict], *, price: Decimal | None,
                     now: datetime | None = None,
-                    data_gaps: int | None = None) -> list[Alert]:
+                    data_gaps: int | None = None,
+                    daily_check_age_min: float | None = None) -> list[Alert]:
     """Evalua todas las reglas y devuelve alertas ordenadas por severidad (mas grave primero).
 
     `data_gaps`: huecos de vela detectados por el data-audit (plan T7.1); None = no evaluado.
+    `daily_check_age_min`: minutos desde el ultimo bloque de daily_checks.log (ver
+    `daily_check_age_minutes`); None = no evaluado (p.ej. corriendo en dev sin cron).
     """
     now = now or datetime.now(timezone.utc)
     alerts: list[Alert] = []
@@ -65,6 +72,20 @@ def check_anomalies(snaps: list[dict], *, price: Decimal | None,
             "HIGH", "okx-price-unavailable",
             "Ticker spot de OKX no disponible (posible 403/rate-limit/outage).",
             "Revisar conectividad OKX; el servicio reintenta. Clasificar como infra (contrato 6b).",
+        ))
+
+    # --- Cron de chequeos diarios (parity F15) sin correr ---
+    # Bug real 2026-07-11: deploy/daily_checks.sh perdio el bit +x en un commit y el cron
+    # fallo en silencio 5 dias sin ningun error visible (cron loguea el intento igual, y sin
+    # MTA en la VM el stderr no llega a ningun lado). /parity mostraba "OK" en verde igual,
+    # porque solo mira el ULTIMO resultado, nunca su antiguedad.
+    if daily_check_age_min is not None and daily_check_age_min > DAILY_CHECK_STALE_MIN:
+        alerts.append(Alert(
+            "HIGH", "daily-check-stale",
+            f"daily_checks.log sin entrada nueva hace {daily_check_age_min / 60:.1f}h "
+            f"(>{DAILY_CHECK_STALE_MIN / 60:.0f}h esperadas). El cron probablemente no corrio.",
+            "Revisar 'crontab -l' y permisos (+x) de deploy/daily_checks.sh en la VM. "
+            "La racha de paridad F15 no avanza mientras tanto.",
         ))
 
     # --- Huecos de datos (si el data-audit los paso) ---
@@ -150,6 +171,21 @@ def check_anomalies(snaps: list[dict], *, price: Decimal | None,
 def _liveness() -> int:
     from tools.paper_snapshot import LIVENESS_MAX_AGE_MIN
     return LIVENESS_MAX_AGE_MIN
+
+
+def daily_check_age_minutes(blocks: list[dict], now: datetime) -> float | None:
+    """Minutos desde el ultimo bloque de daily_checks.log (parseado con
+    tools.tg_views.parse_daily_checks). None si no hay ningun bloque."""
+    if not blocks:
+        return None
+    last = blocks[-1]
+    try:
+        ts = datetime.fromisoformat(last["ts"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (now - ts).total_seconds() / 60
 
 
 # ---------------------------------------------------------------------------
