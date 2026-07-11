@@ -141,15 +141,20 @@ def get(name: str) -> StrategyMeta:
 def resolve(bot_name: str) -> StrategyMeta | None:
     """
     Resuelve un nombre de BotState como 'swing_allocator_btc_usdt'
-    buscando por prefijo. Devuelve None si no hay coincidencia.
+    buscando por prefijo + '_' (limite de palabra) y quedandose con el candidato
+    mas largo. El limite de palabra evita falsos positivos como el alias corto
+    'pro' (pro_trend) casando contra 'prop_swing_btc_usdt' (bug real detectado
+    2026-07-11: resolvia a pro_trend en vez de prop_swing por orden de insercion).
+    Devuelve None si no hay coincidencia.
     """
     key = bot_name.lower()
     if key in _BY_NAME:
         return _BY_NAME[key]
+    best: tuple[int, StrategyMeta] | None = None
     for candidate, meta in _BY_NAME.items():
-        if key.startswith(candidate):
-            return meta
-    return None
+        if key.startswith(candidate + "_") and (best is None or len(candidate) > best[0]):
+            best = (len(candidate), meta)
+    return best[1] if best else None
 
 
 def display(name: str) -> str:
