@@ -54,6 +54,20 @@ def start(
 
     clients: dict[tuple[str, str], tuple[object, RiskManager]] = {}
     for name, symbol, config in bot_configs:
+        if config.get("execution") == "okx_demo":
+            # Ordenes contra la cuenta DEMO real de OKX (data de mercado sigue siendo real).
+            # Si falla (credenciales demo ausentes/invalidas), se salta SOLO este bot: los
+            # demas siguen arrancando.
+            try:
+                from core.okx_demo_client import OKXDemoClient
+                mirror = str(config.get("paper_portfolio_id") or "okx_demo")
+                bot_client = OKXDemoClient(settings, mirror_name=mirror)
+                bot_risk = RiskManager(client=bot_client, app_settings=settings)
+            except Exception as exc:
+                console.print(f"  [red][SKIP][/red] {name}: OKXDemoClient no disponible — {exc}")
+                continue
+            clients[(name, symbol)] = (bot_client, bot_risk)
+            continue
         portfolio_id = config.get("paper_portfolio_id") if settings.is_paper else None
         if portfolio_id:
             bot_client = _make_client(settings, paper_state_name=str(portfolio_id))
@@ -81,6 +95,8 @@ def start(
         return job
 
     for name, symbol, config in bot_configs:
+        if (name, symbol) not in clients:
+            continue   # bot saltado arriba (p.ej. demo sin credenciales)
         job_id = f"{name}_{symbol}".replace("-", "_")
         scheduler.add_job(_make_job(name, symbol, config), "interval",
                           seconds=tick, id=job_id, max_instances=1)

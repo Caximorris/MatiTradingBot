@@ -86,6 +86,12 @@ class Settings:
     fiscal_year: int
     cost_basis_method: str     # "FIFO"
 
+    # Credenciales de DEMO trading OKX (solo bots con execution=okx_demo). Es una API key
+    # DISTINTA de la real: se crea dentro del modo demo trading de OKX. Vacias por defecto.
+    okx_demo_api_key: str = ""
+    okx_demo_secret_key: str = ""
+    okx_demo_passphrase: str = ""
+
     @property
     def is_paper(self) -> bool:
         return self.trading_mode == "paper"
@@ -176,6 +182,9 @@ def load_settings() -> Settings:
         daily_loss_limit_pct=_decimal_env("DAILY_LOSS_LIMIT_PCT", "5.0"),
         fiscal_year=_int_env("FISCAL_YEAR", 2025),
         cost_basis_method=_validate_cost_method(_optional("COST_BASIS_METHOD", "FIFO")),
+        okx_demo_api_key=_optional("OKX_DEMO_API_KEY"),
+        okx_demo_secret_key=_optional("OKX_DEMO_SECRET_KEY"),
+        okx_demo_passphrase=_optional("OKX_DEMO_PASSPHRASE"),
     )
 
 
