@@ -2,6 +2,13 @@
 
 Este archivo es el punto de arranque para continuar mañana desde otro PC.
 
+> **ACTUALIZACION 2026-07-11:** este handoff es un snapshot del 2026-07-05 (rama ya mergeada a
+> `main`). El estado VIVO esta en `SESSION.md` (bloques "SEMANA 1 DEL FORWARD-TEST" y "CLIENTE
+> OKX DEMO TRADING" + "SIGUIENTE PASO"). Resumen de lo ocurrido desde este snapshot: 2 bugs de
+> infra de la semana 1 arreglados (`973d433` cron +x, `4b1425f` registry resolve), suite
+> T5.1/T11.1 + `/audit` (`7107631`, sin push), y cliente demo OKX construido sin commit —
+> pendiente deploy en la VM con API key demo. Tests: 210 passed. Trabajar sobre `main`.
+
 ## 1. Estado rapido
 
 - Rama de trabajo: `codex-handoff-prop-cft-swing-v6`

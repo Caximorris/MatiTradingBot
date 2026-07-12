@@ -22,11 +22,10 @@
   dinamicamente desde BotState (sin hardcodear bots).
 - La tarea de "escalabilidad" es DOCUMENTAR estos 3 puntos de extension, no construir nada.
 
-## Codigo muerto confirmado (borrable, git lo preserva)
-- `execution/order_manager.py` — 0 referencias en todo el repo (ni tests). Capa de ejecucion live
-  temprana, superseeded por el runtime actual del bot. **Pendiente OK de Matias para borrar.**
-- `execution/position_tracker.py` — idem, 0 referencias. **Pendiente OK.**
-  (Verificar antes de borrar si se quieren como base para el modo live real futuro.)
+## Codigo muerto confirmado — HECHO (commit `5ec7a97`, 2026-07-06)
+- `execution/order_manager.py` y `execution/position_tracker.py` borrados (0 referencias;
+  recuperables por git). Esta entrada quedo desactualizada hasta 2026-07-11 — el borrado ya
+  habia ocurrido el mismo dia en que se escribio el backlog.
 
 ## Reorganizacion diferida (requiere auditar referencias — cron VM + skills usan rutas)
 - `tools/` (34 scripts): separar operativos de research. NO mover sin auditar `deploy/daily_checks.sh`,

@@ -35,6 +35,27 @@ Every task uses this block:
 
 ## Progress log
 
+- **2026-07-11** — Week-1 forward-test review + second observability wave. Shipped: T5.1
+  (`tools/decision_explain.py` + `main.py explain`), T11.1 (`EXPERIMENTS.md`), plus an
+  UNPLANNED T13 extension born from a real incident: `daily-check-stale` rule in
+  `anomaly_check.py`, staleness warning in `/parity`, and a new `/audit` Telegram command
+  running the same engine. 210/210 tests.
+  - **INCIDENT (infra, contract 6b):** `deploy/daily_checks.sh` lost its +x bit in commit
+    `2019859` (2026-07-06) — cron failed silently for 5 days, `/parity` stayed green because it
+    only looked at the last result, never its age. F15 streak restarted 2026-07-11. Fixes:
+    `973d433` (mode bit in git) + the detection layer above.
+  - **INCIDENT (infra):** `registry.resolve()` bare-prefix bug — `prop_swing_btc_usdt` resolved
+    to `pro_trend` via short alias `pro`; the "prop" bot ran the wrong (frozen) strategy for 5
+    days with default config. 0 trades, no damage. Fix `4b1425f` (word boundary + longest match).
+  - **MEASURED (settles an asserted-but-unmeasured claim):** OKX demo-trading price feed vs real,
+    BTC-USDT 1H — open/close track close, but high/low inflated $80–250/candle. The "sandbox
+    breaks parity" rule is now empirical fact, not just design lore.
+  - **NEW (pre-live September):** `core/okx_demo_client.py` — hybrid client (real market data
+    flag=0 / real authenticated orders on OKX demo flag=1) + `tools/okx_demo_setup.py` + routing
+    in `cli/live_cmds.py`. First-ever exercise of the authenticated order path. Found P1 bug in
+    the (never-run) `OKXClient._live_place_order`: missing `tgtCcy=base_ccy` means a spot market
+    BUY interprets `sz` as USDT, not BTC. Demo client sets it; OKXClient fix pending own commit.
+
 - **2026-07-06** — Phase 1 + first observability wave shipped (read-only, forward-safe):
   T3.1, T4.2, T4.1, T13.1, T6.1, T7.1. 26 new tests (179/179 total). New files:
   `FORWARD_TEST_CONTRACT.md`, `tools/paper_snapshot.py`, `tools/anomaly_check.py`,
@@ -232,9 +253,12 @@ events where a rebalance actually executed (INIT/BUY/SELL), with fields
 for a SKIPPED decision or the signal state on a no-op tick. So "why NO rebalance" cannot be
 reconstructed from current logs.
 
-- [ ] **T5.1 — Explain a KNOWN rebalance from existing journals (read-only, ship first)**
+- [x] **T5.1 — Explain a KNOWN rebalance from existing journals (read-only, ship first)**
     - Priority:            P1
-    - Status:              Not started
+    - Status:              DONE 2026-07-11 (`tools/decision_explain.py` + `main.py explain
+                           [--bot] [--date]` in `cli/paper_cmds.py`; 6 tests). Cooldown/threshold
+                           NOT in output — the journal doesn't store them (that's T5.2's gap,
+                           called out explicitly in the rendered text).
     - Forward-test safe:   YES (observability; parses `swing_rebalances.jsonl` + swing journals)
     - Risk:                Low
     - Depends on:          none
@@ -430,9 +454,12 @@ aggregate metrics.
 
 Track every research experiment + decision so failed ideas are not silently repeated.
 
-- [ ] **T11.1 — `EXPERIMENTS.md` registry (+ optional JSONL mirror)**
+- [x] **T11.1 — `EXPERIMENTS.md` registry (+ optional JSONL mirror)**
     - Priority:            P1
-    - Status:              Not started
+    - Status:              DONE 2026-07-11 (`EXPERIMENTS.md` at repo root: 3 accepted, 5
+                           rejected, 5 parked, seeded from SESSION.md "Descartado" lists +
+                           `docs/swing/v6-plan.md`; template block included. No JSONL mirror —
+                           Markdown-only per the recommendation below).
     - Forward-test safe:   YES (docs)
     - Risk:                Low
     - Depends on:          none

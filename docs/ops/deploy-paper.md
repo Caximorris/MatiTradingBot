@@ -79,6 +79,8 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 | Target y senales AHORA (calculo live) | Telegram `/signals` (~1 min; corre parity check) |
 | Paridad F15: ultimo check y racha /30 | Telegram `/parity` (lee daily_checks.log) |
 | Salud VM (servicios, RAM, disco, errores) | Telegram `/health` |
+| Red-flags de infra/datos/estado (incl. cron viejo) | Telegram `/audit` (= CLI `anomaly-check`) |
+| "Por que rebalanceo?" en lenguaje llano | SSH: `python main.py explain --bot v5` |
 | Logs sin SSH | Telegram `/logs` o `/logs 100` |
 | Backup DB+estado al chat | Telegram `/backup` (ademas automatico semanal) |
 | Reiniciar el bot sin SSH | Telegram `/restart` |
@@ -147,6 +149,33 @@ Chequeos:
 .venv/bin/python main.py bot list
 ```
 
+## Bot demo OKX en la misma VM (pre-live septiembre 2026)
+
+Cuarto bot (label `demo`): misma estrategia v5 congelada, pero las ordenes van a la cuenta
+DEMO real de OKX (header `x-simulated-trading:1`) via `core/okx_demo_client.py`. Ejercita el
+camino de ordenes AUTENTICADO (firma, params, errores) que ningun otro bot toca. El market
+data sigue siendo el REAL (flag=0) → la paridad F15 no se ve afectada. Medido 2026-07-11: el
+feed de precios demo infla high/low $80-250 por vela 1H — jamas usarlo para señales.
+
+Requisitos (manuales):
+
+1. OKX → cambiar a modo **Demo trading** → crear una API key DEMO (las keys de la cuenta real
+   NO funcionan con el header de simulacion).
+2. En el `.env` de la VM: `OKX_DEMO_API_KEY`, `OKX_DEMO_SECRET_KEY`, `OKX_DEMO_PASSPHRASE`.
+3. Ideal: cuenta demo solo con USDT. Si ya tiene BTC, el bot salta el INIT y rebalancea directo
+   en la primera evaluacion 4H.
+
+```bash
+.venv/bin/python tools/okx_demo_setup.py --enable
+sudo systemctl restart matibot
+```
+
+Verificacion: `/bots` muestra el bot `demo`; su cartera se espeja en
+`data/runtime/paper_state_okx_demo.json` (espejo read-only del balance en OKX — editarlo no
+cambia nada), asi que `/status demo`, `/report demo`, `/equity demo` funcionan igual que con
+los demas. Si las credenciales demo faltan o son invalidas, el arranque SALTA solo ese bot
+(los otros tres arrancan normal) y lo dice en el log de arranque.
+
 ## Criterios de cierre (de PLAN_MEJORA_AUDITORIA.md)
 
 - **F13 (smoke 24h)**: 24h sin excepciones en `journalctl -u matibot`, target logueado en
@@ -194,6 +223,24 @@ Chequeos:
       INIT 0%->60% + SELL 60%->20% (regime_bear,halving_bear_onset) — coincide con parity F15.
 - [ ] Smoke 24h (F13) — corre desde 2026-07-04 08:58 UTC; revisar journalctl 2026-07-05.
       Superado: ____ — fecha inicio 30 dias: ____
-- [ ] 30 dias de paridad (F15) — sin PARITY_FAIL desde: ____
+- [ ] 30 dias de paridad (F15) — sin PARITY_FAIL desde: **2026-07-11** (racha anterior de 3
+      invalidada por el incidente del cron, ver abajo; nunca hubo PARITY_FAIL, solo dias sin medir)
 - [ ] F19 sin alertas al cierre de la ventana
+- [ ] Bot demo OKX registrado y activo (codigo listo 2026-07-11; falta API key demo en .env,
+      setup y restart — ver seccion "Bot demo OKX")
 - Incidencias/pausas: (anotar fecha y motivo)
+  - **2026-07-07 → 2026-07-11 — cron de daily_checks sin correr (INFRA, contrato 6b).**
+    `deploy/daily_checks.sh` perdio el bit +x en el commit `2019859` (2026-07-06); cron
+    intentaba ejecutarlo y fallaba EN SILENCIO (sin MTA no hay mail de error; el log de cron
+    registra el intento igual). 5 dias sin check de paridad — la estrategia NUNCA fallo, solo
+    dejo de medirse. Fix: `973d433` (+x versionado en git) + chmod en la VM. Deteccion añadida
+    para que no se repita: alerta `daily-check-stale` en anomaly-check/`/audit` + `/parity`
+    marca VIEJO si el ultimo check tiene >26h.
+  - **2026-07-06 → 2026-07-11 — bot "prop" corria la estrategia equivocada (INFRA).**
+    `strategies/registry.resolve()` casaba por prefijo sin limite de palabra:
+    `prop_swing_btc_usdt` resolvia al alias `pro` (pro_trend) → 5 dias corriendo Pro Trend v13
+    con config default en vez de PropSwing (0 trades, 0 daño — verificado en DB). Fix `4b1425f`
+    (limite `_` + match mas largo + tests). PropSwing real re-arrancado 2026-07-11.
+  - **2026-07-09 14:37-15:47 UTC — stall del scheduler (INFRA, autorecuperado).** Un timeout de
+    `get_ohlcv` colgo un tick ~70 min (job skips por max_instances=1); se recupero solo y no
+    cayo en frontera 4H. Sin accion.

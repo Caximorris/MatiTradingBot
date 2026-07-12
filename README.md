@@ -24,15 +24,19 @@ and reporting to a Telegram bot. Solo project, ~18 working sessions of iteration
 
 ### The one design decision that matters
 
-A strategy talks to a *client* that fetches candles and places orders. There are two
+A strategy talks to a *client* that fetches candles and places orders. There are three
 implementations of that client:
 
-- `OKXClient` (`core/exchange.py`, 771 lines) — the real exchange.
+- `OKXClient` (`core/exchange.py`, 771 lines) — the real exchange (live orders, or local
+  paper simulation with real market data).
 - `BacktestClient` (`core/backtest.py`) — fakes the exact same interface using historical data.
+- `OKXDemoClient` (`core/okx_demo_client.py`) — hybrid: real market data (parity with backtest
+  intact) + real authenticated orders against OKX's **demo trading** account. The pre-live
+  dress rehearsal: it exercises auth, order params, and error handling with fake funds.
 
 The strategy code **cannot tell which one it's talking to**, so the identical strategy runs in a
-backtest and in live paper trading with **zero code changes**. That's the single most important
-architectural bet in the repo.
+backtest, in local paper trading, and against OKX's demo engine with **zero code changes**. That's
+the single most important architectural bet in the repo.
 
 ```
 OKX API → OHLCV candles → disk cache → fed bar-by-bar to strategy
@@ -59,7 +63,7 @@ system against the two ways quant backtests deceive you:
   candle-for-candle across runs and machines.
 
 Money is `Decimal` everywhere (never `float`). Dates are UTC in storage, converted to Europe/Madrid
-only in reporting. 179 passing tests.
+only in reporting. 210 passing tests.
 
 ---
 
@@ -163,9 +167,10 @@ python main.py random-backtest --strategy swing --windows 10 --months 24  # rand
 
 # Forward-test observability (read-only, never touches the strategy)
 python main.py paper-status            # control center for v5/v6/legacy bots
-python main.py anomaly-check           # infra/data/state red-flags
+python main.py anomaly-check           # infra/data/state red-flags (incl. stale-cron detection)
 python main.py forward-report          # metrics from post-start data only
 python main.py data-audit              # OHLCV cache integrity (never re-downloads)
+python main.py explain --bot v5        # plain-language "why" of an executed rebalance
 
 # Spanish IRPF tax report (FIFO, Excel + JSON)
 python main.py report --year 2025
@@ -181,11 +186,15 @@ python tools/journal_summary.py <path>
 Paper bots run 24/7 on a GCP free-tier VM, each with an isolated fake wallet
 (`paper_state_<id>.json`): three Swing variants (**v5 / v6 / legacy**) plus the **Prop/CFT**
 candidate (its own `/prop` controls and CFT rule monitor). They're controlled remotely via a
-multi-bot Telegram interface (`/status`, `/report`, `/equity`, `/bots`, `/prop`) that pushes
-rebalance alerts and daily heartbeats. systemd (`Restart=always`) keeps the processes alive; a daily
-cron runs parity + degradation checks.
+multi-bot Telegram interface (`/status`, `/report`, `/equity`, `/bots`, `/prop`, `/audit`) that
+pushes rebalance alerts and daily heartbeats. systemd (`Restart=always`) keeps the processes alive;
+a daily cron runs parity + degradation checks, and `/audit` runs the anomaly engine on demand.
 
-No API keys live on the server (paper uses only public OKX data). Runbook: [`docs/ops/deploy-paper.md`](docs/ops/deploy-paper.md).
+The only credentials on the server are the Telegram token and (for the demo bot) an OKX
+**demo-trading** API key — fake funds only, created inside OKX's demo mode. The path to real money
+(planned September 2026) adds a fourth bot (`demo`) that runs the same frozen v5 strategy but
+places its orders on OKX's demo engine, exercising the real authenticated order path before a
+single real dollar is at stake. Runbook: [`docs/ops/deploy-paper.md`](docs/ops/deploy-paper.md).
 
 ---
 
@@ -208,6 +217,7 @@ No API keys live on the server (paper uses only public OKX data). Runbook: [`doc
 |---|---|
 | [`docs/`](docs/) | Index of all deeper docs (design, audits, ops, forward-test, archive) |
 | [`CLAUDE.md`](CLAUDE.md) / [`SESSION.md`](SESSION.md) | Living project brain: conventions, invariants, current state |
+| [`EXPERIMENTS.md`](EXPERIMENTS.md) | Experiment registry: every accepted / rejected / parked strategy idea |
 | [`docs/handoff.md`](docs/handoff.md) | Full context to resume from another machine |
 | [`docs/forward-test/contract.md`](docs/forward-test/contract.md) | Frozen rules of the forward test (start 2026-07-04) |
 | [`docs/swing/plan.md`](docs/swing/plan.md) / [`docs/swing/v6-plan.md`](docs/swing/v6-plan.md) | Allocator design + go/no-go criteria |
@@ -220,7 +230,7 @@ No API keys live on the server (paper uses only public OKX data). Runbook: [`doc
 
 Python 3.12 · typer + rich (CLI) · pandas + pandas-ta · python-okx · aiohttp / urllib
 (*deliberately not* `requests`) · SQLAlchemy + SQLite · python-telegram-bot · APScheduler ·
-`Decimal` for all money · 179 passing tests.
+`Decimal` for all money · 210 passing tests.
 
 > **The honest summary:** someone spent months building rigorous machinery to answer *"does this BTC
 > allocation strategy actually work, or am I fooling myself?"* — got to "+85% CAGR that survives the

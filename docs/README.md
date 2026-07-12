@@ -1,9 +1,10 @@
 # docs/
 
 Deeper documentation for MatiTradingBot. The repo root keeps only the front door (`README.md`), the
-license, and the AI-agent working files (`CLAUDE.md`, `AGENTS.md`, `SESSION.md`) that the harness
-loads on startup. Everything else — design, audits, ops runbooks, forward-test rules, history — lives
-here.
+license, the experiment registry (`EXPERIMENTS.md` — accepted/rejected/parked strategy ideas; check
+it before proposing a change), and the AI-agent working files (`CLAUDE.md`, `AGENTS.md`,
+`SESSION.md`) that the harness loads on startup. Everything else — design, audits, ops runbooks,
+forward-test rules, history — lives here.
 
 > Most of these are internal working notes (Spanish, session-driven). They're kept for
 > reproducibility and future iterations, not as polished prose.

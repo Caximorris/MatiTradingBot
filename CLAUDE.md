@@ -45,8 +45,13 @@ Archivos clave:
 - `strategies/macro_context.py` — MVRV + halving (CoinMetrics API)
 - `strategies/market_context.py` — DXY + NASDAQ + VIX (Yahoo Finance)
 - `strategies/funding_context.py` — funding rate historico OKX
+- `core/okx_demo_client.py` — cliente hibrido demo OKX: market data REAL (flag=0) + ordenes en la
+  cuenta DEMO (flag=1, credenciales `OKX_DEMO_*`). Bots con `execution=okx_demo` en config.
+  NUNCA usar flag=1 para market data: medido 2026-07-11, el feed demo infla high/low $80-250/vela 1H.
 - `reporting/swing_journal.py` — journal de rebalanceos (Swing Allocator)
 - `docs/swing/plan.md` — diseño completo y plan de validacion del Swing Allocator
+- `EXPERIMENTS.md` — registro de experimentos (aceptado/rechazado/parqueado). Buscar aqui ANTES
+  de proponer un cambio de estrategia.
 
 Archivos eliminados (no buscar): `strategies/mean_reversion.py`, `strategies/signal_follower.py`
 
@@ -164,6 +169,10 @@ python main.py paper-status [--watch 30]   # control center de v5/v6/legacy
 python main.py anomaly-check [--telegram]  # red-flags de infra/datos/estado (dedup)
 python main.py forward-report [--json|--out F|--telegram]  # solo datos post-inicio forward-test
 python main.py data-audit [--live]         # integridad del cache OHLCV (nunca re-descarga)
+python main.py explain [--bot demo] [--date 2026-07-04]    # explica un rebalanceo ejecutado (T5.1)
+
+# Bot demo OKX (ordenes reales al engine demo; data de mercado real, paridad intacta)
+python tools/okx_demo_setup.py --enable    # registra swing_allocator_demo_btc_usdt (label "demo")
 ```
 
 ---
