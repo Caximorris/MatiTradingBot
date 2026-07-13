@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from tools.swing_funding_overlay_screen import deduplicate_events, mark_extremes
+from tools.backtest_report import PRESETS
+from tools.okx_demo_setup import demo_config
+from tools.swing_paper_setup import _v5_config, _v6_config
+from tools.swing_v5_freeze_report import V5_CONFIG
+from tools.swing_v6_freeze_report import V6_CONFIG
 from tools.swing_v6_common import infer_phase, iter_start_dates
+from strategies.swing_allocator import SwingAllocatorConfig
 
 
 def test_infer_phase_prefers_rebalance_signal():
@@ -38,3 +44,22 @@ def test_funding_extremes_use_shifted_thresholds_and_dedup():
 
     deduped = deduplicate_events(events, dedup_days=2)
     assert list(deduped["signal"]) == ["funding_high", "funding_low"]
+
+
+def test_v6_default_presets_and_v5_rollback_are_explicit():
+    v5_configs = [V5_CONFIG, _v5_config(), PRESETS["v5"][1]]
+    for cfg in v5_configs:
+        assert cfg["use_phase_policy_router"] is False
+        assert cfg["use_funding_overlay"] is False
+
+    v6_configs = [V6_CONFIG, _v6_config(), demo_config(), PRESETS["v6"][1]]
+    defaults = SwingAllocatorConfig().to_dict()
+    for cfg in v6_configs:
+        assert cfg["use_phase_policy_router"] is True
+        assert cfg["phase_policy_profile"] == "v5_equiv"
+        assert cfg["use_funding_overlay"] is True
+        assert cfg["funding_overlay_phases"] == "accumulation"
+        assert cfg["funding_overlay_delta"] == 0.05
+        assert cfg["funding_overlay_lookback_settlements"] == 90
+        for key, value in V6_CONFIG.items():
+            assert defaults[key] == value

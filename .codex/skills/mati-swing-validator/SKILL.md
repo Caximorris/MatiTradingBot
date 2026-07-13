@@ -1,57 +1,71 @@
 ---
 name: mati-swing-validator
-description: Validate MatiTradingBot Swing Allocator experiments, journals, and strategy changes. Use when working on Swing Allocator, BTC allocation, drawdown/exposure tests, backtest comparison, `min_btc_pct`, `max_btc_pct`, `regime_off_on_bear_onset`, or any request to promote a Swing candidate to default.
+description: Validate MatiTradingBot Swing Allocator experiments, journals, and strategy changes. Use when working on Swing Allocator, BTC allocation, drawdown/exposure tests, backtest comparison, funding overlays, v5/v6, or any request to promote a Swing candidate to default.
 ---
 
 # Mati Swing Validator
 
 ## Required Context
 
-Read `AGENTS.md`, `SESSION.md`, `backtests/STRATEGY_VERSIONS.md`, and `SWING_PLAN.md` before changing code or drawing conclusions.
+Read `AGENTS.md`, `SESSION.md`, `backtests/STRATEGY_VERSIONS.md`, and
+`docs/swing/plan.md` before changing code or drawing conclusions. For v6 work, also read
+`docs/swing/v6-plan.md`.
 
 If the task is a comparison or validation, also read `references/swing-protocol.md`.
 
 ## Operating Rules
 
-- Treat Swing Allocator v3 as the current default.
+- Treat Swing Allocator v6-2 as the current frozen default; v5 is the rollback/control.
 - Do not touch `strategies/pro_trend.py` unless the user explicitly changes focus away from Swing.
+- The 2015-2026 window is closed for optimization. It measures robustness but cannot by itself promote a candidate.
 - Do not promote a candidate because it improves one window or one metric.
-- Do not compare runs with different candle counts, windows, or cost modes.
-- Use BTC 2015-01-01 to 2026-01-01 realistic as the primary window.
-- Use BTC 2018-01-01 to 2026-01-01 realistic as the secondary recent-market window.
+- Do not compare runs with different candle counts, windows, cost modes, or execution paths.
+- Use BTC 2015-01-01 to 2026-01-01 realistic as the primary historical anchor.
+- Use BTC 2018-01-01 to 2026-01-01 realistic as the secondary historical anchor.
 - Run conservative costs for final candidates.
-- Report `final_btc_qty`, `bnh_initial_btc`, and `btc_vs_bnh_ratio` for every Swing candidate.
-- Treat PF as fragile; make CAGR and Max DD the primary anchors.
+- Require forward/paper evidence after 2026-01-01 before future promotions. v6-2 is a documented,
+  user-approved paper-only exception because v5 and v6 started forward validation together.
+- Report `final_btc_qty`, `bnh_initial_btc`, and `btc_vs_bnh_ratio` for every candidate.
+- Treat PF as fragile; make CAGR and Max DD the primary historical anchors.
 
 ## Current Baseline
 
-Swing Allocator v3:
+Swing Allocator v6-2, frozen by explicit user decision on 2026-07-13:
 
-- Config: `regime_off_on_bear_onset=True`, `bull_peak_ema50_cap_enabled=True`, `bull_peak_ema50_cap=0.85`, `use_regime=True`, `use_halving=True`, other signal toggles false.
-- BTC 2015-2026 realistic: $6.998M, CAGR +81.39%, Max DD -53.64%, PF 6.10, `btc_vs_bnh_ratio=0.8531`.
-- BTC 2018-2026 realistic: $174.8k, CAGR +42.99%, Max DD -53.42%, PF 5.55, `btc_vs_bnh_ratio=0.9140`.
-- BTC 2015-2026 conservative: $6.806M, CAGR +80.93%, Max DD -53.69%, PF 5.84, `btc_vs_bnh_ratio=0.8301`.
-- Risk note: Q4 2025 is worse than v2 (+$290k -> -$42.6k in the 2015 realistic run), so do not add another late-cycle flag without per-cycle attribution.
-- Rollback v2: `--config '{"bull_peak_ema50_cap_enabled": false}'`.
-- Rollback v1: `--config '{"regime_off_on_bear_onset": false}'`.
+- Config: v5 plus `use_phase_policy_router=True`, `phase_policy_profile="v5_equiv"`,
+  `use_funding_overlay=True`, delta `0.05`, p10/p90, TTL/dedup 7 days, only in
+  `accumulation`; `daily_on_closed_only=True`; `min_btc_pct=0.20`,
+  `delta_bear_onset=-0.30`, `regime_off_on_bear_onset=True`,
+  `bull_peak_ema50_cap_enabled=True`, `bull_peak_ema50_cap=0.85`,
+  `use_regime=True`, `use_halving=True`, other signal toggles false.
+- BTC 2015-2026 realistic: $9.505M, CAGR +86.51%, Max DD -52.73%,
+  70 ACB rebalances, `btc_vs_bnh_ratio=0.8499`.
+- BTC 2018-2026 realistic: $229.0k, CAGR +47.90%, Max DD -53.72%,
+  53 ACB rebalances, `btc_vs_bnh_ratio=0.8785`.
+- BTC 2015-2026 conservative: $9.255M, CAGR +86.06%, Max DD -52.88%,
+  70 ACB rebalances, `btc_vs_bnh_ratio=0.8281`.
+- Rollback to v5: `--config '{"use_phase_policy_router": false, "use_funding_overlay": false}'`.
 
-## Candidate Queue
+## Promotion Record
 
-Recent decision:
+- v6-1 phase-policy router reproduced v5 exactly.
+- v6-2 adds funding overlay `+0.05`, p10/p90, TTL 7 days, only in `accumulation`.
+- v6-2 is `ADOPT`; v5 remains an isolated paper control and exact config rollback.
+- v5 and v6 should be identical during `bear_onset`; expected first live divergence is around
+  2026-10-07. Funding cache freshness on the VM must be reliable before that date.
 
-- `bull_peak_ema50_cap_enabled=True`, cap `0.85`: adopted as v3. It caps target exposure only during `bull_peak` after BTC loses the previous full day's EMA50D. It keeps `min_btc_pct=0.30`, improves 2015 realistic and 2018 realistic anchors, and survives 2015 conservative costs.
-- `min_btc_pct=0.0`: passes USDT/DD anchors in 2015 realistic, 2018 realistic, and 2015 conservative, but sharply reduces final BTC vs B&H versus v2. User chose to keep one strategy and refine v2 instead of splitting into a USDT-max variant. Do not promote it as default.
+Discarded or closed:
 
-Discarded:
+- Global `max_btc_pct=0.90/0.80/0.70`, all-or-nothing allocation, `min_btc_pct=0.0`
+  as default, bull-peak cap latch, suppressing all regime signals in `bear_onset`, and shorts/perps.
+- Max-DD and Q4-2025 parameter optimization fronts are closed without new forward evidence.
 
-- Global `max_btc_pct=0.90`, `0.80`, `0.70`: lower exposure but kill CAGR.
-- Todo-o-nada allocation: worse than v2 and incompatible with gradual accumulation.
-- Suppress all regime signals during `bear_onset`: breaks 2022 by disabling `regime_bear`.
+## Current Focus
 
-Next focus:
-
-- Do not add more flags immediately. Audit `bull_peak_ema50_cap_*` events and compare v3 vs v2 by cycle first.
-- Keep future changes isolated, reversible, and compatible with `min_btc_pct=0.30`.
+- Finish F13/F15/F19 forward validation for the default and execution stack.
+- Keep v5 and v6 isolated in paper so the rollback control remains measurable after divergence.
+- Do not add flags or tune thresholds on the closed historical sample.
+- Structural simplifications are allowed only when behavior is equivalent or anchors do not worsen.
 
 ## Output Shape
 
@@ -62,13 +76,14 @@ For comparisons, produce a table with:
 - Config
 - Window
 - Cost mode
-- Candle count, if available
+- Candle count
 - Final balance
 - CAGR
 - Max DD
 - PF
 - Rebalances/trades
 - `final_btc_qty`
+- `bnh_initial_btc`
 - `btc_vs_bnh_ratio`
 - Verdict
 

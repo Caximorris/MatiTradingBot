@@ -1,8 +1,8 @@
 # Swing Allocator v6 — Plan de Investigacion desde PropSwing/CFT
 
 **Fecha:** 2026-07-05  
-**Estado:** PLANNING. No cambia el default.  
-**Baseline vigente:** Swing Allocator v5 post-audit, congelado.  
+**Estado:** ADOPTADO y CONGELADO como default (decision explicita 2026-07-13).
+**Baseline de rollback:** Swing Allocator v5 post-audit.
 **Objetivo:** definir si las lecciones de PropSwing/CFT pueden convertirse en un Swing v6 con
 mejores resultados reales sin romper la tesis principal: acumular BTC y mantener una sola
 estrategia BTC/USDT spot.
@@ -17,8 +17,9 @@ allocator spot long-only. Lo transferible es el **metodo**: phase-router, analis
 inicio, deduplicacion de senales, funding extremo como alfa candidato y monitorizacion de
 degradacion.
 
-[Certain] No hay permiso metodologico para promover v6 solo porque mejore 2015-2026. Esa ventana
-esta cerrada para optimizacion. Cualquier v6 debe:
+[Certain] La ventana 2015-2026 sigue cerrada para nuevas optimizaciones. V6-2 fue promovido como
+excepcion explicita y acotada: v5/v6 iniciaron paper simultaneamente, v6 paso todas las pruebas
+disponibles y el cambio solo selecciona el default paper; no autoriza live. Cualquier sucesor debe:
 
 - no empeorar las anclas v5 en ventanas cerradas;
 - aportar evidencia estructural o forward/paper posterior a 2026-01-01;
@@ -89,7 +90,7 @@ Candidatos estructurales despues de reproducir v5:
 | H1-C | `post_halving_bear_target` 0.60 -> 0.55/0.50 | Evitar quedar demasiado expuesto si el mercado falla temprano | probable coste de CAGR |
 | H1-D | `phase_policy_compact` | Refactor sin cambio de comportamiento | debe dar paridad exacta vs v5 |
 
-Veredicto inicial: `NEEDS_MORE_VALIDATION`. No adoptar por backtest cerrado.
+Veredicto inicial (2026-07-05): `NEEDS_MORE_VALIDATION`. Superado por la decision final de 2026-07-13.
 
 ### H2 — Funding Extreme Overlay
 
@@ -190,17 +191,18 @@ Salida minima:
 
 ## 4. Estructura tecnica propuesta
 
-### 4.1 Sin tocar default
+### 4.1 Default y rollback
 
-Todo nuevo debe entrar detras de flags default `False`. v5 debe seguir siendo default y reproducible.
+V6-2 usa ambos flags `True` por defecto. V5 debe seguir reproducible con ambos `False`; cualquier
+componente posterior a v6 debe entrar detras de un flag nuevo default `False`.
 
 Flags candidatos:
 
 ```python
-use_phase_policy_router: bool = False
+use_phase_policy_router: bool = True
 phase_policy_profile: str = "v5_equiv"
 
-use_funding_overlay: bool = False
+use_funding_overlay: bool = True
 funding_low_pctile: float = 0.05
 funding_high_pctile: float = 0.95
 funding_overlay_delta: float = 0.05
@@ -327,7 +329,8 @@ Un v6 candidato debe cumplir todo:
 5. No añade mas de 20% de rebalanceos frente a v5 salvo mejora clara de BTC acumulado.
 6. No depende de una sola mejora de Q4 2025.
 7. Sobrevive a phase shift +/-60d sin colapso de CAGR/DD.
-8. Tiene evidencia forward/paper posterior a 2026-01-01.
+8. Tiene evidencia forward/paper posterior a 2026-01-01. Excepcion consumida: V6-2 por decision
+   explicita del usuario; no reutilizar para V7 ni para ajustar thresholds sobre muestra cerrada.
 
 ---
 
@@ -337,7 +340,7 @@ Un v6 candidato debe cumplir todo:
 |---|---|---|---:|---|---|
 | V6-0 | v5 | Ninguno; baseline | P0 | Reproducir anclas | ejecutado |
 | V6-1 | v5 | `use_phase_policy_router=true`, `v5_equiv` | P0 | Paridad exacta | ejecutado; paridad exacta |
-| V6-2 | V6-1 | Funding overlay +0.05, ttl 7d, phases accumulation, p10/p90 | P1 | Mejor recompra sin exceso de churn | NEEDS_MORE_VALIDATION |
+| V6-2 | V6-1 | Funding overlay +0.05, ttl 7d, phases accumulation, p10/p90 | P1 | Mejor recompra sin exceso de churn | ADOPTADO; DEFAULT CONGELADO |
 | V6-3 | V6-1 | Funding overlay +0.10, ttl 7d, phases accumulation, p10/p90 | P2 | Variante agresiva | REJECT como default: exceso de churn |
 | V6-4 | V6-1 | Accumulation bear target 0.30/0.35 | P2 | Mas USDT si bear persiste | pendiente |
 | V6-5 | V6-1 | Bull peak neutral 0.75 | P3 | Menor exposicion tarde-ciclo | pendiente |
@@ -373,22 +376,41 @@ Rolling starts anuales 2018-2024:
 
 Decision: V6-2 p10/p90 `+0.05` es el candidato vivo. V6-3 `+0.10` no debe ser default sin evidencia forward o una regla adicional que controle churn.
 
+### Revalidacion 2026-07-13
+
+V5 y V6-2 se reejecutaron emparejados sobre las mismas velas del cache canonico (102931 filas
+OHLCV) y un cache Bybit reconstruido con 6904 settlements hasta 2026-07-13 16:00 UTC. Los tres
+anchors reprodujeron las cifras anteriores:
+
+- 2015-2026 realistic, 96907 velas de test: v5 $9.137M / 85.84% / -52.73% / 0.8171 BTC ratio;
+  v6 $9.505M / 86.51% / -52.73% / 0.8499.
+- 2018-2026 realistic, 70129 velas de test: v5 $219.8k / 47.14% / -53.72% / 0.8432;
+  v6 $229.0k / 47.90% / -53.72% / 0.8785.
+- 2015-2026 conservative, 96907 velas de test: v5 $8.897M / 85.40% / -52.88% / 0.7961;
+  v6 $9.255M / 86.06% / -52.88% / 0.8281.
+
+Ambas configuraciones mantuvieron el mismo churn (136 eventos; 70 ACB trades en 2015 y 103/53
+en 2018). V6-2 mejora las tres anclas y 7/8 rolling starts sin empeorar DD, churn ni BTC acumulado.
+El usuario aprobo reemplazar v5 porque ambos iniciaron paper al mismo tiempo y no existe ventaja
+forward previa de v5 que proteger. Veredicto: `ADOPT`; v6-2 queda congelado como default y v5 se
+mantiene como control/rollback. Durante `bear_onset` siguen siendo equivalentes.
+
 ---
 
 ## 7. Comandos propuestos
 
-Baseline:
+Default v6:
 
 ```bash
 python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --costs realistic
 python main.py backtest --strategy swing --from 2018-01-01 --to 2026-01-01 --costs realistic
 ```
 
-Paridad v5-equivalent:
+Rollback v5:
 
 ```bash
 python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --costs realistic \
-  --config '{"use_phase_policy_router": true, "phase_policy_profile": "v5_equiv"}'
+  --config '{"use_phase_policy_router": false, "use_funding_overlay": false}'
 ```
 
 Funding overlay candidato:
@@ -439,11 +461,11 @@ python tools/swing_paper_setup.py --include-v5 --enable
 
 ---
 
-## 9. Decision recomendada
+## 9. Decision
 
-[Likely] Si merece explorar v6, pero solo como plan despues de cerrar el primer tramo de paper v5.
-La prioridad inmediata sigue siendo validar v5 forward: F13, F15 y F19. Mientras tanto, se puede
-avanzar en tooling de v6 porque no toca el default.
+[Certain] V6-2 fue adoptado y congelado como default por decision explicita del usuario el
+2026-07-13. V5 sigue aislado como control y rollback. La prioridad inmediata es asegurar frescura
+del funding en la VM antes de `accumulation` y continuar F13/F15/F19.
 
 Orden recomendado:
 
@@ -461,7 +483,7 @@ Si funding overlay +0.05 en accumulation p10/p90:
 - mantiene btc_vs_bnh_ratio,
 - no añade >20% rebalanceos,
 - mejora OOS/paper 2026+,
-entonces pasa a NEEDS_MORE_VALIDATION como v6 candidate.
+entonces pasa a ADOPT solo bajo la excepcion explicita documentada del 2026-07-13.
 ```
 
-Hasta que exista evidencia forward, ningun candidato v6 debe marcarse `ADOPT`.
+No ajustar mas thresholds ni promover un sucesor de v6 sin evidencia forward diferenciada.

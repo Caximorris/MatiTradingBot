@@ -254,6 +254,24 @@ def test_phase_policy_router_v5_equiv_matches_legacy_targets():
         assert routed[1] == expected_signals
 
 
+def test_v6_is_default_and_named_v5_missing_flags_stays_v5():
+    default = SwingAllocatorConfig()
+    assert default.use_phase_policy_router is True
+    assert default.use_funding_overlay is True
+
+    legacy_v5 = SwingAllocatorConfig.from_dict({"instance_id": "v5"})
+    assert legacy_v5.use_phase_policy_router is False
+    assert legacy_v5.use_funding_overlay is False
+
+    explicit_v5_override = SwingAllocatorConfig.from_dict({
+        "instance_id": "v5",
+        "use_phase_policy_router": True,
+        "use_funding_overlay": True,
+    })
+    assert explicit_v5_override.use_phase_policy_router is True
+    assert explicit_v5_override.use_funding_overlay is True
+
+
 def test_funding_overlay_adds_to_phase_router_target(monkeypatch):
     import strategies.swing_funding_overlay as overlay
 
@@ -283,6 +301,7 @@ def _target_for_phase_policy_case(phase: str, regime: str, price: Decimal, use_r
     cfg = SwingAllocatorConfig(
         use_phase_policy_router=use_router,
         phase_policy_profile="v5_equiv",
+        use_funding_overlay=False,
     )
     bot = SwingAllocatorBot(client=BacktestClient(price=price), config=cfg)
 

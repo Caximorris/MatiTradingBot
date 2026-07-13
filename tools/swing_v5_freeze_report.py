@@ -3,7 +3,7 @@
 Usage:
     python tools/swing_v5_freeze_report.py
 
-Runs the required Swing validation anchors with the current default config:
+Runs the required Swing validation anchors with the explicit v5 rollback config:
 2015-2026 realistic, 2018-2026 realistic, and 2015-2026 conservative.
 """
 from __future__ import annotations
@@ -53,6 +53,11 @@ ANCHORS = [
     ),
 ]
 
+V5_CONFIG = {
+    "use_phase_policy_router": False,
+    "use_funding_overlay": False,
+}
+
 
 def _warmup_bars(bars, from_dt: datetime) -> int:
     from_ts = int(from_dt.timestamp() * 1000)
@@ -68,7 +73,7 @@ def _btc_ratio(strategy: SwingAllocatorBot, client: BacktestClient) -> tuple[flo
     return final_btc, bnh_btc, ratio
 
 
-def _run(anchor: Anchor):
+def _run(anchor: Anchor, config: dict):
     warmup_start = anchor.from_dt - timedelta(days=250)
     bars = fetch_historical_bars("BTC-USDT", "1H", warmup_start, anchor.to_dt)
     client = BacktestClient(
@@ -79,7 +84,11 @@ def _run(anchor: Anchor):
     )
 
     def factory(c, s):
-        return SwingAllocatorBot(client=c, config=SwingAllocatorConfig(), session=s)
+        return SwingAllocatorBot(
+            client=c,
+            config=SwingAllocatorConfig.from_dict(config),
+            session=s,
+        )
 
     engine = BacktestEngine(
         client,
@@ -92,19 +101,23 @@ def _run(anchor: Anchor):
     return result, final_btc, bnh_btc, btc_ratio
 
 
-def main() -> None:
+def print_report(config: dict) -> None:
     print(
         "label,cost,bars,final,cagr,max_dd,calmar,sharpe,sortino,pf,"
         "rebalances,underwater_days,final_btc,bnh_btc,btc_vs_bnh,buy_hold_pct"
     )
     for anchor in ANCHORS:
-        r, final_btc, bnh_btc, btc_ratio = _run(anchor)
+        r, final_btc, bnh_btc, btc_ratio = _run(anchor, config)
         print(
             f"{anchor.label},{anchor.cost_mode},{r.bars_tested},{r.final_balance:.2f},"
             f"{r.cagr},{r.max_drawdown_pct},{r.calmar},{r.sharpe_ratio},{r.sortino},"
             f"{r.profit_factor},{r.total_trades},{r.underwater_days},"
             f"{final_btc:.8f},{bnh_btc:.8f},{btc_ratio:.4f},{r.buy_hold_pnl_pct}"
         )
+
+
+def main() -> None:
+    print_report(V5_CONFIG)
 
 
 if __name__ == "__main__":

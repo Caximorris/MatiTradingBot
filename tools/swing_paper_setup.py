@@ -21,6 +21,8 @@ def _v5_config() -> dict:
         "instance_id": "v5",
         "paper_portfolio_id": "swing_v5",
         "persist_live_rebalance_log": True,
+        "use_phase_policy_router": False,
+        "use_funding_overlay": False,
     }
 
 
@@ -36,6 +38,7 @@ def _v6_config() -> dict:
         "funding_overlay_delta": 0.05,
         "funding_low_pctile": 0.10,
         "funding_high_pctile": 0.90,
+        "funding_overlay_lookback_settlements": 90,
         "funding_overlay_ttl_days": 7,
         "funding_overlay_dedup_days": 7,
     })

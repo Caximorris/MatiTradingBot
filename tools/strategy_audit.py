@@ -52,10 +52,10 @@ COST_PAIRS = {
 AUDIT_CONTEXT: dict[str, dict] = {
     "swing": {
         "label": "Swing Allocator v6 (phase router + funding overlay)",
-        "status": "NEEDS_MORE_VALIDATION",
-        "status_note": ("v6 sigue como candidato vivo (docs/swing/v6-plan.md): el overlay de funding solo "
-                        "dispara en fase accumulation. Para pasar a ADOPT exige evidencia forward/paper "
-                        "posterior a 2026-01-01, no mas backtest (ventana 2015-2026 CERRADA, regla 5)."),
+        "status": "ADOPTADO / DEFAULT CONGELADO",
+        "status_note": ("v6-2 fue promovido por decision explicita del usuario el 2026-07-13 tras "
+                        "dominar las anclas emparejadas sin empeorar DD ni churn. V5 sigue como "
+                        "control/rollback; live real no esta autorizado por esta decision."),
         "dd_bootstrap": "MaxDD bootstrap x1000 (F7): p50 -53%, p95 -68%, p99 -74%. Dimensionar con p95/p99.",
         "refs": ["docs/swing/v6-plan.md", "docs/swing/audits.md",
                  "docs/swing/audits.md (F1-F19)", "CLAUDE.md reglas invariantes"],
@@ -157,8 +157,8 @@ def static_checks(strategy, config) -> list[dict]:
          "evidence": ("Offsets anti-lookahead vigentes: MVRV=dia anterior, VIX/DXY/NDX=sesion anterior, "
                       "funding=dia completo anterior, daily_on_closed_only. Fixes congelados (CLAUDE.md).")},
         {"name": "Reversibilidad / rollback (regla 3)", "status": "PASS",
-         "evidence": (f"{n_flags} flags de config, todos documentados y reversibles; el motor entra a paper "
-                      "detras de flags default False (main = v5 intacto).")},
+         "evidence": (f"{n_flags} flags de config, todos documentados y reversibles; v6 es default y "
+                      "v5 se reproduce con router+overlay False.")},
         {"name": "Disciplina de overfitting (regla 2 y 5)", "status": "INFO",
          "evidence": ("Ventana 2015-2026 CERRADA para optimizacion: solo mide robustez. Un cambio nuevo "
                       "exige evidencia post-2026-01-01 (forward/paper) o justificacion estructural pura.")},

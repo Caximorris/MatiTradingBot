@@ -50,6 +50,17 @@ Copiar el bloque, rellenar, anadir a la seccion que corresponda (Aceptado/Rechaz
 - Permitido en forward-test?: yes (es el default)
 - Referencias: tag `swing-v5-frozen` @ 4c955fb, `docs/swing/audits.md`
 
+### EXP-006 — Swing v6-2: funding overlay +0.05
+- Fecha: 2026-07-13
+- Estrategia: swing (v6)
+- Hipotesis: overlay de funding moderado (+0.05, ttl 7d, accumulation, p10/p90) mejora recompra sin exceso de churn.
+- Ventana de datos: 2015-2026, 2018-2026, realistic/conservative y rolling starts
+- Metricas: 2015-26 realistic $9.505M / +86.51% CAGR / -52.73% DD / 0.8499 BTC ratio; 2018-26 $229.0k / +47.90% / -53.72% / 0.8785; conservative $9.255M / +86.06% / -52.88% / 0.8281.
+- Decision: accepted (default congelado)
+- Razon: domina las tres anclas, mejora 7/8 rolling starts y no empeora DD, churn ni BTC final. El usuario aprobo la excepcion porque v5/v6 iniciaron paper simultaneamente; no autoriza live.
+- Permitido en forward-test?: yes; mantener v5 aislado como control/rollback
+- Referencias: `docs/swing/v6-plan.md` §6, `SESSION.md`
+
 ### EXP-003 — Pro Trend v13: partial_exit_pct=150.0
 - Fecha: 2026-06-30
 - Estrategia: pro_trend
@@ -102,15 +113,6 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 ---
 
 ## Parqueado — needs more validation / bloqueado en prerequisito
-
-### EXP-006 — Swing v6-2: funding overlay +0.05
-- Fecha: 2026-07-06
-- Estrategia: swing (v6)
-- Hipotesis: overlay de funding moderado (+0.05, ttl 7d, accumulation, p10/p90) mejora recompra sin exceso de churn.
-- Decision: parked (NEEDS_MORE_VALIDATION)
-- Razon: v6 es `v5_equiv` exacto hasta ~2026-10-07 (dia 900 post-halving, fuera de accumulation); sin evidencia forward todavia. Criterio de promocion Fase 4 exige evidencia forward/paper posterior a 2026-01-01 (criterio 8).
-- Permitido en forward-test?: yes, solo bajo el bot v6 aislado (nunca en v5/legacy)
-- Referencias: `docs/swing/v6-plan.md` §5 (Fase 4 — Criterios de promocion)
 
 ### EXP-007 — Swing v6-4/5/6: variantes bear accumulation, bull peak neutral, chop guard
 - Fecha: pendiente

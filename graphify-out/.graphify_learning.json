@@ -1,0 +1,208 @@
+{
+  "generated_at": "2026-07-13T19:59:58.342660+00:00",
+  "nodes": {
+    "core_backtest_backtestengine": {
+      "code_fingerprint": "ec8aebccf04abcbf8d14b7c1746f211d60c7abed92ea753010e5137d8003f63a",
+      "label": "BacktestEngine",
+      "last": "2026-07-13T19:38:53.125339+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 0.999661715,
+      "source_file": "core/backtest.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "core_database_botstate": {
+      "code_fingerprint": "f0865ace7009dd15df613e1a0de446387b763cf3f0897ac4f23a2e6dc6678ce5",
+      "label": "BotState",
+      "last": "2026-07-13T19:38:53.125339+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 0.999661715,
+      "source_file": "core/database.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "core_exchange_okxclient": {
+      "code_fingerprint": "953f9e716dc9a8ef6031b6ae2d373c9c6498efb3e4d644867768d0bab2a486d3",
+      "label": "OKXClient",
+      "last": "2026-07-13T19:46:49.181918+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:46:49.181918+00:00",
+          "outcome": "useful",
+          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+        },
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 1.999450702,
+      "source_file": "core/exchange.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "core_okx_demo_client_okxdemoclient": {
+      "code_fingerprint": "bbc3180a7cf9625f60ced488e26f342babd2b8b07ebafac0b1daffd4c8458829",
+      "label": "OKXDemoClient",
+      "last": "2026-07-13T19:46:49.181918+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:46:49.181918+00:00",
+          "outcome": "useful",
+          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+        },
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 1.999450702,
+      "source_file": "core/okx_demo_client.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "core_risk_manager_riskmanager": {
+      "code_fingerprint": "85d860c45788a79dea33c52b884a6d606cbcb8037e48c5036798766bdd70dbb4",
+      "label": "RiskManager",
+      "last": "2026-07-13T19:38:53.125339+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 0.999661715,
+      "source_file": "core/risk_manager.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "docs_archive_refactor_backlog_refactor_backlog": {
+      "code_fingerprint": "6928bbd8c1b504c4d227002bcb4c6b419aed45facb8b469d203d7d1f85c0c1d3",
+      "label": "Post-Paper Refactor Backlog",
+      "last": "2026-07-13T19:46:49.181918+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:46:49.181918+00:00",
+          "outcome": "useful",
+          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+        }
+      ],
+      "score": 0.999788987,
+      "source_file": "docs/archive/refactor-backlog.md",
+      "status": "tentative",
+      "uses": 1
+    },
+    "docs_forward_test_contract_forward_test_contract": {
+      "code_fingerprint": "be2b82718d329550785f3bdbe4ab1d341c706ba7d8ad4699aa92e40f26985d8a",
+      "label": "Frozen Forward-Test Contract",
+      "last": "2026-07-13T19:46:49.181918+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:46:49.181918+00:00",
+          "outcome": "useful",
+          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+        }
+      ],
+      "score": 0.999788987,
+      "source_file": "docs/forward-test/contract.md",
+      "status": "tentative",
+      "uses": 1
+    },
+    "reporting_trade_logger_tradelogger": {
+      "code_fingerprint": "c6084992bb67bcb13fe4d195c42eed75d5c5d6bb88aa76557aa71e423b7e73ba",
+      "label": "TradeLogger",
+      "last": "2026-07-13T19:38:53.125339+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 0.999661715,
+      "source_file": "reporting/trade_logger.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "strategies_swing_allocator_swingallocatorbot": {
+      "code_fingerprint": "912d15e10960352442483de9ac5b0e7d60501fc17875d449b4feed82c8517b94",
+      "label": "SwingAllocatorBot",
+      "last": "2026-07-13T19:38:53.125339+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 0.999661715,
+      "source_file": "strategies/swing_allocator.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tools_anomaly_check": {
+      "code_fingerprint": "65497be49ae33d932cc7a60ed80f464979f257dd78879d52cc79ef0874cb3d44",
+      "label": "anomaly_check.py",
+      "last": "2026-07-13T19:46:49.181918+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:46:49.181918+00:00",
+          "outcome": "useful",
+          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+        }
+      ],
+      "score": 0.999788987,
+      "source_file": "tools/anomaly_check.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tools_funding_refresh": {
+      "code_fingerprint": "f237009b73a90d662f30fb900b026721ea8cb71ce8e37851ec4d8dc139cc40b7",
+      "label": "funding_refresh.py",
+      "last": "2026-07-13T19:46:49.181918+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:46:49.181918+00:00",
+          "outcome": "useful",
+          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+        }
+      ],
+      "score": 0.999788987,
+      "source_file": "tools/funding_refresh.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tools_telegram_remote": {
+      "code_fingerprint": "2f49cb567e92df81b24ae8e6983f34c0abbd17f7bcf68bc974584144951d29d6",
+      "label": "telegram_remote.py",
+      "last": "2026-07-13T19:38:53.125339+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-13T19:38:53.125339+00:00",
+          "outcome": "useful",
+          "q": "track all conections"
+        }
+      ],
+      "score": 0.999661715,
+      "source_file": "tools/telegram_remote.py",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

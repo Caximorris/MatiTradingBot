@@ -12,7 +12,7 @@ forward-test rules, history — lives here.
 ## Swing Allocator (the flagship)
 
 - [`swing/plan.md`](swing/plan.md) — design and go/no-go validation plan.
-- [`swing/v6-plan.md`](swing/v6-plan.md) — experimental v6 successor (phase-router + funding overlay).
+- [`swing/v6-plan.md`](swing/v6-plan.md) — frozen v6 default (phase-router + funding overlay).
 - [`swing/audits.md`](swing/audits.md) — consolidated quantitative audit: v4 findings, the F1–F19
   remediation plan, and the v5 post-implementation freeze review.
 

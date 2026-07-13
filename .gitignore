@@ -70,5 +70,9 @@ backtests/chart_*.html
 backtests/report_*.html
 backtests/audit_*.html
 
+# Graphify: versionar grafo/report/cache/memoria, pero no rutas absolutas de esta maquina.
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+
 # macOS
 .DS_Store

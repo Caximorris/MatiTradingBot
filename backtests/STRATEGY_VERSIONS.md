@@ -451,6 +451,19 @@ higiene, no por resultado. Rollback exacto a v4: `--config '{"daily_on_closed_on
 **Veredicto:** DEFAULT congelado para validacion forward/paper. Optimizacion de backtest CERRADA.
 Auditoria post-implementacion en `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`.
 
+### v6 — phase router + funding overlay (2026-07-13) [DEFAULT ACTUAL — CONGELADO]
+**Config:** v5 + `use_phase_policy_router=True`, `phase_policy_profile="v5_equiv"` y overlay
+de funding `+0.05`, p10/p90, TTL/dedup 7 dias, solo durante `accumulation`.
+**Resultado emparejado (mismas velas y costes):**
+- 2015-26 realistic: $9.505M | CAGR +86.51% | Max DD -52.73% | 70 reb | btc_vs_bnh 0.8499
+- 2018-26 realistic: $229.0k | CAGR +47.90% | Max DD -53.72% | 53 reb | btc_vs_bnh 0.8785
+- 2015-26 conservative: $9.255M | CAGR +86.06% | Max DD -52.88% | 70 reb | btc_vs_bnh 0.8281
+**Decision:** ADOPTADO por autorizacion explicita del usuario. V5 y v6 empezaron paper al mismo
+tiempo; v6 domina todas las pruebas disponibles sin empeorar DD/churn/BTC. No autoriza live.
+Rollback exacto a v5: `--config '{"use_phase_policy_router": false, "use_funding_overlay": false}'`.
+Mantener la instancia v5 aislada como control; resolver frescura del funding en VM antes de
+`accumulation` (~2026-10-07), porque cache stale degrada v6 a v5 en silencio.
+
 ---
 
 ## LECCIONES APRENDIDAS (NO repetir estos experimentos)

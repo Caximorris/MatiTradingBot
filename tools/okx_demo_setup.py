@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Registra el bot Swing v5 con ejecucion sobre la cuenta DEMO real de OKX.
+"""Registra el Swing default (v6-2) con ejecucion sobre la cuenta DEMO real de OKX.
 
-Mismo patron que swing_paper_setup.py. El bot corre la estrategia v5 SIN cambios (mismos
+Mismo patron que swing_paper_setup.py. El bot corre la estrategia default SIN cambios (mismos
 datos de mercado reales que v5/v6/legacy); solo cambia el backend de ejecucion: las ordenes
 van a OKX demo trading (x-simulated-trading:1) via core/okx_demo_client.py.
 
@@ -33,8 +33,8 @@ PORTFOLIO_ID = "okx_demo"
 
 
 def demo_config() -> dict:
-    # v5 exacto (defaults de SwingAllocatorConfig) + enrutado de ejecucion. Igual que el
-    # bot v5 paper: sin overrides de estrategia, solo identidad y backend.
+    # v6-2 default explicito + enrutado de ejecucion. Mantener los flags aqui evita que
+    # una futura revision de defaults cambie silenciosamente el bot demo.
     return {
         "instance_id": INSTANCE_ID,
         "paper_portfolio_id": PORTFOLIO_ID,   # nombre del espejo paper_state_okx_demo.json
@@ -46,6 +46,16 @@ def demo_config() -> dict:
         # reintenta en 2 patas via EUR (BTC-EUR + USDC-EUR). Solo entorno demo.
         "execution_bridge": "EUR",
         "persist_live_rebalance_log": True,
+        "use_phase_policy_router": True,
+        "phase_policy_profile": "v5_equiv",
+        "use_funding_overlay": True,
+        "funding_overlay_phases": "accumulation",
+        "funding_overlay_delta": 0.05,
+        "funding_low_pctile": 0.10,
+        "funding_high_pctile": 0.90,
+        "funding_overlay_lookback_settlements": 90,
+        "funding_overlay_ttl_days": 7,
+        "funding_overlay_dedup_days": 7,
     }
 
 

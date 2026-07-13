@@ -12,20 +12,17 @@ cuenta demo EEA: fix tgtCcy `788097f`, soporte EEA+mapeo USDC `56f37e5`, bridge 
 
 ## ESTADO ACTUAL
 
-**DEFAULT VIGENTE: Swing Allocator v5 post-audit — CONGELADO** (tag `swing-v5-frozen` @ 4c955fb).
-v5 = v4 estructural + `daily_on_closed_only=True` (unico delta de comportamiento). Rollback a v4:
-`--config '{"daily_on_closed_only": false}'`. Anclas (dataset canonico 102931 velas):
-- 2015-26 realistic: **$9.137M | CAGR +85.84% | Max DD -52.73% | 70 reb | btc_vs_bnh 0.8171**
-- 2018-26 realistic: $219.8k | +47.14% | -53.72% | 53 | 0.8432
-- 2015-26 conservative: $8.897M | +85.40% | -52.88% | 70 | 0.7961
-- NOTA smoke: anclas de arriba son via `tools/swing_v5_freeze_report.py`. El CLI (`main.py backtest`)
-  da **$9.164M / +85.9%** en 2015-26 realistic (96930 velas vs 96907 del tool; +0.29% USD por warmup,
-  NO regresion; DD/ratio/reb identicos). Smoke por CLI compara vs $9.164M; por tool vs $9.137M.
+**DEFAULT VIGENTE: Swing Allocator v6-2 — CONGELADO** (decision explicita 2026-07-13).
+v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d, solo
+`accumulation`. Rollback exacto a v5: `--config '{"use_phase_policy_router": false,
+"use_funding_overlay": false}'`. Anclas emparejadas (dataset canonico 102931 velas):
+- 2015-26 realistic: **$9.505M | CAGR +86.51% | Max DD -52.73% | 70 reb | btc_vs_bnh 0.8499**
+- 2018-26 realistic: $229.0k | +47.90% | -53.72% | 53 | 0.8785
+- 2015-26 conservative: $9.255M | +86.06% | -52.88% | 70 | 0.8281
 
-**Swing v6 — NO ADOPT** (`NEEDS_MORE_VALIDATION`, ver `docs/swing/v6-plan.md`). Todo v6/prop entra tras
-flags default `False`; main sigue siendo v5 intacto. v6 = phase router (v5_equiv exacto) + funding
-overlay que SOLO dispara en fase `accumulation`. Hoy estamos en `bear_onset` (807d post-halving) →
-**v6 ≡ v5 en vivo hasta ~2026-10-07** (dia 900); el paper v5-vs-v6 solo divergira desde entonces.
+v6 fue promovido porque v5/v6 empezaron paper simultaneamente, no existia ventaja forward previa
+de v5, y v6 domina las tres anclas y 7/8 rolling starts sin empeorar DD ni churn. Hoy seguimos en
+`bear_onset`: **v6 ≡ v5 en vivo hasta ~2026-10-07**. Mantener la instancia v5 aislada como control.
 
 **PAPER DESPLEGADO** — VM GCP e2-micro us-central1 (free tier), Debian 13, VM `matitrbot`. Los 3 bots
 en paper con carteras aisladas (`paper_state_<id>.json`; v5 legacy sigue en `paper_state.json`).
@@ -144,10 +141,13 @@ un backtest puntual.
 - Swing v1/v2 config exactas: ver "SWING ALLOCATOR — REFERENCIA" en docs/archive/session-archive.md.
 
 ### 5. Out-of-sample — ventana 2015-2026 CERRADA para optimizacion (auditoria 2026-07-02)
-- Ningun cambio de estrategia se adopta por mejorar 2015-2026. Esa ventana solo se usa para MEDIR
+- Ningun cambio futuro de estrategia se adopta por mejorar 2015-2026. Esa ventana solo se usa para MEDIR
   robustez/sensibilidad de lo ya adoptado. La evidencia para cambios futuros = datos posteriores a
   2026-01-01 (forward/paper) o justificacion estructural pura + no-empeora-anclas.
 - Excepcion permitida: SIMPLIFICACION (quitar componentes) si no empeora las anclas.
+- Excepcion ya consumida: v6-2, aprobada explicitamente por el usuario el 2026-07-13 porque v5 y
+  v6 iniciaron paper a la vez, v6 paso todas las pruebas disponibles y el cambio de default no
+  autoriza live. No usar este precedente para promover v7 u otros thresholds sobre muestra cerrada.
 
 ### 4. Determinismo de datos
 - Backtests deterministas via cache OHLCV (`data/cache/`). Runs con rango cacheado = velas identicas.

@@ -1,7 +1,7 @@
 """BTC Swing Allocator: dynamic BTC/USDT allocation.
 
-Current default: v5 post-audit, frozen. Rollback to v4:
---config '{"daily_on_closed_only": false}'.
+Current default: v6-2, frozen. Rollback to v5:
+--config '{"use_phase_policy_router": false, "use_funding_overlay": false}'.
 """
 from __future__ import annotations
 
@@ -43,9 +43,11 @@ class SwingAllocatorConfig:
     use_funding:   bool = False   # funding rate — experimental
     use_dxy:       bool = False   # DXY direction — experimental
     instance_id:   str = ""       # live/paper namespace for parallel experiments
-    use_phase_policy_router: bool = False  # v6 research: table-driven regime+halving target
+    # v6-2 default: table-driven v5-equivalent policy + accumulation funding overlay.
+    # Set both flags False for an exact v5 rollback.
+    use_phase_policy_router: bool = True
     phase_policy_profile: str = "v5_equiv"
-    use_funding_overlay: bool = False
+    use_funding_overlay: bool = True
     funding_overlay_phases: str = "accumulation"
     funding_overlay_delta: float = 0.05
     funding_low_pctile: float = 0.10
@@ -112,6 +114,13 @@ class SwingAllocatorConfig:
     @classmethod
     def from_dict(cls, d: dict) -> "SwingAllocatorConfig":
         c = cls()
+        # Existing isolated v5 paper rows predate the v6 default and therefore omit
+        # these flags. Keep that named control on real v5 after a code deployment.
+        if str(d.get("instance_id", "")).lower() == "v5":
+            if "use_phase_policy_router" not in d:
+                c.use_phase_policy_router = False
+            if "use_funding_overlay" not in d:
+                c.use_funding_overlay = False
         for k, v in d.items():
             if not hasattr(c, k):
                 continue

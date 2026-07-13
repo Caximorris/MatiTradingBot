@@ -31,6 +31,10 @@
 | **v6** | `swing_allocator_v6_*` | `data/runtime/paper_state_<id>.json` | Phase router + funding overlay (`SWING_V6_PLAN.md`). **Expected to be byte-identical to v5 in live until ~2026-10-07** (still in `bear_onset`; overlay only fires in `accumulation`). |
 | **legacy** | `swing_allocator_*` (no version) | shared `data/runtime/paper_state.json` | Pre-isolation bot. Kept for continuity. |
 
+**Amendment 2026-07-13:** v6-2 became the code/default-paper configuration by explicit user
+decision after paired validation. The original labels and start-date rules above remain locked:
+v5 is now the rollback/control, v6 is the default, and no live authorization is implied.
+
 Wallets are ISOLATED per `instance_id` / `paper_portfolio_id`. Never share or reset a wallet
 mid-test.
 

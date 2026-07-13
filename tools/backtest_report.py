@@ -38,10 +38,13 @@ PRESETS: dict[str, tuple[str, dict]] = {
         "use_phase_policy_router": True, "phase_policy_profile": "v5_equiv",
         "use_funding_overlay": True, "funding_overlay_phases": "accumulation",
         "funding_overlay_delta": 0.05, "funding_low_pctile": 0.10,
-        "funding_high_pctile": 0.90, "funding_overlay_ttl_days": 7,
+        "funding_high_pctile": 0.90, "funding_overlay_lookback_settlements": 90,
+        "funding_overlay_ttl_days": 7,
         "funding_overlay_dedup_days": 7,
     }),
-    "v5": ("swing", {}),
+    "v5": ("swing", {
+        "use_phase_policy_router": False, "use_funding_overlay": False,
+    }),
     "prop": ("prop", {
         "entry_mode": "breakout", "risk_per_trade": 0.018, "tp1_r": 1.5,
         "allow_shorts": True, "max_notional_pct": 0.8, "model_funding": True,
