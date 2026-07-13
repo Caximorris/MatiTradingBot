@@ -46,8 +46,12 @@ Archivos clave:
 - `strategies/market_context.py` — DXY + NASDAQ + VIX (Yahoo Finance)
 - `strategies/funding_context.py` — funding rate historico OKX
 - `core/okx_demo_client.py` — cliente hibrido demo OKX: market data REAL (flag=0) + ordenes en la
-  cuenta DEMO (flag=1, credenciales `OKX_DEMO_*`). Bots con `execution=okx_demo` en config.
-  NUNCA usar flag=1 para market data: medido 2026-07-11, el feed demo infla high/low $80-250/vela 1H.
+  cuenta DEMO (flag=1, credenciales `OKX_DEMO_*` + `OKX_DEMO_DOMAIN=https://my.okx.com` en cuentas
+  EEA). Bots con `execution=okx_demo` en config. Cuenta EEA/MiCA: USDT bloqueado (sCode 51155) →
+  mapeo señal→ejecucion (`execution_quote: "USDC"`: ordenes *-USDT van a *-USDC, balance USDC
+  presentado como USDT) + bridge EUR (`execution_bridge: "EUR"`: market cancelada por el motor
+  demo se reintenta via BTC↔EUR↔USDC). NUNCA usar flag=1 para market data: medido 2026-07-11, el
+  feed demo infla high/low $80-250/vela 1H (y el motor demo cotiza ~5% bajo el real, 2026-07-13).
 - `reporting/swing_journal.py` — journal de rebalanceos (Swing Allocator)
 - `docs/swing/plan.md` — diseño completo y plan de validacion del Swing Allocator
 - `EXPERIMENTS.md` — registro de experimentos (aceptado/rechazado/parqueado). Buscar aqui ANTES

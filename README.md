@@ -32,7 +32,10 @@ implementations of that client:
 - `BacktestClient` (`core/backtest.py`) — fakes the exact same interface using historical data.
 - `OKXDemoClient` (`core/okx_demo_client.py`) — hybrid: real market data (parity with backtest
   intact) + real authenticated orders against OKX's **demo trading** account. The pre-live
-  dress rehearsal: it exercises auth, order params, and error handling with fake funds.
+  dress rehearsal: it exercises auth, order params, and error handling with fake funds. Because
+  the account is on OKX's EEA entity (MiCA: no USDT trading, separate `my.okx.com` API domain),
+  it also carries a signal→execution mapping (strategy thinks in BTC-USDT, orders go to BTC-USDC)
+  and a two-leg EUR bridge for when the demo engine cancels orders on its half-dead USDC book.
 
 The strategy code **cannot tell which one it's talking to**, so the identical strategy runs in a
 backtest, in local paper trading, and against OKX's demo engine with **zero code changes**. That's
@@ -191,10 +194,13 @@ pushes rebalance alerts and daily heartbeats. systemd (`Restart=always`) keeps t
 a daily cron runs parity + degradation checks, and `/audit` runs the anomaly engine on demand.
 
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
-**demo-trading** API key — fake funds only, created inside OKX's demo mode. The path to real money
-(planned September 2026) adds a fourth bot (`demo`) that runs the same frozen v5 strategy but
-places its orders on OKX's demo engine, exercising the real authenticated order path before a
-single real dollar is at stake. Runbook: [`docs/ops/deploy-paper.md`](docs/ops/deploy-paper.md).
+**demo-trading** API key — fake funds only, created inside OKX's demo mode. Since 2026-07-13 a
+fourth bot (`demo`) runs the same frozen v5 strategy but places its orders on OKX's demo engine,
+exercising the real authenticated order path before a single real dollar is at stake (planned
+live: September 2026). Its first day already paid for itself: it surfaced a ghost-fill bug
+(engine-canceled market orders reported as filled), MiCA compliance blocks (USDT untradeable on
+EEA accounts), and the EEA-specific API domain. Runbook:
+[`docs/ops/deploy-paper.md`](docs/ops/deploy-paper.md).
 
 ---
 

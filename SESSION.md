@@ -4,10 +4,9 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-11** (revision semana 1 del forward-test: 2 bugs de infra
-encontrados y ARREGLADOS `973d433`/`4b1425f` pusheados; T5.1 explain + T11.1 EXPERIMENTS.md +
-`/audit` + deteccion cron-stale en `7107631` commiteado SIN PUSH; cliente OKX demo trading
-construido SIN COMMIT — retomar en "SIGUIENTE PASO")
+**Ultima actualizacion: 2026-07-13** (bot demo OKX DESPLEGADO en la VM y operando contra la
+cuenta demo EEA: fix tgtCcy `788097f`, soporte EEA+mapeo USDC `56f37e5`, bridge EUR `f849434`
+— todo pusheado. 4 bots corriendo: v5/v6/legacy paper + demo contra el engine real de OKX)
 
 ---
 
@@ -160,24 +159,25 @@ un backtest puntual.
 
 ---
 
-## SIGUIENTE PASO (sesion 2026-07-12)
+## SIGUIENTE PASO (sesion 2026-07-14+)
 
-**Inmediato (retomado de 2026-07-11):**
-1. `git push` de `7107631` (explain/EXPERIMENTS/audit) + commit y push del cliente OKX demo
-   (`core/okx_demo_client.py`, `cli/live_cmds.py`, `tools/okx_demo_setup.py`, `config/settings.py`,
-   `.env.example`, `tests/test_okx_demo_client.py`).
-2. Deploy del bot demo en la VM: Matias crea la API key DEMO en OKX (dentro del modo demo trading)
-   y añade `OKX_DEMO_API_KEY/SECRET_KEY/PASSPHRASE` al `.env` de la VM → `git pull` →
-   `python tools/okx_demo_setup.py --enable` → `systemctl restart matibot` → verificar `/bots`
-   (4o bot label `demo`) y su primera evaluacion 4H (orden INIT real en el engine demo de OKX).
-   Ideal: cuenta demo solo con USDT (si ya tiene BTC, no hay INIT, rebalancea directo).
-3. ~~Fix P1 `tgtCcy` en `OKXClient._live_place_order`~~ HECHO 2026-07-13 (mismo bloque que el
-   cliente demo + 3 tests en `test_exchange.py`; suite 213/213).
+**Inmediato:**
+1. Verificar el primer rebalanceo del bot demo via bridge (evaluacion 4H de ~20:00 UTC del
+   2026-07-13): en `journalctl -u matibot` deben verse `[DEMO-BRIDGE] pata sell BTC-EUR` +
+   `pata buy USDC-EUR`, alerta Telegram `[demo]`, y el bot quedar en target 0.20 como los otros 3.
+   Si el bridge fallo: revisar sCode en el log (los books demo cambian de estado sin aviso).
+2. Confirmar que tras `systemctl restart matibot-telegram` funcionan `/status demo` y las
+   etiquetas de alerta correctas.
+3. Limpieza menor pendiente: registro huerfano `swing_allocator_v6` [pausado] que comparte
+   `paper_state.json` con legacy (confunde el listado de /bots).
 
 **Marco general:** optimizacion de backtest del Swing = CERRADA. Hito = validacion forward:
 cerrar F13 (smoke 24h), F15 (paridad 30d — racha reiniciada ~2026-07-11 por el incidente cron)
-y F19 (degradacion). Live real planeado para SEPTIEMBRE 2026 (`start` live requiere confirmacion
-explicita). El paper v5-vs-v6 empieza a dar señal desde ~2026-10-07.
+y F19 (degradacion). Bot demo = ensayo del camino de ordenes real pre-live; sus fills a precio
+demo NO se comparan con los paper (distorsion ~5% conocida del motor demo). Live real planeado
+para SEPTIEMBRE 2026 (`start` live requiere confirmacion explicita; pendiente decidir alli
+par de ejecucion USDC y dominio my.okx.com en OKXClient, mismo patron que el demo). El paper
+v5-vs-v6 empieza a dar señal desde ~2026-10-07.
 
 ---
 

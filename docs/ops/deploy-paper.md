@@ -161,13 +161,19 @@ Requisitos (manuales):
 
 1. OKX → cambiar a modo **Demo trading** → crear una API key DEMO (las keys de la cuenta real
    NO funcionan con el header de simulacion).
-2. En el `.env` de la VM: `OKX_DEMO_API_KEY`, `OKX_DEMO_SECRET_KEY`, `OKX_DEMO_PASSPHRASE`.
-3. Ideal: cuenta demo solo con USDT. Si ya tiene BTC, el bot salta el INIT y rebalancea directo
-   en la primera evaluacion 4H.
+2. En el `.env` de la VM: `OKX_DEMO_API_KEY`, `OKX_DEMO_SECRET_KEY`, `OKX_DEMO_PASSPHRASE`
+   y — para cuentas de la entidad europea (MiCA) — `OKX_DEMO_DOMAIN=https://my.okx.com`
+   (sin esa linea la key EEA devuelve error 60032 contra www.okx.com).
+3. Cuenta EEA: **no existe USDT** (bloqueado por compliance, sCode 51155). El bot piensa en
+   BTC-USDT pero ejecuta en BTC-USDC (`execution_quote: "USDC"` en la config, el balance USDC
+   se presenta como USDT). Ideal: cuenta demo con solo USDC; si ya tiene BTC, el bot salta el
+   INIT y rebalancea directo en la primera evaluacion 4H. El resto de monedas se ignora.
 
 ```bash
 .venv/bin/python tools/okx_demo_setup.py --enable
 sudo systemctl restart matibot
+sudo systemctl restart matibot-telegram   # OJO: servicio SEPARADO — sin esto /status demo
+                                          # no existe y las alertas salen con etiqueta vieja
 ```
 
 Verificacion: `/bots` muestra el bot `demo`; su cartera se espeja en
@@ -175,6 +181,17 @@ Verificacion: `/bots` muestra el bot `demo`; su cartera se espeja en
 cambia nada), asi que `/status demo`, `/report demo`, `/equity demo` funcionan igual que con
 los demas. Si las credenciales demo faltan o son invalidas, el arranque SALTA solo ese bot
 (los otros tres arrancan normal) y lo dice en el log de arranque.
+
+Peculiaridades del entorno demo (medidas 2026-07-13, no afectan al live):
+
+- El motor demo cotiza ~5% por debajo del feed real y el book demo de BTC-USDC tiene los bids
+  muertos bajo la banda de precio (sCode 51138): los market SELL se aceptan y se cancelan sin
+  fill. Por eso la config lleva `execution_bridge: "EUR"`: la orden cancelada se reintenta en
+  2 patas (BTC↔EUR↔USDC, books demo EUR vivos). En el log se ve como `[DEMO-BRIDGE] pata ...`.
+- El equity del espejo mezcla fills a precio demo con valoracion a precio real: los saltos de
+  portfolio de ±3-5% tras un rebalanceo son ese desfase, NO PnL.
+- Smoke manual del camino completo: `.venv/bin/python tools/okx_demo_smoke.py` (solo lectura;
+  `--trade` para un ciclo buy/limit-cancel/sell con 0.001 BTC).
 
 ## Criterios de cierre (de PLAN_MEJORA_AUDITORIA.md)
 
