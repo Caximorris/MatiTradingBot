@@ -42,6 +42,9 @@ def demo_config() -> dict:
         # Cuenta EEA/MiCA (2026-07-13): USDT bloqueado por compliance (sCode 51155).
         # Señales en BTC-USDT (feed real, paridad backtest); ordenes en BTC-USDC.
         "execution_quote": "USDC",
+        # Book demo USDC con bids muertos: market SELL cancelada por el motor se
+        # reintenta en 2 patas via EUR (BTC-EUR + USDC-EUR). Solo entorno demo.
+        "execution_bridge": "EUR",
         "persist_live_rebalance_log": True,
     }
 

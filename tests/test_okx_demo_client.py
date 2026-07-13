@@ -113,6 +113,76 @@ def test_market_buy_sets_tgtccy_base(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Bridge EUR: market cancelada por el motor -> 2 patas via EUR (solo demo)
+# ---------------------------------------------------------------------------
+
+def _fake_trade_bridge():
+    """SELL en BTC-USDC lo cancela el motor; las patas EUR ejecutan bien."""
+    tr = MagicMock()
+    orders = {}   # ordId -> respuesta de get_order
+
+    def place_order(**kw):
+        oid = f"oid-{len(orders)}"
+        inst, side = kw["instId"], kw["side"]
+        if inst == "BTC-USDC" and side == "sell":
+            orders[oid] = {"state": "canceled", "avgPx": "", "accFillSz": "0",
+                           "fee": "0", "feeCcy": ""}
+        elif inst == "BTC-EUR" and side == "sell":
+            orders[oid] = {"state": "filled", "avgPx": "54600", "accFillSz": kw["sz"],
+                           "fee": "-3.41", "feeCcy": "EUR"}
+        elif inst == "USDC-EUR" and side == "buy":
+            # compra por importe EUR (tgtCcy=quote_ccy): qty base = sz/0.78
+            qty = str(round(float(kw["sz"]) / 0.78, 4))
+            orders[oid] = {"state": "filled", "avgPx": "0.78", "accFillSz": qty,
+                           "fee": "-0.5", "feeCcy": "USDC"}
+        else:
+            orders[oid] = {"state": "canceled", "avgPx": "", "accFillSz": "0",
+                           "fee": "0", "feeCcy": ""}
+        return {"code": "0", "data": [{"ordId": oid, "sCode": "0"}]}
+
+    tr.place_order.side_effect = place_order
+    tr.get_order.side_effect = lambda **kw: {"code": "0", "data": [orders[kw["ordId"]]]}
+    return tr
+
+
+def test_bridge_sell_via_eur_when_engine_cancels(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.okx_demo_client._FILL_QUERY_DELAY_S", 0)
+    trade = _fake_trade_bridge()
+    c = _client(tmp_path, trade=trade, exec_quote="USDC", bridge_quote="EUR")
+    result = c.place_order("BTC-USDT", "sell", "market", Decimal("0.0627"), strategy="t")
+    assert result.status == "filled"
+    assert result.filled_qty == Decimal("0.0627")
+    # 0.0627*54600-3.41 = 3419.01 EUR -> /0.78 ~ 4383.34 USDC -0.5 fee -> px ~ 69902
+    assert Decimal("69000") < result.filled_price < Decimal("70500")
+    insts = [k.kwargs["instId"] for k in trade.place_order.call_args_list]
+    assert insts == ["BTC-USDC", "BTC-EUR", "USDC-EUR"]
+    assert result.order_id.startswith("BRIDGE-")
+
+
+def test_bridge_not_used_without_config(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.okx_demo_client._FILL_QUERY_DELAY_S", 0)
+    trade = _fake_trade_bridge()
+    c = _client(tmp_path, trade=trade, exec_quote="USDC")   # sin bridge_quote
+    result = c.place_order("BTC-USDT", "sell", "market", Decimal("0.0627"), strategy="t")
+    assert result.status == "rejected"
+    insts = [k.kwargs["instId"] for k in trade.place_order.call_args_list]
+    assert insts == ["BTC-USDC"]   # ni una pata EUR
+
+
+def test_bridge_gives_up_if_first_leg_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr("core.okx_demo_client._FILL_QUERY_DELAY_S", 0)
+    trade = MagicMock()
+    trade.place_order.return_value = {"code": "0", "data": [{"ordId": "o", "sCode": "0"}]}
+    trade.get_order.return_value = {"code": "0", "data": [
+        {"state": "canceled", "avgPx": "", "accFillSz": "0", "fee": "0", "feeCcy": ""}]}
+    c = _client(tmp_path, trade=trade, exec_quote="USDC", bridge_quote="EUR")
+    result = c.place_order("BTC-USDT", "sell", "market", Decimal("0.05"), strategy="t")
+    # pata 1 (BTC-EUR) tambien cancelada -> rejected honesto, sin patas extra
+    assert result.status == "rejected"
+    assert "cancelada por el motor" in result.error
+
+
+# ---------------------------------------------------------------------------
 # Mapeo señal->ejecucion (cuentas EEA/MiCA: USDT bloqueado, se ejecuta en USDC)
 # ---------------------------------------------------------------------------
 

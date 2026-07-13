@@ -96,6 +96,17 @@ propio commit+test. La API key demo se crea DENTRO del modo demo trading de OKX 
   → *-USDC, balance USDC presentado como USDT; la estrategia y /status siguen en espacio USDT.
   Config del bot: `execution_quote: "USDC"` en okx_demo_setup.py, enrutado en live_cmds.py.
   Verificado E2E contra la API demo real: BUY "BTC-USDT" → fill real en BTC-USDC. Tests 219/219.
+- **DESPLEGADO EN VM 2026-07-13 ~14:36 UTC.** Primer tick: INIT BUY 0.096 BTC filled; el SELL
+  a target 0.20 lo cancelo el motor (book demo USDC con bids bajo la banda 51138) → **bridge EUR
+  implementado** (`execution_bridge: "EUR"`): market cancelada por el motor se reintenta en 2
+  patas BTC↔EUR↔USDC (books demo EUR vivos). Verificado E2E real: sell 0.001 via bridge OK.
+  Cuenta demo saneada: cartera del bot = BTC+USDC ~10k; resto aparcado en XRP (120k), USD 5k,
+  ETH 1 (inertes, el bot los ignora). OJO VM: `matibot-telegram` es servicio SEPARADO — hay que
+  reiniciarlo tras cada pull o /bots y las etiquetas de alertas quedan con codigo viejo (visto:
+  alertas del demo salian como "[legacy]" y /status demo no existia). Precios del motor demo
+  divergen ~5% del feed real (fills ~59.4k vs real 62.5k): el equity del espejo mezcla fills
+  demo con valoracion real — distorsion conocida, no es PnL. Registro huerfano `swing_allocator_v6`
+  [pausado] compartiendo paper_state.json con legacy: limpieza pendiente.
 
 **Pro Trend v13 — PAUSADO INDEFINIDAMENTE** (decision sesion 14). Codigo congelado y reversible,
 fuera del roadmap activo. Framework de validacion estaba completo. Detalle en archive.

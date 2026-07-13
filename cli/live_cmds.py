@@ -64,6 +64,7 @@ def start(
                 bot_client = OKXDemoClient(
                     settings, mirror_name=mirror,
                     exec_quote=config.get("execution_quote"),
+                    bridge_quote=config.get("execution_bridge"),
                 )
                 bot_risk = RiskManager(client=bot_client, app_settings=settings)
             except Exception as exc:

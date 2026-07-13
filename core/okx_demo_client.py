@@ -72,6 +72,7 @@ class OKXDemoClient:
         mirror_name: str = "okx_demo",
         runtime_dir: Path | None = None,
         exec_quote: str | None = None,
+        bridge_quote: str | None = None,
         _trade_api: Any = None,
         _account_api: Any = None,
         _market_client: Any = None,
@@ -83,6 +84,12 @@ class OKXDemoClient:
         # USDC≈USDT≈USD: misma unidad de cuenta que el backtest. None = sin traduccion.
         self._exec_quote = exec_quote.upper() if exec_quote else None
         self._strategy_quote = "USDT"
+        # Fallback 2-patas (2026-07-13): el book demo de BTC-USDC tiene los bids muertos
+        # (por debajo de la banda de precio 51138) y el motor cancela los market SELL.
+        # Con bridge_quote="EUR", una market cancelada por el motor se reintenta via
+        # BTC<->EUR<->USDC (books demo EUR vivos). Solo afecta al entorno demo: en el
+        # exchange real BTC-USDC es profundo y este codigo no se activa.
+        self._bridge_quote = bridge_quote.upper() if bridge_quote else None
         if not settings.is_paper:
             raise EnvironmentError(
                 "OKXDemoClient solo se instancia con TRADING_MODE=paper: en modo live "
@@ -333,6 +340,10 @@ class OKXDemoClient:
                     # este check se reportaria un fill fantasma con la qty pedida.
                     logger.warning("[DEMO] market {} {} aceptada pero cancelada sin fill "
                                    "(state={})", side, symbol, state)
+                    if self._bridge_quote:
+                        bridged = self._bridge_market(symbol, side, size, strategy)
+                        if bridged is not None:
+                            return bridged
                     return _rejected(f"market order cancelada por el motor (state={state})")
                 if qty > 0:
                     filled_qty, fee, fee_ccy = qty, q_fee, self._alias_ccy(q_fee_ccy)
@@ -372,6 +383,134 @@ class OKXDemoClient:
         except Exception as exc:
             logger.warning("[DEMO] consulta de orden {} fallo (no critico): {}", order_id, exc)
             return None
+
+    # ------------------------------------------------------------------
+    # Fallback 2-patas via bridge (EUR) — solo entorno demo, ver __init__
+    # ------------------------------------------------------------------
+
+    def _bridge_leg(self, inst: str, side: str, sz: Decimal, tgt: str):
+        """Una pata market del bridge. (avgPx, qty, fee, feeCcy) o None si no ejecuto."""
+        try:
+            resp = self._call_api(
+                self._trade_api.place_order, instId=inst, tdMode="cash",
+                side=side, ordType="market", sz=str(sz), tgtCcy=tgt,
+            )
+            d = resp["data"][0]
+            if str(d.get("sCode", "0")) != "0":
+                logger.warning("[DEMO-BRIDGE] pata {} {} sz={} rechazada: {}",
+                               side, inst, sz, d.get("sMsg"))
+                return None
+            info = self._query_order(inst, d["ordId"])
+            if info is None:
+                return None
+            state, px, qty, fee, fee_ccy = info
+            if qty <= 0 or px is None:
+                logger.warning("[DEMO-BRIDGE] pata {} {} sz={} sin fill (state={})",
+                               side, inst, sz, state)
+                return None
+            logger.info("[DEMO-BRIDGE] pata {} {} qty={} @ {} fee={} {}",
+                        side, inst, qty, px, fee, fee_ccy)
+            return px, qty, fee, fee_ccy
+        except Exception as exc:
+            logger.warning("[DEMO-BRIDGE] pata {} {} fallo: {}", side, inst, exc)
+            return None
+
+    def _bridge_market(self, symbol: str, side: str, size: Decimal,
+                       strategy: str) -> OrderResult | None:
+        """Reintenta una market cancelada por el motor demo en 2 patas via bridge.
+
+        SELL base: base->EUR (pata 1) y EUR->quote de ejecucion (pata 2).
+        BUY  base: quote->EUR (pata 1), EUR->base (pata 2) y barrido del EUR sobrante
+        de vuelta a la quote (pata 3, best-effort).
+
+        Devuelve un OrderResult en el espacio de la estrategia con precio EFECTIVO
+        (quote neta movida / base movida; fee=0 porque ya va neteada en el precio), o
+        None si la pata 1 no ejecuto (sin cambios de estado, el caller reporta rejected).
+        Si una pata intermedia falla, el sobrante queda en EUR y se avisa con ERROR:
+        se corrige a mano o en el siguiente rebalanceo. Es entorno demo: prioridad a
+        ejercitar el camino real de ordenes, no a la contabilidad perfecta.
+        """
+        base, _ = symbol.split("-")
+        bq = self._bridge_quote
+        exec_q = self._exec_quote or self._strategy_quote
+        base_eur = f"{base}-{bq}"      # BTC-EUR
+        quote_eur = f"{exec_q}-{bq}"   # USDC-EUR
+        two_dp = Decimal("0.01")
+
+        if side == "sell":
+            leg1 = self._bridge_leg(base_eur, "sell", size, "base_ccy")
+            if leg1 is None:
+                return None
+            px1, qty1, fee1, _ = leg1                       # fee1 en EUR
+            eur_got = (px1 * qty1 - fee1).quantize(two_dp, rounding="ROUND_DOWN")
+            leg2 = self._bridge_leg(quote_eur, "buy", eur_got, "quote_ccy")
+            if leg2 is None:
+                logger.error("[DEMO-BRIDGE] {} {} vendidos pero {} EUR varados (pata 2 "
+                             "fallo). Convertir a mano o esperar siguiente rebalanceo.",
+                             qty1, base, eur_got)
+                quote_moved = eur_got / self._bridge_rate()  # estimacion para el journal
+            else:
+                px2, qty2, fee2, _ = leg2                    # qty2 = quote comprada, fee2 en quote
+                quote_moved = qty2 - fee2
+            eff_px = (quote_moved / qty1).quantize(two_dp)
+            base_moved = qty1
+        else:
+            # Estimar el EUR necesario con el feed real (el demo cotiza distinto pero
+            # el buffer del 3% + barrido final absorben la diferencia).
+            px_ref = self._md.get_ticker(base_eur)
+            if px_ref <= 0:
+                return None
+            eur_needed = (size * px_ref * Decimal("1.03")).quantize(two_dp)
+            quote_to_sell = (eur_needed / self._bridge_rate() * Decimal("1.01")
+                             ).quantize(two_dp)
+            leg1 = self._bridge_leg(quote_eur, "sell", quote_to_sell, "base_ccy")
+            if leg1 is None:
+                return None
+            px1, qty1, fee1, _ = leg1                       # qty1 = quote vendida, fee1 EUR
+            eur_avail = (px1 * qty1 - fee1).quantize(two_dp, rounding="ROUND_DOWN")
+            leg2 = self._bridge_leg(base_eur, "buy", size, "base_ccy")
+            if leg2 is None:
+                logger.error("[DEMO-BRIDGE] {} {} vendidos pero {} EUR varados (pata 2 "
+                             "fallo). Convertir a mano o esperar siguiente rebalanceo.",
+                             qty1, exec_q, eur_avail)
+                return None
+            px2, qty2, fee2, _ = leg2                       # qty2 = base comprada, fee2 en base
+            eur_left = (eur_avail - px2 * qty2).quantize(two_dp, rounding="ROUND_DOWN")
+            quote_back = Decimal("0")
+            if eur_left > Decimal("1"):
+                leg3 = self._bridge_leg(quote_eur, "buy", eur_left, "quote_ccy")
+                if leg3 is not None:
+                    _, qty3, fee3, _ = leg3
+                    quote_back = qty3 - fee3
+                else:
+                    logger.warning("[DEMO-BRIDGE] barrido: {} EUR quedan sin volver a {}",
+                                   eur_left, exec_q)
+            quote_moved = qty1 - quote_back
+            base_moved = qty2 - fee2
+            eff_px = (quote_moved / base_moved).quantize(two_dp)
+
+        logger.info("[DEMO-BRIDGE] {} {} {} via {} completado: {} {} <-> {} {} (px efectivo {})",
+                    side, size, symbol, bq, base_moved, base, quote_moved, exec_q, eff_px)
+        result = OrderResult(
+            order_id=f"BRIDGE-{self._utcnow().strftime('%H%M%S')}", symbol=symbol,
+            side=side, order_type="market", size=size, limit_price=None,
+            filled_price=eff_px, filled_qty=base_moved, fee=Decimal("0"),
+            fee_currency=self._strategy_quote, status="filled", is_paper=True,
+            strategy=strategy, timestamp=self._utcnow(),
+        )
+        self.get_balance()   # refresca el espejo tras mover 2-3 patas
+        return result
+
+    def _bridge_rate(self) -> Decimal:
+        """EUR por unidad de quote (USDC), estimado con el feed real. Fallback 0.9."""
+        try:
+            rate = self._md.get_ticker(f"{self._exec_quote or self._strategy_quote}"
+                                       f"-{self._bridge_quote}")
+            if rate > 0:
+                return rate
+        except Exception:
+            pass
+        return Decimal("0.9")
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         try:
