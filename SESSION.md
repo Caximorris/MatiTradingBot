@@ -4,9 +4,9 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-13** (bot demo OKX DESPLEGADO en la VM y operando contra la
-cuenta demo EEA: fix tgtCcy `788097f`, soporte EEA+mapeo USDC `56f37e5`, bridge EUR `f849434`
-— todo pusheado. 4 bots corriendo: v5/v6/legacy paper + demo contra el engine real de OKX)
+**Ultima actualizacion: 2026-07-14** (v6-2 congelado y documentacion/Graphify sincronizados;
+fix de frontera diaria UTC en `RiskManager.check_daily_loss`; 233 tests pasan. El bot demo OKX
+esta desplegado, pero falta confirmar pull+restart de la configuracion v6-2 en la VM.)
 
 ---
 
@@ -19,6 +19,9 @@ v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d
 - 2015-26 realistic: **$9.505M | CAGR +86.51% | Max DD -52.73% | 70 reb | btc_vs_bnh 0.8499**
 - 2018-26 realistic: $229.0k | +47.90% | -53.72% | 53 | 0.8785
 - 2015-26 conservative: $9.255M | +86.06% | -52.88% | 70 | 0.8281
+
+Validacion local 2026-07-14: **233/233 tests**. `RiskManager.check_daily_loss` calcula ahora el
+inicio del dia desde el reloj UTC real; antes usaba la fecha local y la etiquetaba como UTC.
 
 v6 fue promovido porque v5/v6 empezaron paper simultaneamente, no existia ventaja forward previa
 de v5, y v6 domina las tres anclas y 7/8 rolling starts sin empeorar DD ni churn. Hoy seguimos en
@@ -63,7 +66,7 @@ por primera vez: limpia (los 474 dups del cache = hallazgo conocido, no accion).
 ejercitar por PRIMERA vez el camino de ordenes autenticado real de OKX antes del live de
 septiembre 2026. `core/okx_demo_client.py` (hibrido: market data REAL flag=0 → paridad F15
 intacta; ordenes/balance DEMO flag=1 con credenciales `OKX_DEMO_*`), `tools/okx_demo_setup.py`
-(registra `swing_allocator_demo_btc_usdt`, label `demo`, config v5 exacta + `execution=okx_demo`),
+(registro original con flags v6 desactivados; `main` actual fija v6-2 + `execution=okx_demo`),
 routing en `cli/live_cmds.py` (fallo de credenciales = skip solo ese bot). Espejo de balances en
 `paper_state_okx_demo.json` → Telegram `/status demo` etc. funcionan sin cambios. 12 tests nuevos
 (210/210). MEDIDO 2026-07-11: el feed de precios demo tiene high/low inflados $80-250/vela 1H →

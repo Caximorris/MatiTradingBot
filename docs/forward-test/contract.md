@@ -27,8 +27,8 @@
 
 | Label | Bot (`BotState.strategy_name`) | Wallet file | Notes |
 |-------|-------------------------------|-------------|-------|
-| **v5** | `swing_allocator_v5_*` | `data/runtime/paper_state_<id>.json` | Frozen default, tag `swing-v5-frozen`. The reference. |
-| **v6** | `swing_allocator_v6_*` | `data/runtime/paper_state_<id>.json` | Phase router + funding overlay (`SWING_V6_PLAN.md`). **Expected to be byte-identical to v5 in live until ~2026-10-07** (still in `bear_onset`; overlay only fires in `accumulation`). |
+| **v5** | `swing_allocator_v5_*` | `data/runtime/paper_state_<id>.json` | Frozen default at test start; now rollback/control. Tag `swing-v5-frozen`. |
+| **v6** | `swing_allocator_v6_*` | `data/runtime/paper_state_<id>.json` | Current frozen default: phase router + funding overlay. **Expected to be byte-identical to v5 until ~2026-10-07** (still in `bear_onset`; overlay only fires in `accumulation`). |
 | **legacy** | `swing_allocator_*` (no version) | shared `data/runtime/paper_state.json` | Pre-isolation bot. Kept for continuity. |
 
 **Amendment 2026-07-13:** v6-2 became the code/default-paper configuration by explicit user

@@ -45,9 +45,9 @@ Copiar el bloque, rellenar, anadir a la seccion que corresponda (Aceptado/Rechaz
 - Hipotesis: evaluar indicadores diarios solo con dias UTC cerrados (F8 de la auditoria v4) no cambia el resultado si no habia lookahead, y lo confirma.
 - Ventana de datos: 2015-2026 y 2018-2026
 - Metricas: 2015-26 realistic $9.137M / +85.84% CAGR / -52.73% DD / 70 reb (tool `swing_v5_freeze_report.py`); CLI da $9.164M (warmup distinto, no regresion).
-- Decision: accepted (default, tag `swing-v5-frozen`)
-- Razon: unico delta de comportamiento vs v4 estructural; congelado para paper.
-- Permitido en forward-test?: yes (es el default)
+- Decision: accepted (default historico, ahora rollback/control; tag `swing-v5-frozen`)
+- Razon: unico delta de comportamiento vs v4 estructural; preservado como baseline v5.
+- Permitido en forward-test?: yes (control/rollback de v6-2)
 - Referencias: tag `swing-v5-frozen` @ 4c955fb, `docs/swing/audits.md`
 
 ### EXP-006 — Swing v6-2: funding overlay +0.05

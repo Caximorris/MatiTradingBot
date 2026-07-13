@@ -4,7 +4,7 @@ Se consulta antes de cada operación para decidir si está permitida.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from loguru import logger
@@ -130,9 +130,9 @@ class RiskManager:
         Suma el PnL realizado de hoy desde la DB.
         Retorna (limite_alcanzado: bool, pnl_dia: float).
         """
-        today_start = datetime.combine(
-            date.today(), datetime.min.time()
-        ).replace(tzinfo=timezone.utc)
+        today_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
         with get_session() as session:
             result = (

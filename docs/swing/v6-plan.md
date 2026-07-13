@@ -374,7 +374,8 @@ Rolling starts anuales 2018-2024:
 - `+0.05`: 8/8 `NEEDS_MORE_VALIDATION`, sin `REJECT`; mejora final y BTC ratio en 7/8, sin efecto en el start 2024-12-30.
 - `+0.10`: mejora final, pero da `REJECT` en 4/8 por exceder el limite de churn (>20% rebalanceos).
 
-Decision: V6-2 p10/p90 `+0.05` es el candidato vivo. V6-3 `+0.10` no debe ser default sin evidencia forward o una regla adicional que controle churn.
+Decision final: V6-2 p10/p90 `+0.05` es el default congelado. V6-3 `+0.10` queda rechazado
+como default por exceso de churn.
 
 ### Revalidacion 2026-07-13
 

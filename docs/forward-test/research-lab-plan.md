@@ -81,7 +81,8 @@ Every task uses this block:
 ## 1. Objective
 
 Turn this project from "a bot that trades" into a **disciplined research + monitoring lab**
-around a frozen BTC allocation strategy (Swing v5, tag `swing-v5-frozen`).
+around a frozen BTC allocation strategy (currently Swing v6-2; v5 is the rollback/control and
+was the frozen default when the forward test started).
 
 The near-term goal is **NOT** to raise CAGR or optimize the strategy. The 2015-2026 window is
 CLOSED for optimization (SESSION.md rule 5). Instead:
@@ -114,7 +115,8 @@ improves.
 4. **Do not change historical backtest assumptions** (costs, warmup, cache, fill model in
    `core/backtest.py`, `data/ohlcv_cache.py`) unless the change is explicitly marked
    `safe-infra` / `data-integrity` AND is behavior-preserving for existing anchors
-   (verified via `tools/swing_v5_freeze_report.py` and `tools/swing_parity_check.py`).
+   (verified via `tools/swing_v6_freeze_report.py`, `tools/swing_v5_freeze_report.py`, and
+   `tools/swing_parity_check.py`).
 5. **Do not use the closed 2015-2026 window for further strategy tuning.** It is for
    measuring robustness only (SESSION.md rule 5). Simplification-only exceptions still apply.
 6. **Every code change is classified as exactly one of:**
@@ -157,8 +159,8 @@ we read more results, so nothing can be reinterpreted after the fact.
     - Notes: Content must include, at minimum:
         - **Forward test start date** (the deploy/reset baseline; pull from `DEPLOY_PAPER.md`
           and the earliest `swing_rebalances.jsonl` INIT per bot — do not guess).
-        - **Variants under test:** v5 (frozen default), v6 (`SWING_V6_PLAN.md`, phase router +
-          funding overlay), legacy (`paper_state.json` bot).
+        - **Variants under test:** v6-2 (current frozen default), v5 (rollback/control; default at
+          test start), and legacy (`paper_state.json` bot).
         - **Paper wallets:** `data/runtime/paper_state_<id>.json` per bot; legacy shared
           `paper_state.json`. Map each `instance_id` -> wallet file.
         - **Allowed interventions:** restart VM/process, restart Telegram service, fix
@@ -285,7 +287,7 @@ reconstructed from current logs.
       `emit_decision_trace: bool = False` (default False = identical behavior).
     - Acceptance criteria:
         - [ ] With the flag OFF, byte-for-byte identical behavior + identical anchors
-              (verified via `tools/swing_v5_freeze_report.py` and `tools/swing_parity_check.py`).
+              (verified via both Swing freeze reports and `tools/swing_parity_check.py`).
         - [ ] With the flag ON, every tick emits target-vs-actual + gate reason (threshold not
               met / cooldown active) to the new JSONL, and NOTHING else changes.
         - [ ] Output shows whether all inputs were available without lookahead

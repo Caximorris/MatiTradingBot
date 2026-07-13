@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-13T19:59:58.342660+00:00",
+  "generated_at": "2026-07-13T21:55:10.180381+00:00",
   "nodes": {
     "core_backtest_backtestengine": {
       "code_fingerprint": "ec8aebccf04abcbf8d14b7c1746f211d60c7abed92ea753010e5137d8003f63a",
@@ -12,7 +12,7 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.999661715,
+      "score": 0.997815698,
       "source_file": "core/backtest.py",
       "status": "tentative",
       "uses": 1
@@ -28,7 +28,7 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.999661715,
+      "score": 0.997815698,
       "source_file": "core/database.py",
       "status": "tentative",
       "uses": 1
@@ -36,8 +36,14 @@
     "core_exchange_okxclient": {
       "code_fingerprint": "953f9e716dc9a8ef6031b6ae2d373c9c6498efb3e4d644867768d0bab2a486d3",
       "label": "OKXClient",
-      "last": "2026-07-13T19:46:49.181918+00:00",
+      "last": "2026-07-13T20:28:36.235026+00:00",
+      "neg": 1,
       "provenance": [
+        {
+          "date": "2026-07-13T20:28:36.235026+00:00",
+          "outcome": "corrected",
+          "q": "Should Swing Allocator v6 replace frozen v5, and what else should be improved after mapping all connections?"
+        },
         {
           "date": "2026-07-13T19:46:49.181918+00:00",
           "outcome": "useful",
@@ -49,16 +55,23 @@
           "q": "track all conections"
         }
       ],
-      "score": 1.999450702,
+      "score": 0.997146422,
       "source_file": "core/exchange.py",
-      "status": "preferred",
-      "uses": 2
+      "status": "contested",
+      "uses": 2,
+      "verdict": "useful"
     },
     "core_okx_demo_client_okxdemoclient": {
       "code_fingerprint": "bbc3180a7cf9625f60ced488e26f342babd2b8b07ebafac0b1daffd4c8458829",
       "label": "OKXDemoClient",
-      "last": "2026-07-13T19:46:49.181918+00:00",
+      "last": "2026-07-13T20:28:36.235026+00:00",
+      "neg": 1,
       "provenance": [
+        {
+          "date": "2026-07-13T20:28:36.235026+00:00",
+          "outcome": "corrected",
+          "q": "Should Swing Allocator v6 replace frozen v5, and what else should be improved after mapping all connections?"
+        },
         {
           "date": "2026-07-13T19:46:49.181918+00:00",
           "outcome": "useful",
@@ -70,10 +83,11 @@
           "q": "track all conections"
         }
       ],
-      "score": 1.999450702,
+      "score": 0.997146422,
       "source_file": "core/okx_demo_client.py",
-      "status": "preferred",
-      "uses": 2
+      "status": "contested",
+      "uses": 2,
+      "verdict": "useful"
     },
     "core_risk_manager_riskmanager": {
       "code_fingerprint": "85d860c45788a79dea33c52b884a6d606cbcb8037e48c5036798766bdd70dbb4",
@@ -86,7 +100,7 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.999661715,
+      "score": 0.997815698,
       "source_file": "core/risk_manager.py",
       "status": "tentative",
       "uses": 1
@@ -102,13 +116,13 @@
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.999788987,
+      "score": 0.997942734,
       "source_file": "docs/archive/refactor-backlog.md",
       "status": "tentative",
       "uses": 1
     },
     "docs_forward_test_contract_forward_test_contract": {
-      "code_fingerprint": "be2b82718d329550785f3bdbe4ab1d341c706ba7d8ad4699aa92e40f26985d8a",
+      "code_fingerprint": "730635f30b2655b0dbebe5fb6abee81cf8f26f30314abb96cb7c0952b0f39350",
       "label": "Frozen Forward-Test Contract",
       "last": "2026-07-13T19:46:49.181918+00:00",
       "provenance": [
@@ -118,7 +132,7 @@
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.999788987,
+      "score": 0.997942734,
       "source_file": "docs/forward-test/contract.md",
       "status": "tentative",
       "uses": 1
@@ -134,26 +148,38 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.999661715,
+      "score": 0.997815698,
       "source_file": "reporting/trade_logger.py",
       "status": "tentative",
       "uses": 1
     },
     "strategies_swing_allocator_swingallocatorbot": {
-      "code_fingerprint": "912d15e10960352442483de9ac5b0e7d60501fc17875d449b4feed82c8517b94",
+      "code_fingerprint": "04e4fbaadf71e2944d4dd44b3b397b95af359db7895c1515d70753c470295e0f",
       "label": "SwingAllocatorBot",
-      "last": "2026-07-13T19:38:53.125339+00:00",
+      "last": "2026-07-13T21:39:20.686298+00:00",
+      "neg": 2,
       "provenance": [
+        {
+          "date": "2026-07-13T21:39:20.686298+00:00",
+          "outcome": "corrected",
+          "q": "Should Swing Allocator v6 replace frozen v5, and what else should be improved after mapping all connections?"
+        },
+        {
+          "date": "2026-07-13T20:28:36.235026+00:00",
+          "outcome": "corrected",
+          "q": "Should Swing Allocator v6 replace frozen v5, and what else should be improved after mapping all connections?"
+        },
         {
           "date": "2026-07-13T19:38:53.125339+00:00",
           "outcome": "useful",
           "q": "track all conections"
         }
       ],
-      "score": 0.999661715,
+      "score": -1.000542433,
       "source_file": "strategies/swing_allocator.py",
-      "status": "tentative",
-      "uses": 1
+      "status": "contested",
+      "uses": 1,
+      "verdict": "dead end"
     },
     "tools_anomaly_check": {
       "code_fingerprint": "65497be49ae33d932cc7a60ed80f464979f257dd78879d52cc79ef0874cb3d44",
@@ -166,7 +192,7 @@
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.999788987,
+      "score": 0.997942734,
       "source_file": "tools/anomaly_check.py",
       "status": "tentative",
       "uses": 1
@@ -182,7 +208,7 @@
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.999788987,
+      "score": 0.997942734,
       "source_file": "tools/funding_refresh.py",
       "status": "tentative",
       "uses": 1
@@ -198,7 +224,7 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.999661715,
+      "score": 0.997815698,
       "source_file": "tools/telegram_remote.py",
       "status": "tentative",
       "uses": 1

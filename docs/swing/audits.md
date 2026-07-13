@@ -5,6 +5,10 @@ Documento consolidado. Reúne las tres piezas de la auditoría cuantitativa del 
 `AUDITORIA_SWING_V5_POST_IMPLEMENTACION.md`). Contenido íntegro, sin recortes; solo reorganizado en
 tres secciones para no tener tres ficheros sueltos en la raíz.
 
+> **Estado actual (2026-07-13):** este documento conserva las auditorias historicas v4/v5.
+> Swing v6-2 es ahora el default congelado; v5 permanece como control/rollback. La decision y
+> las anclas vigentes estan en `docs/swing/v6-plan.md` y `SESSION.md`.
+
 **Índice**
 
 1. [Auditoría v4 — hallazgos B1–B5 / C1–C9](#1-auditoria-swing-v4)

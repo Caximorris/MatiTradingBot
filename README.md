@@ -66,11 +66,11 @@ system against the two ways quant backtests deceive you:
   candle-for-candle across runs and machines.
 
 Money is `Decimal` everywhere (never `float`). Dates are UTC in storage, converted to Europe/Madrid
-only in reporting. 210 passing tests.
+only in reporting. 233 passing tests.
 
 ---
 
-## The flagship: Swing Allocator (frozen v5)
+## The flagship: Swing Allocator (frozen v6-2)
 
 Not a buy/sell-signal bot — an **allocator**. It decides what percentage of the portfolio sits in
 BTC vs cash (floor **20%**, ceiling **100%**, neutral **60%**) and rebalances only when the target
@@ -88,24 +88,24 @@ testing. The whole config is one big dataclass of levers you flip on or off.
 **Why it beats Buy & Hold:** USDT preserved through bear markets buys cheap BTC in the recovery.
 In 2022 (BTC −77%) it drops to 20% BTC, preserves capital, and re-accumulates for 2023–2025.
 
-### Swing v5 vs BTC Buy & Hold — 2015→2026, realistic costs (0.1% fee + 5 bps)
+### Swing v6-2 vs BTC Buy & Hold — 2015→2026, realistic costs (0.1% fee + 5 bps)
 
-| Metric | Swing v5 | BTC Buy & Hold |
+| Metric | Swing v6-2 | BTC Buy & Hold |
 |---|---:|---:|
-| Final balance (from $10k) | **$9.14M** | $2.74M |
-| **CAGR** | **+85.84%** | +66.6% |
+| Final balance (from $10k) | **$9.505M** | $2.74M |
+| **CAGR** | **+86.51%** | +66.6% |
 | **Max Drawdown** | **−52.73%** | −83.77% |
-| Calmar (CAGR/MaxDD) | **1.63** | 0.80 |
-| Sharpe / Sortino | 1.38 / 1.57 | 1.08 / 1.28 |
+| Calmar (CAGR/MaxDD) | **1.64** | 0.80 |
 | Rebalances | 70 | 1 (hold) |
-| BTC vs B&H | 0.82× | 1.00× |
+| BTC vs B&H | 0.85× | 1.00× |
 
 > **Honest caveats.** Per-trade metrics (PF, win-rate) are per-rebalance and are *not* the verdict —
 > that's why the anchors are CAGR, Max DD, Calmar. It ends with *less* BTC than a pure holder
-> (0.82×): the thesis is maximizing cycle-adjusted USDT value, not out-accumulating BTC. The −52.7%
+> (0.85×): the thesis is maximizing cycle-adjusted USDT value, not out-accumulating BTC. The −52.7%
 > drawdown is judged the **structural floor** for a long-only strategy — backtest optimization is
 > declared *done*. The remaining question is forward data: does it hold up on candles it has never
-> seen? v5 is frozen (`swing-v5-frozen`) pending paper/forward validation; no real capital risked.
+> seen? v6-2 is the frozen paper/default configuration; v5 remains the exact rollback/control.
+> No real capital is risked.
 
 ---
 
@@ -115,7 +115,7 @@ Seven are registered; only one is active.
 
 | Strategy | What it is | Status |
 |---|---|---|
-| `swing_allocator` | Dynamic BTC/cash allocation | **Default, frozen at v5** |
+| `swing_allocator` | Dynamic BTC/cash allocation | **Default, frozen at v6-2**; v5 rollback/control |
 | `pro_trend` | Multi-timeframe trend following (1856 lines) | Paused indefinitely, frozen at v13 |
 | `prop_swing` / `funding_extreme` | Prop-firm challenge (someone else's capital) | **Running in paper** (CFT-only candidate); backtest gates not yet met — no challenge purchased |
 | `adaptive_trend`, `scalp_momentum`, `range_reversion` | Older experiments | Dormant |
@@ -173,7 +173,7 @@ python main.py paper-status            # control center for v5/v6/legacy bots
 python main.py anomaly-check           # infra/data/state red-flags (incl. stale-cron detection)
 python main.py forward-report          # metrics from post-start data only
 python main.py data-audit              # OHLCV cache integrity (never re-downloads)
-python main.py explain --bot v5        # plain-language "why" of an executed rebalance
+python main.py explain --bot v6        # plain-language "why" of an executed rebalance
 
 # Spanish IRPF tax report (FIFO, Excel + JSON)
 python main.py report --year 2025
@@ -195,7 +195,8 @@ a daily cron runs parity + degradation checks, and `/audit` runs the anomaly eng
 
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
 **demo-trading** API key — fake funds only, created inside OKX's demo mode. Since 2026-07-13 a
-fourth bot (`demo`) runs the same frozen v5 strategy but places its orders on OKX's demo engine,
+fourth bot (`demo`) is configured by current `main` to run frozen v6-2 while placing orders on
+OKX's demo engine (the VM must pull/restart to activate the repository update),
 exercising the real authenticated order path before a single real dollar is at stake (planned
 live: September 2026). Its first day already paid for itself: it surfaced a ghost-fill bug
 (engine-canceled market orders reported as filled), MiCA compliance blocks (USDT untradeable on
@@ -204,11 +205,11 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 
 ---
 
-## The two side-quests
+## Research status
 
-- **Swing v6** — an experimental successor (phase-router + funding overlay) that, *by design*,
-  behaves identically to v5 until ~Oct 2026, so the paper A/B test produces no signal until then.
-  Research plan: [`docs/swing/v6-plan.md`](docs/swing/v6-plan.md).
+- **Swing v6-2** — the frozen default (v5-equivalent phase router + accumulation-only funding
+  overlay). It behaves identically to the v5 control until ~Oct 2026; v5 remains available as an
+  exact rollback. Decision record: [`docs/swing/v6-plan.md`](docs/swing/v6-plan.md).
 - **Prop firm (Hyro / CFT / Bybit)** — an attempt to pass a funded-account challenge. Backtest
   verdict: the edge is real, but the pass/breach rate doesn't yet meet the firm's gates, so **no
   challenge has been purchased**. The CFT-only candidate is nonetheless **running in paper** on the
@@ -236,7 +237,7 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 
 Python 3.12 · typer + rich (CLI) · pandas + pandas-ta · python-okx · aiohttp / urllib
 (*deliberately not* `requests`) · SQLAlchemy + SQLite · python-telegram-bot · APScheduler ·
-`Decimal` for all money · 210 passing tests.
+`Decimal` for all money · 233 passing tests.
 
 > **The honest summary:** someone spent months building rigorous machinery to answer *"does this BTC
 > allocation strategy actually work, or am I fooling myself?"* — got to "+85% CAGR that survives the

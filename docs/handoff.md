@@ -1,34 +1,34 @@
-# Handoff 2026-07-05 — MatiTradingBot
+# Handoff 2026-07-13 — MatiTradingBot
 
 Este archivo es el punto de arranque para continuar mañana desde otro PC.
 
-> **ACTUALIZACION 2026-07-11:** este handoff es un snapshot del 2026-07-05 (rama ya mergeada a
-> `main`). El estado VIVO esta en `SESSION.md` (bloques "SEMANA 1 DEL FORWARD-TEST" y "CLIENTE
-> OKX DEMO TRADING" + "SIGUIENTE PASO"). Resumen de lo ocurrido desde este snapshot: 2 bugs de
-> infra de la semana 1 arreglados (`973d433` cron +x, `4b1425f` registry resolve), suite
-> T5.1/T11.1 + `/audit` (`7107631`, sin push), y cliente demo OKX construido sin commit —
-> pendiente deploy en la VM con API key demo. Tests: 210 passed. Trabajar sobre `main`.
+> **ESTADO ACTUAL:** trabajar sobre `main`. Swing v6-2 es el default congelado; v5 queda como
+> control/rollback. El cliente OKX Demo esta desplegado; el repo lo configura con v6-2, pendiente
+> confirmar `git pull` + restart en la VM. El estado operativo y los siguientes pasos viven en
+> `SESSION.md`. Commit de sincronizacion inicial:
+> `0d24671`; este handoff se mantiene actualizado para continuar desde otro PC.
 
 ## 1. Estado rapido
 
-- Rama de trabajo: `codex-handoff-prop-cft-swing-v6`
-- Default de estrategia: **Swing Allocator v5 post-audit**, congelado.
-- Paper Swing v5: desplegado en VM GCP `matitrbot`, con Telegram y checks diarios.
+- Rama de trabajo: `main`.
+- Default de estrategia: **Swing Allocator v6-2**, congelado.
+- Paper Swing v6/v5/legacy: desplegado en VM GCP `matitrbot`, con Telegram y checks diarios.
 - Prop/CFT: paper operativo preparado, no comprado challenge, no live.
-- Swing v6: candidato de paper implementado y reversible; no default.
-- Tests al cierre: `132 passed`.
+- Swing v5: control paper y rollback exacto (`use_phase_policy_router=false`,
+  `use_funding_overlay=false`).
+- Tests al cierre: `233 passed`.
 
 ## 2. Archivos que debes leer primero
 
 1. `AGENTS.md`
 2. `SESSION.md`
 3. Este archivo
-4. `DEPLOY_PAPER.md`
-5. `SWING_V6_PLAN.md`
+4. `docs/ops/deploy-paper.md`
+5. `docs/swing/v6-plan.md`
 
 Para Prop/CFT:
 
-6. `HYROTRADER_PLAN.md`
+6. `docs/prop/hyrotrader-plan.md`
 
 Para historial de versiones:
 
@@ -36,7 +36,7 @@ Para historial de versiones:
 
 ## 3. Que esta congelado
 
-### Swing v5
+### Swing v6-2
 
 No optimizar de nuevo por ahora. La fase actual es forward/paper:
 
@@ -44,13 +44,13 @@ No optimizar de nuevo por ahora. La fase actual es forward/paper:
 - F15: 30 dias de paridad live/backtest.
 - F19: degradacion/frecuencia de rebalanceos.
 
-Anclas v5:
+Anclas v6-2:
 
 | Window | Costes | Final | CAGR | Max DD | Rebalances | BTC vs B&H |
 |---|---:|---:|---:|---:|---:|---:|
-| 2015-2026 | realistic | $9.137M | +85.84% | -52.73% | 70 | 0.8171 |
-| 2018-2026 | realistic | $219.8k | +47.14% | -53.72% | 53 | 0.8432 |
-| 2015-2026 | conservative | $8.897M | +85.40% | -52.88% | 70 | 0.7961 |
+| 2015-2026 | realistic | $9.505M | +86.51% | -52.73% | 70 | 0.8499 |
+| 2018-2026 | realistic | $229.0k | +47.90% | -53.72% | 53 | 0.8785 |
+| 2015-2026 | conservative | $9.255M | +86.06% | -52.88% | 70 | 0.8281 |
 
 No reabrir sin datos nuevos:
 
@@ -104,13 +104,14 @@ No comprar challenge sin:
 - `deploy/daily_checks.sh`: incluye estado Prop/CFT en check diario.
 - `tools/telegram_remote.py`: comandos `/prop`, `/prop_report`, `/prop_pause`, `/prop_resume`.
 
-### Investigacion v6
+### Swing v6 default y control v5
 
-- `SWING_V6_PLAN.md`: plan detallado de v6.
+- `docs/swing/v6-plan.md`: decision, validacion y rollback de v6.
 - `strategies/swing_phase_policy.py`: router `v5_equiv` con paridad exacta.
 - `strategies/swing_funding_overlay.py`: overlay de funding cerrado/deduplicado.
 - `tools/swing_paper_setup.py`: registra Swing v6 paper aislado (`paper_portfolio_id=swing_v6`).
-- Enfoque actual: paper OOS de V6-2 (`accumulation`, p10/p90, `+0.05`, ttl 7d), sin tocar default.
+- Enfoque actual: paper OOS del default V6-2 (`accumulation`, p10/p90, `+0.05`, ttl 7d)
+  contra la instancia v5 aislada. No ajustar mas parametros sobre la muestra cerrada.
 
 ### Prop research
 
@@ -128,8 +129,6 @@ Nuevos tools de investigacion ya usados:
 ```bash
 git clone https://github.com/Caximorris/MatiTradingBot.git
 cd MatiTradingBot
-git checkout codex-handoff-prop-cft-swing-v6
-
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -143,8 +142,6 @@ Si estas en Windows PowerShell:
 ```powershell
 git clone https://github.com/Caximorris/MatiTradingBot.git
 cd MatiTradingBot
-git checkout codex-handoff-prop-cft-swing-v6
-
 py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -154,14 +151,14 @@ No copies `.env` ni `trading.db` desde Git: no se versionan.
 
 ## 6. VM GCP
 
-Runbook: `DEPLOY_PAPER.md`.
+Runbook: `docs/ops/deploy-paper.md`.
 
 Comandos Telegram Swing (multi-bot desde 2026-07-06, commit `6e95f0d`; `bot` = v5/v6/legacy):
 
 - `/status [bot]` — resumen de todos, o detalle de uno
 - `/bots` — bots swing registrados y su cartera
 - `/report [bot] [n]`
-- `/signals` — target/senales live (v5 canonico, un solo calculo)
+- `/signals` — target/senales live (v6 canonico, un solo calculo)
 - `/parity`
 - `/equity [bot] [dias]`
 - `/chart [bot] [dias]`
@@ -205,23 +202,18 @@ python main.py status
 Ultima validacion local:
 
 ```text
-132 passed in 1.32s
+233 passed
 ```
 
 ## 8. Siguiente paso recomendado
 
-1. Hacer pull/checkout de esta rama en el otro PC.
+1. Hacer `git pull origin main` en el otro PC.
 2. Verificar que la VM sigue viva con Telegram `/status` y `/health`.
 3. Si se quiere continuar Prop/CFT: activar paper, no comprar challenge.
-4. Si se quiere continuar Swing v6: empezar por tooling, no por cambios de señales:
-   - `tools/swing_phase_attribution.py`
-   - `tools/swing_rolling_start_matrix.py`
-   - `tools/swing_funding_overlay_screen.py`
-5. No promover nada a default hasta tener OOS/forward posterior a 2026-01-01.
+4. Resolver la frescura del cache funding en la VM antes de `accumulation` (~2026-10-07).
+5. Mantener v5 como control; no promover un sucesor de v6 sin evidencia forward diferenciada.
 
 ## 9. Riesgos pendientes
 
-- `gh` no esta instalado en este Mac; por eso el flujo de PR puede requerir GitHub web o instalar
-  GitHub CLI en el siguiente PC.
-- La rama contiene cambios grandes de Prop/CFT y docs; revisar diff antes de fusionar a `main`.
-- `HYROTRADER_PLAN.md` esta en el limite de 800 lineas. No seguir ampliandolo; crear docs nuevos.
+- El cache funding de Bybit devuelve 403 desde la IP de la VM; sin cache fresco v6 degrada a v5.
+- `docs/prop/hyrotrader-plan.md` esta en el limite de 800 lineas. No seguir ampliandolo; crear docs nuevos.

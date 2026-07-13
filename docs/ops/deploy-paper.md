@@ -1,6 +1,7 @@
-# DEPLOY_PAPER.md — Paper trading del Swing v5 en la nube (runbook)
+# DEPLOY_PAPER.md — Paper trading Swing v6-2 + control v5 en la nube (runbook)
 
-Plan aprobado 2026-07-02 (sesion 16). Objetivo: correr la validacion forward del Swing v5
+Plan aprobado 2026-07-02 (sesion 16), actualizado tras promover v6-2 el 2026-07-13. Objetivo:
+correr la validacion forward del default v6-2 y mantener Swing v5 como control/rollback
 (smoke 24h F13 + paridad 30 dias F15 + degradacion F19) en una VM gratuita, con control
 remoto por Telegram, sin depender del PC de casa. Coste objetivo: $0.
 
@@ -27,8 +28,9 @@ Estado persistente (sobrevive a reinicios de proceso y de VM):
 ```
 
 Claves de diseno:
-- **Paper = sin secretos**: no hay API keys de OKX en la VM (solo datos publicos de mercado).
-  El unico secreto es el token del bot de Telegram (da acceso a pausar/reanudar, nada mas).
+- **Paper local = sin claves de trading**: los bots v5/v6/legacy solo usan datos publicos.
+  La instancia `demo` usa una API key exclusiva de OKX Demo y Telegram usa su propio token;
+  ninguna clave permite operar capital real.
 - **`OKX_SANDBOX=false` obligatorio**: datos del exchange real. El sandbox demo tiene precios
   propios y romperia la paridad con el backtest. Paper nunca envia ordenes reales.
 - **Telegram por long-polling**: sin puertos abiertos en la VM, solo trafico saliente.
@@ -80,7 +82,7 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 | Paridad F15: ultimo check y racha /30 | Telegram `/parity` (lee daily_checks.log) |
 | Salud VM (servicios, RAM, disco, errores) | Telegram `/health` |
 | Red-flags de infra/datos/estado (incl. cron viejo) | Telegram `/audit` (= CLI `anomaly-check`) |
-| "Por que rebalanceo?" en lenguaje llano | SSH: `python main.py explain --bot v5` |
+| "Por que rebalanceo?" en lenguaje llano | SSH: `python main.py explain --bot v6` |
 | Logs sin SSH | Telegram `/logs` o `/logs 100` |
 | Backup DB+estado al chat | Telegram `/backup` (ademas automatico semanal) |
 | Reiniciar el bot sin SSH | Telegram `/restart` |
@@ -151,7 +153,7 @@ Chequeos:
 
 ## Bot demo OKX en la misma VM (pre-live septiembre 2026)
 
-Cuarto bot (label `demo`): misma estrategia v5 congelada, pero las ordenes van a la cuenta
+Cuarto bot (label `demo`): misma estrategia v6-2 congelada, pero las ordenes van a la cuenta
 DEMO real de OKX (header `x-simulated-trading:1`) via `core/okx_demo_client.py`. Ejercita el
 camino de ordenes AUTENTICADO (firma, params, errores) que ningun otro bot toca. El market
 data sigue siendo el REAL (flag=0) → la paridad F15 no se ve afectada. Medido 2026-07-11: el
