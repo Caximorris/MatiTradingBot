@@ -91,6 +91,9 @@ class Settings:
     okx_demo_api_key: str = ""
     okx_demo_secret_key: str = ""
     okx_demo_passphrase: str = ""
+    # Dominio API para la cuenta demo. Cuentas de la entidad europea (MiCA) viven en
+    # https://my.okx.com y sus keys devuelven 60032 contra www.okx.com (y viceversa).
+    okx_demo_domain: str = "https://www.okx.com"
 
     @property
     def is_paper(self) -> bool:
@@ -185,6 +188,7 @@ def load_settings() -> Settings:
         okx_demo_api_key=_optional("OKX_DEMO_API_KEY"),
         okx_demo_secret_key=_optional("OKX_DEMO_SECRET_KEY"),
         okx_demo_passphrase=_optional("OKX_DEMO_PASSPHRASE"),
+        okx_demo_domain=_optional("OKX_DEMO_DOMAIN", "https://www.okx.com"),
     )
 
 

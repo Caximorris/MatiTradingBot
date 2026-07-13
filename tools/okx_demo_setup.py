@@ -39,6 +39,9 @@ def demo_config() -> dict:
         "instance_id": INSTANCE_ID,
         "paper_portfolio_id": PORTFOLIO_ID,   # nombre del espejo paper_state_okx_demo.json
         "execution": "okx_demo",              # cli/live_cmds.py -> OKXDemoClient
+        # Cuenta EEA/MiCA (2026-07-13): USDT bloqueado por compliance (sCode 51155).
+        # Señales en BTC-USDT (feed real, paridad backtest); ordenes en BTC-USDC.
+        "execution_quote": "USDC",
         "persist_live_rebalance_log": True,
     }
 

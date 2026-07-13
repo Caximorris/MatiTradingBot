@@ -77,6 +77,26 @@ OKX spot un market BUY interpreta `sz` como QUOTE (USDT), no BASE (BTC): comprar
 de lo pedido. El cliente demo ya lo fija (`tgtCcy=base_ccy`); el fix en OKXClient necesita su
 propio commit+test. La API key demo se crea DENTRO del modo demo trading de OKX (la real NO vale).
 
+**PRUEBAS DEMO EN DEV (2026-07-13) — cuenta EEA/MiCA, hallazgos CRITICOS:**
+- La cuenta de Matias es de la entidad europea: API en `https://my.okx.com` (keys EEA dan 60032
+  contra www.okx.com). Nuevo `OKX_DEMO_DOMAIN` en settings/cliente. Feed de señales sigue global.
+- **BTC-USDT y BTC-USD = sCode 51155 bloqueados por compliance (MiCA)** en su cuenta. El bot demo
+  registrado como BTC-USDT NO puede operar: hace falta mapeo señal(BTC-USDT)→ejecucion(BTC-USDC
+  o BTC-EUR). Fondos demo EEA: USDC/EUR/USD/XRP/ETH — CERO USDT.
+- BTC-USDC permitido: BUY market OK (tgtCcy verificado contra API real). SELLs cancelados por el
+  motor: book demo USDC casi muerto (top bid 59475 < banda minima de venta 51138 @59517).
+  BTC-EUR funciona completo (sell filled + fee EUR). Precios demo divergen ~5% del real.
+- 2 bugs del cliente arreglados con las pruebas: (a) errores code=1 ahora exponen sCode/sMsg;
+  (b) fill fantasma — market aceptada (sCode=0) y luego `state=canceled` sin fill se reportaba
+  como filled; ahora `_query_order` mira `state` y reporta rejected/qty real. Tests 215/215.
+- Verificado contra API real: auth, balance, espejo, buy market, limit+cancel, sell market (EUR).
+- **Mapeo señal→ejecucion IMPLEMENTADO** (decision Matias 2026-07-13: ejecutar en USDC — fees
+  identicas a EUR pero spread real 0.02 vs 0.27 bps y misma unidad de cuenta que el backtest;
+  conversion a EUR solo al retirar). `OKXDemoClient(exec_quote="USDC")`: ordenes/consultas *-USDT
+  → *-USDC, balance USDC presentado como USDT; la estrategia y /status siguen en espacio USDT.
+  Config del bot: `execution_quote: "USDC"` en okx_demo_setup.py, enrutado en live_cmds.py.
+  Verificado E2E contra la API demo real: BUY "BTC-USDT" → fill real en BTC-USDC. Tests 219/219.
+
 **Pro Trend v13 — PAUSADO INDEFINIDAMENTE** (decision sesion 14). Codigo congelado y reversible,
 fuera del roadmap activo. Framework de validacion estaba completo. Detalle en archive.
 
@@ -140,7 +160,8 @@ un backtest puntual.
    `python tools/okx_demo_setup.py --enable` → `systemctl restart matibot` → verificar `/bots`
    (4o bot label `demo`) y su primera evaluacion 4H (orden INIT real en el engine demo de OKX).
    Ideal: cuenta demo solo con USDT (si ya tiene BTC, no hay INIT, rebalancea directo).
-3. Fix P1 `tgtCcy` en `OKXClient._live_place_order` (commit propio + test) — bloqueante para live.
+3. ~~Fix P1 `tgtCcy` en `OKXClient._live_place_order`~~ HECHO 2026-07-13 (mismo bloque que el
+   cliente demo + 3 tests en `test_exchange.py`; suite 213/213).
 
 **Marco general:** optimizacion de backtest del Swing = CERRADA. Hito = validacion forward:
 cerrar F13 (smoke 24h), F15 (paridad 30d — racha reiniciada ~2026-07-11 por el incidente cron)
@@ -156,9 +177,8 @@ explicita). El paper v5-vs-v6 empieza a dar señal desde ~2026-10-07.
 - **Q4 2025 ping-pong:** residual estructural, sin via viva. Descartados cooldown=7d, ADX gate,
   cap-bear_onset. Detalle en archive.
 - **Pro Trend bugfixes candidatos** (P1, sin backtest aislado): fix MACD 4H key, fix VIX sizing cap.
-- **`tgtCcy` en `OKXClient._live_place_order` (P1, BLOQUEANTE para live septiembre):** market BUY
-  spot sin `tgtCcy=base_ccy` compra en USDT, no en BTC. Hallado 2026-07-11; el cliente demo ya lo
-  corrige, falta el fix en OKXClient con test propio.
+- **`tgtCcy` en `OKXClient._live_place_order`:** ARREGLADO 2026-07-13 (market orders fijan
+  `tgtCcy=base_ccy`, igual que el cliente demo; tests en `test_exchange.py`). Ya no bloquea live.
 - **Funding Bybit 403 en la VM:** `funding_refresh.py` falla con HTTP 403 (IP de GCP bloqueada?).
   Sin urgencia hasta fase `accumulation` (~2026-10-07): sin ese cache, v6 degrada a v5 en silencio
   y PropSwing modela funding=0. Resolver antes de octubre.

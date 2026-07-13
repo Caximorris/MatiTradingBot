@@ -61,7 +61,7 @@ def _fake_trade(s_code="0", ord_id="oid-1", fill=None):
     return tr
 
 
-def _client(tmp_path, trade=None, account=None, settings=None) -> OKXDemoClient:
+def _client(tmp_path, trade=None, account=None, settings=None, **kw) -> OKXDemoClient:
     md = MagicMock()
     md.is_available = True
     return OKXDemoClient(
@@ -70,6 +70,7 @@ def _client(tmp_path, trade=None, account=None, settings=None) -> OKXDemoClient:
         _trade_api=trade or _fake_trade(),
         _account_api=account or _fake_account(),
         _market_client=md,
+        **kw,
     )
 
 
@@ -109,6 +110,68 @@ def test_market_buy_sets_tgtccy_base(tmp_path):
     assert params["tdMode"] == "cash"
     assert result.status == "filled"
     assert result.order_id == "oid-1"
+
+
+# ---------------------------------------------------------------------------
+# Mapeo señal->ejecucion (cuentas EEA/MiCA: USDT bloqueado, se ejecuta en USDC)
+# ---------------------------------------------------------------------------
+
+def test_exec_quote_routes_usdt_orders_to_usdc(tmp_path):
+    trade = _fake_trade()
+    c = _client(tmp_path, trade=trade, exec_quote="USDC")
+    result = c.place_order("BTC-USDT", "buy", "market", Decimal("0.05"), strategy="t")
+    assert trade.place_order.call_args.kwargs["instId"] == "BTC-USDC"
+    # La estrategia sigue viendo su propio simbolo, no el de ejecucion.
+    assert result.symbol == "BTC-USDT"
+    assert result.status == "filled"
+
+
+def test_exec_quote_aliases_usdc_balance_as_usdt(tmp_path):
+    acc = MagicMock()
+    acc.get_account_balance.return_value = _balance_resp(
+        [{"ccy": "USDC", "availBal": "14000"}, {"ccy": "EUR", "availBal": "4600"}]
+    )
+    c = _client(tmp_path, account=acc, exec_quote="USDC")
+    bal = c.get_balance()
+    assert bal["USDT"] == Decimal("14000")
+    assert "USDC" not in bal
+    assert bal["EUR"] == Decimal("4600")   # el resto de monedas no se toca
+
+
+def test_exec_quote_leaves_non_usdt_symbols_untouched(tmp_path):
+    trade = _fake_trade()
+    c = _client(tmp_path, trade=trade, exec_quote="USDC")
+    c.place_order("XRP-USDC", "sell", "market", Decimal("10"), strategy="t")
+    assert trade.place_order.call_args.kwargs["instId"] == "XRP-USDC"
+
+
+def test_without_exec_quote_no_translation(tmp_path):
+    trade = _fake_trade()
+    c = _client(tmp_path, trade=trade)
+    c.place_order("BTC-USDT", "buy", "market", Decimal("0.05"), strategy="t")
+    assert trade.place_order.call_args.kwargs["instId"] == "BTC-USDT"
+
+
+def test_market_order_canceled_by_engine_maps_to_rejected(tmp_path):
+    # Visto en demo EEA 2026-07-13: OKX acepta la market (sCode=0) y el motor la
+    # cancela sin fill (book demo sin liquidez). No debe reportarse fill fantasma.
+    canceled = {"state": "canceled", "avgPx": "", "accFillSz": "0", "fee": "0", "feeCcy": ""}
+    c = _client(tmp_path, trade=_fake_trade(fill=canceled))
+    result = c.place_order("BTC-USDC", "sell", "market", Decimal("0.001"), strategy="t")
+    assert result.status == "rejected"
+    assert result.filled_qty == Decimal("0")
+    assert "cancelada por el motor" in result.error
+    assert result.size == Decimal("0.001")
+
+
+def test_market_order_partial_fill_then_cancel_keeps_real_qty(tmp_path):
+    partial = {"state": "canceled", "avgPx": "60544", "accFillSz": "0.15",
+               "fee": "-18.5", "feeCcy": "USDC"}
+    c = _client(tmp_path, trade=_fake_trade(fill=partial))
+    result = c.place_order("BTC-USDC", "sell", "market", Decimal("1"), strategy="t")
+    assert result.status == "filled"
+    assert result.filled_qty == Decimal("0.15")   # la qty REAL, no la pedida
+    assert result.filled_price == Decimal("60544")
 
 
 def test_market_order_enriched_with_fill_details(tmp_path):

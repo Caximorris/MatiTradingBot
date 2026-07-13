@@ -71,10 +71,18 @@ class OKXDemoClient:
         settings: Settings,
         mirror_name: str = "okx_demo",
         runtime_dir: Path | None = None,
+        exec_quote: str | None = None,
         _trade_api: Any = None,
         _account_api: Any = None,
         _market_client: Any = None,
     ) -> None:
+        # Mapeo señal->ejecucion (cuentas EEA/MiCA, 2026-07-13): la estrategia opera
+        # BTC-USDT (feed real, paridad con backtest) pero la cuenta europea NO puede
+        # tradear USDT (sCode 51155). Con exec_quote="USDC" toda orden/consulta *-USDT
+        # se traduce a *-USDC y el balance USDC se presenta como USDT a la estrategia.
+        # USDC≈USDT≈USD: misma unidad de cuenta que el backtest. None = sin traduccion.
+        self._exec_quote = exec_quote.upper() if exec_quote else None
+        self._strategy_quote = "USDT"
         if not settings.is_paper:
             raise EnvironmentError(
                 "OKXDemoClient solo se instancia con TRADING_MODE=paper: en modo live "
@@ -106,12 +114,15 @@ class OKXDemoClient:
         else:
             from okx.Account import AccountAPI  # type: ignore[import]
             from okx.Trade import TradeAPI      # type: ignore[import]
+            # Cuentas de la entidad europea (MiCA) viven en https://my.okx.com: sus keys
+            # devuelven 60032 contra www.okx.com. OKX_DEMO_DOMAIN selecciona la entidad.
             self._trade_api = TradeAPI(
                 settings.okx_demo_api_key,
                 settings.okx_demo_secret_key,
                 settings.okx_demo_passphrase,
                 False,
                 "1",            # x-simulated-trading: 1 -> demo trading
+                domain=settings.okx_demo_domain,
                 debug=False,
             )
             self._account_api = AccountAPI(
@@ -120,6 +131,7 @@ class OKXDemoClient:
                 settings.okx_demo_passphrase,
                 False,
                 "1",
+                domain=settings.okx_demo_domain,
                 debug=False,
             )
 
@@ -142,6 +154,20 @@ class OKXDemoClient:
     # Plumbing compartido
     # ------------------------------------------------------------------
 
+    def _exec_symbol(self, symbol: str) -> str:
+        """Traduce el simbolo de la estrategia al de ejecucion (BTC-USDT -> BTC-USDC)."""
+        if self._exec_quote:
+            base, _, quote = symbol.rpartition("-")
+            if quote == self._strategy_quote:
+                return f"{base}-{self._exec_quote}"
+        return symbol
+
+    def _alias_ccy(self, ccy: str) -> str:
+        """Presenta la quote de ejecucion con el nombre que espera la estrategia."""
+        if self._exec_quote and ccy == self._exec_quote:
+            return self._strategy_quote
+        return ccy
+
     def _call_api(self, method, *args, **kwargs) -> dict:
         @_with_retry
         def _inner():
@@ -153,8 +179,15 @@ class OKXDemoClient:
             except Exception as exc:
                 raise ExchangeUnavailable(str(exc)) from exc
             if resp.get("code") != "0":
+                # El msg global ("All operations failed") no dice nada: el motivo real
+                # viaja en data[i].sMsg (p.ej. "Insufficient balance").
+                detail = "; ".join(
+                    f"sCode={d.get('sCode')} {d.get('sMsg')}"
+                    for d in resp.get("data", []) if d.get("sMsg")
+                )
                 raise ExchangeError(
-                    f"OKX demo error code={resp.get('code')}: {resp.get('msg', 'desconocido')}"
+                    f"OKX demo error code={resp.get('code')}: "
+                    f"{detail or resp.get('msg', 'desconocido')}"
                 )
             return resp
 
@@ -190,7 +223,9 @@ class OKXDemoClient:
             result: dict[str, Decimal] = {}
             for detail in resp["data"][0].get("details", []):
                 avail = detail.get("availEq") or detail.get("availBal", "0")
-                result[detail["ccy"]] = Decimal(str(avail))
+                # La quote de ejecucion (USDC) se presenta como USDT: la estrategia y la
+                # observabilidad (/status) trabajan en el espacio de simbolos del backtest.
+                result[self._alias_ccy(detail["ccy"])] = Decimal(str(avail))
             self._write_mirror(result)
             return result
         except Exception as exc:
@@ -207,7 +242,8 @@ class OKXDemoClient:
 
     def get_open_orders(self, symbol: str) -> list[dict]:
         try:
-            resp = self._call_api(self._trade_api.get_order_list, instId=symbol)
+            resp = self._call_api(self._trade_api.get_order_list,
+                                  instId=self._exec_symbol(symbol))
             return resp.get("data", [])
         except Exception as exc:
             logger.warning("[DEMO] get_open_orders({}) fallo: {}", symbol, exc)
@@ -217,7 +253,7 @@ class OKXDemoClient:
         try:
             resp = self._call_api(
                 self._trade_api.get_orders_history,
-                instType="SPOT", instId=symbol, limit=str(limit),
+                instType="SPOT", instId=self._exec_symbol(symbol), limit=str(limit),
             )
             return resp.get("data", [])
         except Exception as exc:
@@ -238,6 +274,11 @@ class OKXDemoClient:
         strategy: str = "",
     ) -> OrderResult:
         _, quote_ccy = symbol.split("-")
+        # La orden viaja a OKX en el simbolo de EJECUCION (BTC-USDC en cuentas EEA);
+        # el OrderResult vuelve en el simbolo de la ESTRATEGIA (BTC-USDT).
+        exec_symbol = self._exec_symbol(symbol)
+        if exec_symbol != symbol:
+            logger.debug("[DEMO] orden {} enrutada como {}", symbol, exec_symbol)
 
         def _rejected(msg: str) -> OrderResult:
             return OrderResult(
@@ -249,7 +290,7 @@ class OKXDemoClient:
             )
 
         params: dict[str, Any] = {
-            "instId": symbol,
+            "instId": exec_symbol,
             "tdMode": "cash",
             "side": side,
             "ordType": order_type,
@@ -283,9 +324,20 @@ class OKXDemoClient:
         status = "open" if order_type == "limit" else "filled"
 
         if order_type == "market":
-            fill = self._query_fill(symbol, order_id)
-            if fill is not None:
-                filled_price, filled_qty, fee, fee_ccy = fill
+            info = self._query_order(exec_symbol, order_id)
+            if info is not None:
+                state, px, qty, q_fee, q_fee_ccy = info
+                if state in ("canceled", "mmp_canceled") and qty <= 0:
+                    # El motor puede aceptar la orden (sCode=0) y cancelarla despues sin
+                    # fill (visto en demo EEA 2026-07-13: book demo sin liquidez). Sin
+                    # este check se reportaria un fill fantasma con la qty pedida.
+                    logger.warning("[DEMO] market {} {} aceptada pero cancelada sin fill "
+                                   "(state={})", side, symbol, state)
+                    return _rejected(f"market order cancelada por el motor (state={state})")
+                if qty > 0:
+                    filled_qty, fee, fee_ccy = qty, q_fee, self._alias_ccy(q_fee_ccy)
+                    if px is not None:
+                        filled_price = px
 
         result = OrderResult(
             order_id=order_id, symbol=symbol, side=side, order_type=order_type,
@@ -301,26 +353,30 @@ class OKXDemoClient:
         self.get_balance()
         return result
 
-    def _query_fill(self, symbol: str, order_id: str):
-        """(fillPx, fillQty, fee, feeCcy) de una orden ya enviada. None si no se pudo."""
+    def _query_order(self, symbol: str, order_id: str):
+        """(state, avgPx|None, accFillSz, fee, feeCcy) de una orden enviada.
+
+        None si la consulta fallo (el caller conserva el default optimista: mejor un
+        fill asumido que romper el bot por un endpoint lento).
+        """
         try:
             time.sleep(_FILL_QUERY_DELAY_S)
             resp = self._call_api(self._trade_api.get_order, instId=symbol, ordId=order_id)
             d = resp["data"][0]
+            state = d.get("state", "")
             px = d.get("avgPx") or d.get("fillPx")
-            qty = d.get("accFillSz") or d.get("fillSz")
-            if not px or not qty:
-                return None
+            qty = d.get("accFillSz") or d.get("fillSz") or "0"
             fee = abs(Decimal(str(d.get("fee") or "0")))   # OKX reporta fee en negativo
             fee_ccy = d.get("feeCcy") or symbol.split("-")[1]
-            return Decimal(str(px)), Decimal(str(qty)), fee, fee_ccy
+            return state, (Decimal(str(px)) if px else None), Decimal(str(qty)), fee, fee_ccy
         except Exception as exc:
-            logger.warning("[DEMO] consulta de fill {} fallo (no critico): {}", order_id, exc)
+            logger.warning("[DEMO] consulta de orden {} fallo (no critico): {}", order_id, exc)
             return None
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         try:
-            self._call_api(self._trade_api.cancel_order, instId=symbol, ordId=order_id)
+            self._call_api(self._trade_api.cancel_order,
+                           instId=self._exec_symbol(symbol), ordId=order_id)
             return True
         except Exception as exc:
             logger.warning("[DEMO] cancel_order({}) fallo: {}", order_id, exc)

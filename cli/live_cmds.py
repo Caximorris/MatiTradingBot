@@ -61,7 +61,10 @@ def start(
             try:
                 from core.okx_demo_client import OKXDemoClient
                 mirror = str(config.get("paper_portfolio_id") or "okx_demo")
-                bot_client = OKXDemoClient(settings, mirror_name=mirror)
+                bot_client = OKXDemoClient(
+                    settings, mirror_name=mirror,
+                    exec_quote=config.get("execution_quote"),
+                )
                 bot_risk = RiskManager(client=bot_client, app_settings=settings)
             except Exception as exc:
                 console.print(f"  [red][SKIP][/red] {name}: OKXDemoClient no disponible — {exc}")
