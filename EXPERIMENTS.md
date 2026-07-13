@@ -139,6 +139,40 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Permitido en forward-test?: n/a
 - Referencias: SESSION.md "PENDIENTES ABIERTOS"
 
+### EXP-011 — funding_extreme como vehiculo propio (sin limites prop)
+- Fecha: 2026-07-13 (pre-registrado)
+- Estrategia: funding_extreme
+- Hipotesis: quitar el corse prop (limites diarios del challenge) y ajustar risk_per_trade
+  recupera CAGR manteniendo el perfil de DD bajo (~13%) -> candidato a "pata de ingresos".
+- Ventana de datos: 2020-06 -> 2026-01 (Bybit funding empieza 2020-03) + OOS 2026-01 -> hoy.
+- Metricas (EJECUTADO 2026-07-13, 5 runs de 6):
+  - A0 sanity (bybit, risk 1%): +72.73% | CAGR 10.3% | DD -12.96% | PF 1.44 | 238 tr. Reproduce §15.
+  - A1 sin limites prop (risk 1%): IDENTICO a A0 al centimo — los limites nunca muerden a 1%.
+  - A2 risk 2% (bybit): +115.88% | CAGR 14.8% | DD -15.06% | PF 1.42 | Calmar 0.98. GANADOR.
+  - A2b risk 2% sin limites: +116.22% | DD -16.05% — los limites recortan algo el DD; dejarlos.
+  - A3 risk 2% (bybit_cons): +84.08% | CAGR 11.5% | DD -16.58% | PF 1.32. Sobrevive.
+  - Mensual (tools/monthly_dist.py, A2): media +1.23%/mes, mediana +0.90%, 60% meses
+    positivos, peor mes -7.1%, racha max 3 meses negativos. (~$123/mes sobre $10k.)
+- Decision: parked (gate: CAGR 14.8% vs >=15% requerido — fallo marginal de 0.2pp; DD, PF cons
+  y % meses positivos cumplen. Falta A4 (OOS 2026), BLOQUEADO: correr post-2026-01 mutaria el
+  cache OHLCV canonico (incidente 2026-07-06). Decision de adopcion pendiente de Matias.)
+- Razon: plan completo, gates y resultados en `docs/income/plan.md` (Via A).
+- Permitido en forward-test?: no (nunca default; paper propio solo si pasa gate + OK explicito)
+- Referencias: `docs/income/plan.md`, `docs/prop/hyrotrader-plan.md` §15
+
+### EXP-012 — MR-Regimen 1H (mean reversion condicionada por regimen macro)
+- Fecha: 2026-07-13 (pre-registrado)
+- Estrategia: nueva (`strategies/mr_regime.py`, no existe aun)
+- Hipotesis: los dips bruscos 1H revierten SOLO en regimen macro alcista (EMA50D>200D +
+  close>200D + ADX14D>15, dia cerrado); el edge es el condicionamiento, no el oscilador.
+  (mean_reversion sin condicionar ya fallo y se borro — esta es la variante condicionada.)
+- Ventana de datos: IS 2019-2024 / OOS single-shot 2024-2026-01 / forward paper si pasa.
+- Metricas: pendiente. Gates IS: PF>1.2, >=150 trades, DD<25%. OOS: PF>1.1, DD<30%.
+- Decision: parked (pre-registrado; presupuesto 8 variantes IS, rejilla cerrada en el plan)
+- Razon: pre-registro completo (senal, split, gates, kill criteria) en `docs/income/plan.md` (Via B).
+- Permitido en forward-test?: no (bot aislado nuevo solo si pasa gates + OK explicito)
+- Referencias: `docs/income/plan.md`
+
 ### EXP-010 — Prop: router CFT-only (entry_halving_phases=bear_onset,accumulation)
 - Fecha: ver `docs/prop/hyrotrader-plan.md`
 - Estrategia: prop_swing
