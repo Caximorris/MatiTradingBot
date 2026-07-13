@@ -353,3 +353,45 @@ def test_paper_state_corrupt_file_falls_back_to_fresh(tmp_path, monkeypatch):
 
     c = _persistent_client()
     assert c.get_balance()["USDT"] == Decimal("10000")
+
+
+# ---------------------------------------------------------------------------
+# Tests de _live_place_order — construccion de params (fix tgtCcy 2026-07-13)
+# Sin este flag, un market BUY spot en OKX interpreta sz como USDT (no BTC)
+# y compra ~64000x menos de lo pedido. Mismo contrato que OKXDemoClient.
+# ---------------------------------------------------------------------------
+
+def _live_client(client: OKXClient) -> tuple[OKXClient, MagicMock]:
+    trade = MagicMock()
+    trade.place_order.return_value = {"code": "0", "data": [{"ordId": "oid-1", "sCode": "0"}]}
+    client._available = True
+    client._trade_api = trade
+    return client, trade
+
+
+def test_live_market_buy_sets_tgtccy_base(client):
+    c, trade = _live_client(client)
+    result = c._live_place_order("BTC-USDT", "buy", "market", Decimal("0.05"), None, "t")
+    params = trade.place_order.call_args.kwargs
+    assert params["tgtCcy"] == "base_ccy"
+    assert params["sz"] == "0.05"
+    assert params["tdMode"] == "cash"
+    assert result.order_id == "oid-1"
+    assert result.status == "filled"
+
+
+def test_live_market_sell_sets_tgtccy_base(client):
+    c, trade = _live_client(client)
+    c._live_place_order("BTC-USDT", "sell", "market", Decimal("0.05"), None, "t")
+    assert trade.place_order.call_args.kwargs["tgtCcy"] == "base_ccy"
+
+
+def test_live_limit_order_no_tgtccy_and_has_px(client):
+    c, trade = _live_client(client)
+    result = c._live_place_order(
+        "BTC-USDT", "sell", "limit", Decimal("0.05"), Decimal("70000"), "t"
+    )
+    params = trade.place_order.call_args.kwargs
+    assert "tgtCcy" not in params
+    assert params["px"] == "70000"
+    assert result.status == "open"

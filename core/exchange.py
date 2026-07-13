@@ -646,7 +646,11 @@ class OKXClient:
                 "ordType": order_type,
                 "sz": str(size),
             }
-            if order_type == "limit" and price is not None:
+            if order_type == "market":
+                # sz en moneda BASE siempre. Sin esto, un market BUY spot interpreta sz como
+                # USDT (default de OKX: tgtCcy=quote_ccy) y compra ~64000x menos BTC.
+                params["tgtCcy"] = "base_ccy"
+            elif order_type == "limit" and price is not None:
                 params["px"] = str(price)
 
             resp = self._check_okx_response(self._trade_api.place_order(**params))
