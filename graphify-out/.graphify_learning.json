@@ -1,6 +1,43 @@
 {
-  "generated_at": "2026-07-13T21:55:10.180381+00:00",
+  "generated_at": "2026-07-14T09:06:18.218546+00:00",
   "nodes": {
+    "cli_live_cmds": {
+      "code_fingerprint": "bfab42f406c3d0007fb6049ae91fc116a6aed4b4fb9b72646f055ec25305a7bf",
+      "label": "live_cmds.py",
+      "last": "2026-07-14T08:26:11.976638+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:26:11.976638+00:00",
+          "outcome": "useful",
+          "q": "CFT monitor sin datos after activating PropSwing"
+        }
+      ],
+      "score": 0.999356735,
+      "source_file": "cli/live_cmds.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "cli_live_cmds_status": {
+      "code_fingerprint": "bfab42f406c3d0007fb6049ae91fc116a6aed4b4fb9b72646f055ec25305a7bf",
+      "label": "status()",
+      "last": "2026-07-14T08:59:27.726681+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:59:27.726681+00:00",
+          "outcome": "useful",
+          "q": "check if everything is correct from telegram, then do those tasks about main.py status"
+        },
+        {
+          "date": "2026-07-14T08:41:18.663538+00:00",
+          "outcome": "useful",
+          "q": "why is it showing usdt if were using usdc?"
+        }
+      ],
+      "score": 1.999489306,
+      "source_file": "cli/live_cmds.py",
+      "status": "preferred",
+      "uses": 2
+    },
     "core_backtest_backtestengine": {
       "code_fingerprint": "ec8aebccf04abcbf8d14b7c1746f211d60c7abed92ea753010e5137d8003f63a",
       "label": "BacktestEngine",
@@ -12,33 +49,75 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.997815698,
+      "score": 0.987128471,
       "source_file": "core/backtest.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "core_cft_monitor": {
+      "code_fingerprint": "7fb934925d40f1b9e2e55c99607f05a02d5fdfcf1c2775c3633dd8aeccac95dc",
+      "label": "cft_monitor.py",
+      "last": "2026-07-14T08:26:11.976638+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:26:11.976638+00:00",
+          "outcome": "useful",
+          "q": "CFT monitor sin datos after activating PropSwing"
+        }
+      ],
+      "score": 0.999356735,
+      "source_file": "core/cft_monitor.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "core_cft_monitor_update_status": {
+      "code_fingerprint": "7fb934925d40f1b9e2e55c99607f05a02d5fdfcf1c2775c3633dd8aeccac95dc",
+      "label": "update_status()",
+      "last": "2026-07-14T08:26:11.976638+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:26:11.976638+00:00",
+          "outcome": "useful",
+          "q": "CFT monitor sin datos after activating PropSwing"
+        }
+      ],
+      "score": 0.999356735,
+      "source_file": "core/cft_monitor.py",
       "status": "tentative",
       "uses": 1
     },
     "core_database_botstate": {
       "code_fingerprint": "f0865ace7009dd15df613e1a0de446387b763cf3f0897ac4f23a2e6dc6678ce5",
       "label": "BotState",
-      "last": "2026-07-13T19:38:53.125339+00:00",
+      "last": "2026-07-14T08:21:16.812978+00:00",
       "provenance": [
+        {
+          "date": "2026-07-14T08:21:16.812978+00:00",
+          "outcome": "useful",
+          "q": "ok but we'll also remove legacy bot, now i want running v6 and prop firm, v6 on both demo and simulated"
+        },
         {
           "date": "2026-07-13T19:38:53.125339+00:00",
           "outcome": "useful",
           "q": "track all conections"
         }
       ],
-      "score": 0.997815698,
+      "score": 1.986406328,
       "source_file": "core/database.py",
-      "status": "tentative",
-      "uses": 1
+      "status": "preferred",
+      "uses": 2
     },
     "core_exchange_okxclient": {
       "code_fingerprint": "953f9e716dc9a8ef6031b6ae2d373c9c6498efb3e4d644867768d0bab2a486d3",
       "label": "OKXClient",
-      "last": "2026-07-13T20:28:36.235026+00:00",
+      "last": "2026-07-14T09:04:18.711251+00:00",
       "neg": 1,
       "provenance": [
+        {
+          "date": "2026-07-14T09:04:18.711251+00:00",
+          "outcome": "useful",
+          "q": "Assess the VM status and anomaly-check output after pulling c16d804: are v6, Demo, and Prop correct, and what is the next step?"
+        },
         {
           "date": "2026-07-13T20:28:36.235026+00:00",
           "outcome": "corrected",
@@ -55,18 +134,49 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.997146422,
+      "score": 1.986434406,
       "source_file": "core/exchange.py",
       "status": "contested",
-      "uses": 2,
+      "uses": 3,
       "verdict": "useful"
+    },
+    "core_exchange_okxclient_persist_paper_state": {
+      "code_fingerprint": "953f9e716dc9a8ef6031b6ae2d373c9c6498efb3e4d644867768d0bab2a486d3",
+      "label": "._persist_paper_state()",
+      "last": "2026-07-14T09:04:18.711251+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T09:04:18.711251+00:00",
+          "outcome": "useful",
+          "q": "Assess the VM status and anomaly-check output after pulling c16d804: are v6, Demo, and Prop correct, and what is the next step?"
+        }
+      ],
+      "score": 0.999968042,
+      "source_file": "core/exchange.py",
+      "status": "tentative",
+      "uses": 1
     },
     "core_okx_demo_client_okxdemoclient": {
       "code_fingerprint": "bbc3180a7cf9625f60ced488e26f342babd2b8b07ebafac0b1daffd4c8458829",
       "label": "OKXDemoClient",
-      "last": "2026-07-13T20:28:36.235026+00:00",
+      "last": "2026-07-14T08:59:27.726681+00:00",
       "neg": 1,
       "provenance": [
+        {
+          "date": "2026-07-14T08:59:27.726681+00:00",
+          "outcome": "useful",
+          "q": "check if everything is correct from telegram, then do those tasks about main.py status"
+        },
+        {
+          "date": "2026-07-14T08:41:18.663538+00:00",
+          "outcome": "useful",
+          "q": "why is it showing usdt if were using usdc?"
+        },
+        {
+          "date": "2026-07-14T08:21:16.812978+00:00",
+          "outcome": "useful",
+          "q": "ok but we'll also remove legacy bot, now i want running v6 and prop firm, v6 on both demo and simulated"
+        },
         {
           "date": "2026-07-13T20:28:36.235026+00:00",
           "outcome": "corrected",
@@ -76,21 +186,53 @@
           "date": "2026-07-13T19:46:49.181918+00:00",
           "outcome": "useful",
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
-        },
-        {
-          "date": "2026-07-13T19:38:53.125339+00:00",
-          "outcome": "useful",
-          "q": "track all conections"
         }
       ],
-      "score": 0.997146422,
+      "score": 3.985233526,
       "source_file": "core/okx_demo_client.py",
       "status": "contested",
-      "uses": 2,
+      "uses": 5,
       "verdict": "useful"
     },
+    "core_okx_demo_client_okxdemoclient_bridge_market": {
+      "code_fingerprint": "bbc3180a7cf9625f60ced488e26f342babd2b8b07ebafac0b1daffd4c8458829",
+      "label": "._bridge_market()",
+      "last": "2026-07-14T07:53:19.902748+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T07:53:19.902748+00:00",
+          "outcome": "useful",
+          "q": "do we need to use utc? im in spain and i will be here for a few years, if theres nothing that benefits me using utc y prefer the real time from here, also is there a way to force a rebalance now? this was runnning for an entire day and its still at 57%, something is wrong, the pull i did should afect the demo"
+        },
+        {
+          "date": "2026-07-14T06:55:43.359149+00:00",
+          "outcome": "useful",
+          "q": "check if we pulled everything from main on gh, then tell me whats the next step"
+        }
+      ],
+      "score": 1.996736857,
+      "source_file": "core/okx_demo_client.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "core_okx_demo_client_okxdemoclient_exec_symbol": {
+      "code_fingerprint": "bbc3180a7cf9625f60ced488e26f342babd2b8b07ebafac0b1daffd4c8458829",
+      "label": "._exec_symbol()",
+      "last": "2026-07-14T08:41:18.663538+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:41:18.663538+00:00",
+          "outcome": "useful",
+          "q": "why is it showing usdt if were using usdc?"
+        }
+      ],
+      "score": 0.999599073,
+      "source_file": "core/okx_demo_client.py",
+      "status": "tentative",
+      "uses": 1
+    },
     "core_risk_manager_riskmanager": {
-      "code_fingerprint": "85d860c45788a79dea33c52b884a6d606cbcb8037e48c5036798766bdd70dbb4",
+      "code_fingerprint": "8bde01ab201a9e5d5f9e07c43b44565f5b2f8af5dc8a0cda0d625ea04dc08e18",
       "label": "RiskManager",
       "last": "2026-07-13T19:38:53.125339+00:00",
       "provenance": [
@@ -100,7 +242,7 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.997815698,
+      "score": 0.987128471,
       "source_file": "core/risk_manager.py",
       "status": "tentative",
       "uses": 1
@@ -116,24 +258,40 @@
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.997942734,
+      "score": 0.987254147,
       "source_file": "docs/archive/refactor-backlog.md",
       "status": "tentative",
       "uses": 1
     },
-    "docs_forward_test_contract_forward_test_contract": {
-      "code_fingerprint": "730635f30b2655b0dbebe5fb6abee81cf8f26f30314abb96cb7c0952b0f39350",
-      "label": "Frozen Forward-Test Contract",
-      "last": "2026-07-13T19:46:49.181918+00:00",
+    "docs_handoff_demo_vm_v6_deployment_pending_confirmation": {
+      "code_fingerprint": "1a57d088174632f24f453ff9a54fd5e672eb5475db30cf675e4bb1cf8aa6ce02",
+      "label": "Demo VM v6 Deployment Pending Confirmation",
+      "last": "2026-07-14T06:55:43.359149+00:00",
       "provenance": [
         {
-          "date": "2026-07-13T19:46:49.181918+00:00",
+          "date": "2026-07-14T06:55:43.359149+00:00",
           "outcome": "useful",
-          "q": "whats the next step with this info, can we optimize something else? or improve anything?"
+          "q": "check if we pulled everything from main on gh, then tell me whats the next step"
         }
       ],
-      "score": 0.997942734,
-      "source_file": "docs/forward-test/contract.md",
+      "score": 0.997907012,
+      "source_file": "docs/handoff.md",
+      "status": "tentative",
+      "uses": 1
+    },
+    "reporting_dashboard_madrid": {
+      "code_fingerprint": "50d273d9882c02d084aa08103a25296a5160448492b76532c482cccccfce1877",
+      "label": "_madrid()",
+      "last": "2026-07-14T07:53:19.902748+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T07:53:19.902748+00:00",
+          "outcome": "useful",
+          "q": "do we need to use utc? im in spain and i will be here for a few years, if theres nothing that benefits me using utc y prefer the real time from here, also is there a way to force a rebalance now? this was runnning for an entire day and its still at 57%, something is wrong, the pull i did should afect the demo"
+        }
+      ],
+      "score": 0.998829845,
+      "source_file": "reporting/dashboard.py",
       "status": "tentative",
       "uses": 1
     },
@@ -148,17 +306,80 @@
           "q": "track all conections"
         }
       ],
-      "score": 0.997815698,
+      "score": 0.987128471,
       "source_file": "reporting/trade_logger.py",
       "status": "tentative",
       "uses": 1
     },
+    "session_okx_demo_vm_v6_2_pull_restart_pending": {
+      "code_fingerprint": "04535bff77c17d74176679829b54fde8f31cd7536a6036dcf56e2803e4f6d3ed",
+      "label": "OKX Demo VM v6-2 Pull/Restart Pending",
+      "last": "2026-07-14T06:55:43.359149+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T06:55:43.359149+00:00",
+          "outcome": "useful",
+          "q": "check if we pulled everything from main on gh, then tell me whats the next step"
+        }
+      ],
+      "score": 0.997907012,
+      "source_file": "SESSION.md",
+      "status": "tentative",
+      "uses": 1
+    },
+    "strategies_prop_swing_propswingbot": {
+      "code_fingerprint": "fdd3b60f312991fb6cce4d82c77526b3db1b48606e6d6461d0b96e86fdc9d8e3",
+      "label": "PropSwingBot",
+      "last": "2026-07-14T08:26:11.976638+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:26:11.976638+00:00",
+          "outcome": "useful",
+          "q": "CFT monitor sin datos after activating PropSwing"
+        },
+        {
+          "date": "2026-07-14T08:21:16.812978+00:00",
+          "outcome": "useful",
+          "q": "ok but we'll also remove legacy bot, now i want running v6 and prop firm, v6 on both demo and simulated"
+        }
+      ],
+      "score": 1.998634592,
+      "source_file": "strategies/prop_swing.py",
+      "status": "preferred",
+      "uses": 2
+    },
+    "strategies_registry": {
+      "code_fingerprint": "626a08c2d0fb52a833600af6b814bf60879e200fd0e3fce9b5ea23ca1193e85e",
+      "label": "registry.py",
+      "last": "2026-07-14T08:21:16.812978+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:21:16.812978+00:00",
+          "outcome": "useful",
+          "q": "ok but we'll also remove legacy bot, now i want running v6 and prop firm, v6 on both demo and simulated"
+        }
+      ],
+      "score": 0.999277857,
+      "source_file": "strategies/registry.py",
+      "status": "tentative",
+      "uses": 1
+    },
     "strategies_swing_allocator_swingallocatorbot": {
-      "code_fingerprint": "04e4fbaadf71e2944d4dd44b3b397b95af359db7895c1515d70753c470295e0f",
+      "code_fingerprint": "5ba70bf21f9c13d279fd1ed895b1dfee5a158b57f249642e9e332112f44c2047",
       "label": "SwingAllocatorBot",
-      "last": "2026-07-13T21:39:20.686298+00:00",
+      "last": "2026-07-14T08:21:16.812978+00:00",
       "neg": 2,
       "provenance": [
+        {
+          "date": "2026-07-14T08:21:16.812978+00:00",
+          "outcome": "useful",
+          "q": "ok but we'll also remove legacy bot, now i want running v6 and prop firm, v6 on both demo and simulated"
+        },
+        {
+          "date": "2026-07-14T07:53:19.902748+00:00",
+          "outcome": "useful",
+          "q": "do we need to use utc? im in spain and i will be here for a few years, if theres nothing that benefits me using utc y prefer the real time from here, also is there a way to force a rebalance now? this was runnning for an entire day and its still at 57%, something is wrong, the pull i did should afect the demo"
+        },
         {
           "date": "2026-07-13T21:39:20.686298+00:00",
           "outcome": "corrected",
@@ -175,27 +396,69 @@
           "q": "track all conections"
         }
       ],
-      "score": -1.000542433,
+      "score": 1.008281701,
       "source_file": "strategies/swing_allocator.py",
       "status": "contested",
-      "uses": 1,
-      "verdict": "dead end"
+      "uses": 3,
+      "verdict": "useful"
+    },
+    "strategies_swing_allocator_swingallocatorbot_rebalance": {
+      "code_fingerprint": "5ba70bf21f9c13d279fd1ed895b1dfee5a158b57f249642e9e332112f44c2047",
+      "label": "._rebalance()",
+      "last": "2026-07-14T07:53:19.902748+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T07:53:19.902748+00:00",
+          "outcome": "useful",
+          "q": "do we need to use utc? im in spain and i will be here for a few years, if theres nothing that benefits me using utc y prefer the real time from here, also is there a way to force a rebalance now? this was runnning for an entire day and its still at 57%, something is wrong, the pull i did should afect the demo"
+        }
+      ],
+      "score": 0.998829845,
+      "source_file": "strategies/swing_allocator.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tests_test_okx_demo_client_test_exec_quote_aliases_usdc_balance_as_usdt": {
+      "code_fingerprint": "32eece021201f853f5f4701395d0bf026b0550045fda8c70e7c6ce9c5f9d78e9",
+      "label": "test_exec_quote_aliases_usdc_balance_as_usdt()",
+      "last": "2026-07-14T08:41:18.663538+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:41:18.663538+00:00",
+          "outcome": "useful",
+          "q": "why is it showing usdt if were using usdc?"
+        }
+      ],
+      "score": 0.999599073,
+      "source_file": "tests/test_okx_demo_client.py",
+      "status": "tentative",
+      "uses": 1
     },
     "tools_anomaly_check": {
-      "code_fingerprint": "65497be49ae33d932cc7a60ed80f464979f257dd78879d52cc79ef0874cb3d44",
+      "code_fingerprint": "68cac4815280e87f2408ac576281f0050ac3cd712f520d08109855108c0e2373",
       "label": "anomaly_check.py",
-      "last": "2026-07-13T19:46:49.181918+00:00",
+      "last": "2026-07-14T09:04:18.711251+00:00",
       "provenance": [
+        {
+          "date": "2026-07-14T09:04:18.711251+00:00",
+          "outcome": "useful",
+          "q": "Assess the VM status and anomaly-check output after pulling c16d804: are v6, Demo, and Prop correct, and what is the next step?"
+        },
+        {
+          "date": "2026-07-14T08:59:27.726681+00:00",
+          "outcome": "useful",
+          "q": "check if everything is correct from telegram, then do those tasks about main.py status"
+        },
         {
           "date": "2026-07-13T19:46:49.181918+00:00",
           "outcome": "useful",
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.997942734,
+      "score": 2.987112422,
       "source_file": "tools/anomaly_check.py",
-      "status": "tentative",
-      "uses": 1
+      "status": "preferred",
+      "uses": 3
     },
     "tools_funding_refresh": {
       "code_fingerprint": "f237009b73a90d662f30fb900b026721ea8cb71ce8e37851ec4d8dc139cc40b7",
@@ -208,26 +471,89 @@
           "q": "whats the next step with this info, can we optimize something else? or improve anything?"
         }
       ],
-      "score": 0.997942734,
+      "score": 0.987254147,
       "source_file": "tools/funding_refresh.py",
       "status": "tentative",
       "uses": 1
     },
-    "tools_telegram_remote": {
-      "code_fingerprint": "2f49cb567e92df81b24ae8e6983f34c0abbd17f7bcf68bc974584144951d29d6",
-      "label": "telegram_remote.py",
-      "last": "2026-07-13T19:38:53.125339+00:00",
+    "tools_okx_demo_setup_demo_config": {
+      "code_fingerprint": "d94081552116cadac0e86cf0533642371c2cdd1b702fab6a23e68c8dc5842100",
+      "label": "demo_config()",
+      "last": "2026-07-14T07:53:19.902748+00:00",
       "provenance": [
+        {
+          "date": "2026-07-14T07:53:19.902748+00:00",
+          "outcome": "useful",
+          "q": "do we need to use utc? im in spain and i will be here for a few years, if theres nothing that benefits me using utc y prefer the real time from here, also is there a way to force a rebalance now? this was runnning for an entire day and its still at 57%, something is wrong, the pull i did should afect the demo"
+        }
+      ],
+      "score": 0.998829845,
+      "source_file": "tools/okx_demo_setup.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tools_paper_snapshot": {
+      "code_fingerprint": "ab66488f57d206357f4318b1b2cdacf4383afd2de1952ba39be043b4213a7f4c",
+      "label": "paper_snapshot.py",
+      "last": "2026-07-14T08:59:27.726681+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:59:27.726681+00:00",
+          "outcome": "useful",
+          "q": "check if everything is correct from telegram, then do those tasks about main.py status"
+        }
+      ],
+      "score": 0.999890233,
+      "source_file": "tools/paper_snapshot.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tools_paper_snapshot_build_snapshots": {
+      "code_fingerprint": "ab66488f57d206357f4318b1b2cdacf4383afd2de1952ba39be043b4213a7f4c",
+      "label": "build_snapshots()",
+      "last": "2026-07-14T09:04:18.711251+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T09:04:18.711251+00:00",
+          "outcome": "useful",
+          "q": "Assess the VM status and anomaly-check output after pulling c16d804: are v6, Demo, and Prop correct, and what is the next step?"
+        }
+      ],
+      "score": 0.999968042,
+      "source_file": "tools/paper_snapshot.py",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tools_telegram_remote": {
+      "code_fingerprint": "e5f6409cf80b005bb261c6382bd284b05fb6234103b49f79f8782fd4b0fe0bec",
+      "label": "telegram_remote.py",
+      "last": "2026-07-14T08:59:27.726681+00:00",
+      "provenance": [
+        {
+          "date": "2026-07-14T08:59:27.726681+00:00",
+          "outcome": "useful",
+          "q": "check if everything is correct from telegram, then do those tasks about main.py status"
+        },
+        {
+          "date": "2026-07-14T08:37:12.780330+00:00",
+          "outcome": "useful",
+          "q": "can we also clean up the telegram bot? change the comands so its easier to do, having to do /something x isnt practical because i have to manually write all the line"
+        },
+        {
+          "date": "2026-07-14T06:55:43.359149+00:00",
+          "outcome": "useful",
+          "q": "check if we pulled everything from main on gh, then tell me whats the next step"
+        },
         {
           "date": "2026-07-13T19:38:53.125339+00:00",
           "outcome": "useful",
           "q": "track all conections"
         }
       ],
-      "score": 0.997815698,
+      "score": 3.984459064,
       "source_file": "tools/telegram_remote.py",
-      "status": "tentative",
-      "uses": 1
+      "status": "preferred",
+      "uses": 4
     }
   },
   "version": 1
