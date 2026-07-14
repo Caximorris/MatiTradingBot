@@ -186,6 +186,18 @@ Costes `realistic` para iterar; el candidato final tambien `conservative`.
 - B4: OOS single-shot -> decision -> EXPERIMENTS.md (accepted/rejected con metricas).
 - Si pasa: proponer paper bot `mr_regime_btc_usdt` en la VM (OK explicito antes de deploy).
 
+### Resultado B1+B2 (2026-07-14) — REJECTED, ver EXP-012 en EXPERIMENTS.md
+8/8 runs del presupuesto ejecutados 2019-2024 realistic. Mejor PF de la rejilla: 0.63
+(entry_mult=1.5, stop_mult=3.0) — ninguna variante cruza PF 1.0, muy lejos del gate
+IS (>1.2). `time_stop_hours` (48 vs 72) resulto inerte: mismos trades/PnL exactos en
+ambos casos, todo se resuelve por reversion o stop antes de llegar al time-stop. Kill
+inmediato por pre-registro (necesitar las 8 variantes para buscar PF>1 = fitting).
+B3 (monthly_dist) y B4 (OOS 2024-2026, single-shot) NO se ejecutan — no hay candidato
+que llevar a OOS y el pre-registro prohibe gastar ese intento sin superar IS primero.
+Via B queda cerrada. `strategies/mr_regime.py` se conserva en el repo (codigo valido,
+registrado en `strategies/registry.py` como `mr_regime`/alias `mr`, con tests) por si
+en el futuro se quiere probar una hipotesis distinta sobre el mismo esqueleto.
+
 ---
 
 ## Via C — Colector de microestructura (INFRA, no experimento; valor crece solo)

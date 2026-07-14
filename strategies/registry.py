@@ -106,6 +106,13 @@ _REGISTRY: list[StrategyMeta] = [
         aliases=("funding",),
     ),
     StrategyMeta(
+        name="mr_regime",        display_name="MR-Regimen 1H (EXP-012)",
+        module="strategies.mr_regime",
+        bot_cls="MrRegimeBot",   config_cls="MrRegimeConfig",
+        warmup_days=240, output="trade",
+        aliases=("mr",),
+    ),
+    StrategyMeta(
         name="swing_allocator",  display_name="Swing Allocator",
         module="strategies.swing_allocator",
         bot_cls="SwingAllocatorBot", config_cls="SwingAllocatorConfig",

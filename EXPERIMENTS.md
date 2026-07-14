@@ -169,8 +169,30 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
   close>200D + ADX14D>15, dia cerrado); el edge es el condicionamiento, no el oscilador.
   (mean_reversion sin condicionar ya fallo y se borro — esta es la variante condicionada.)
 - Ventana de datos: IS 2019-2024 / OOS single-shot 2024-2026-01 / forward paper si pasa.
-- Metricas: pendiente. Gates IS: PF>1.2, >=150 trades, DD<25%. OOS: PF>1.1, DD<30%.
-- Decision: parked (pre-registrado; presupuesto 8 variantes IS, rejilla cerrada en el plan)
+- Metricas (B1+B2 EJECUTADO 2026-07-14, 8/8 runs del presupuesto, `--costs realistic`):
+
+  | entry_mult | stop_mult | hold_h | Trades | Win% | PF   | CAGR   | MaxDD   |
+  |-----------:|----------:|-------:|-------:|-----:|-----:|-------:|--------:|
+  | 1.5        | 2.5       | 72     | 350    | 53.4%| 0.62 | -11.2% | -46.65% |
+  | 1.5        | 3.0       | 72     | 349    | 57.0%| 0.63 |  -9.2% | -39.94% |
+  | 2.0        | 2.5       | 72     | 246    | 51.2%| 0.47 | -11.8% | -49.21% |
+  | 2.0        | 3.0       | 72     | 246    | 54.9%| 0.50 |  -9.7% | -42.28% |
+  | 2.5        | 2.5       | 72     | 158    | 43.7%| 0.39 | -10.5% | -45.26% |
+  | 2.5        | 3.0       | 72     | 158    | 49.4%| 0.45 |  -7.6% | -35.07% |
+  | 2.0        | 2.5       | 48     | 246    | 51.2%| 0.47 | -11.8% | -49.21% |
+  | 2.0        | 3.0       | 48     | 246    | 54.9%| 0.50 |  -9.7% | -42.28% |
+
+  `hold_h` (48 vs 72) produced byte-identical trade counts/PnL at the center entry —
+  every trade resolves via reversion or stop before either time-stop binds; the
+  parameter is inert for this signal. Mejor PF de las 8: 0.63 (1.5/3.0), lejos de 1.0.
+- Decision: **rejected** (kill inmediato per pre-registro: "si hacen falta las 8
+  variantes para ver PF > 1 en IS, eso es fitting -> kill" — ni una sola variante
+  cruza PF 1.0. B3/B4 (monthly_dist, OOS) no se ejecutan: no hay candidato que
+  llevar a OOS, y el pre-registro prohibe gastar el intento OOS sin superar IS).
+  Lectura: el condicionamiento por regimen bull NO evita que los dips 1H sigan
+  cayendo mas alla de 2-3x ATR14 en las mismas ventanas que ya rompieron
+  `mean_reversion.py` sin condicionar (Q3 2019, COVID Q1-Q2 2020, correcciones 2021) —
+  el regimen bull diario no filtra los shocks intradia que matan a este detector.
 - Razon: pre-registro completo (senal, split, gates, kill criteria) en `docs/income/plan.md` (Via B).
 - Permitido en forward-test?: no (bot aislado nuevo solo si pasa gates + OK explicito)
 - Referencias: `docs/income/plan.md`
