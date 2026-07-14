@@ -48,7 +48,8 @@ def tg_api(method: str, params: dict, timeout: int = _TIMEOUT) -> dict:
     return payload
 
 
-def tg_send(text: str, parse_mode: str | None = None) -> bool:
+def tg_send(text: str, parse_mode: str | None = None,
+            reply_markup: str | None = None) -> bool:
     """Envia un mensaje al chat configurado. Devuelve False si no hay credenciales o falla.
 
     parse_mode="HTML" activa formato (negritas, <pre>); si Telegram rechaza el HTML
@@ -62,13 +63,18 @@ def tg_send(text: str, parse_mode: str | None = None) -> bool:
     params = {"chat_id": chat_id, "text": text[:4000]}
     if parse_mode:
         params["parse_mode"] = parse_mode
+    if reply_markup:
+        params["reply_markup"] = reply_markup
     try:
         tg_api("sendMessage", params)
         return True
     except Exception as exc:
         if parse_mode:
             try:
-                tg_api("sendMessage", {"chat_id": chat_id, "text": text[:4000]})
+                fallback = {"chat_id": chat_id, "text": text[:4000]}
+                if reply_markup:
+                    fallback["reply_markup"] = reply_markup
+                tg_api("sendMessage", fallback)
                 return True
             except Exception:
                 pass

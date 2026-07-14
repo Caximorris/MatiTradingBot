@@ -78,6 +78,12 @@ desactiva cualquier otro bot operable y preserva wallets, journals y filas inter
 > resume TODOS; `/status <bot>`, `/report <bot>`, `/equity <bot>` apuntan a uno. `/bots` lista
 > los registrados y su etiqueta (v6/demo). Prop sigue en su propio `/prop`.
 
+Telegram muestra un panel persistente con botones para las acciones de lectura habituales:
+resumen, detalle v6/demo, Prop, auditoria, salud, reports, equity, grafico BTC, senales y paridad.
+No hace falta escribir argumentos. `/menu` recupera el panel si se oculta. Las acciones que cambian
+estado (`/pause`, `/resume`, `/restart`, `/update`, controles Prop) quedan fuera del panel para
+evitar pulsaciones accidentales y siguen disponibles en el menu de comandos de Telegram.
+
 | Quiero... | Como |
 |---|---|
 | Resumen de todos los bots | Telegram `/status` |

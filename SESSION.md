@@ -4,9 +4,9 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet deseada = v6 simulado + v6 OKX
-Demo + Prop Firm; registros legacy/v5 retirados mediante reconciliador idempotente. Fix de
-retry tras rebalanceo incompleto incluido. 238 tests pasan; falta pull+reconcile+restart en VM.)
+**Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
+Demo + Prop Firm; registros legacy/v5 retirados. Fix de retry tras rebalanceo incompleto incluido.
+Telegram con panel persistente sin argumentos. 241 tests pasan.)
 
 ---
 
@@ -20,7 +20,7 @@ v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d
 - 2018-26 realistic: $229.0k | +47.90% | -53.72% | 53 | 0.8785
 - 2015-26 conservative: $9.255M | +86.06% | -52.88% | 70 | 0.8281
 
-Validacion local 2026-07-14: **238/238 tests**. `RiskManager.check_daily_loss` calcula ahora el
+Validacion local 2026-07-14: **241/241 tests**. `RiskManager.check_daily_loss` calcula ahora el
 inicio del dia desde el reloj UTC real; antes usaba la fecha local y la etiquetaba como UTC.
 
 v6 fue promovido porque v5/v6 empezaron paper simultaneamente, no existia ventaja forward previa
@@ -33,7 +33,9 @@ Topologia deseada: exactamente `swing_allocator_v6_btc_usdt` (simulado),
 `swing_allocator_demo_btc_usdt` (OKX Demo) y `prop_swing_btc_usdt` (Prop Firm simulado).
 `tools/paper_fleet_setup.py` la reconcilia: elimina registros legacy/v5, desactiva otros bots
 y preserva historicos, wallets y filas internas v5/v6/demo/prop. Observabilidad excluye ahora todas
-las filas internas; `/status` solo muestra v6/demo y Prop sigue en `/prop`.
+las filas internas; `/status` solo muestra v6/demo y Prop sigue en `/prop`. Telegram tiene un panel
+persistente de botones para consultas v6/demo/Prop sin escribir argumentos; las acciones mutables
+siguen como comandos explicitos para evitar pulsaciones accidentales.
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
 Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
 

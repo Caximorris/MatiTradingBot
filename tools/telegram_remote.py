@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 from loguru import logger
 
 from tools.paper_bots import bot_label, filter_rebalances, paper_state_path, resolve_bot
+from tools.tg_menu import main_menu_markup, resolve_menu_text
 from tools.tg_send import tg_api, tg_credentials, tg_send, tg_send_document, tg_send_photo
 from tools.tg_views import (
     LIVENESS_MAX_AGE_MIN,
@@ -374,7 +375,8 @@ def _save_tg_state(state: dict) -> None:
 
 HELP_TEXT = (
     "\U0001F916 <b>Comandos</b>\n"
-    "\n<b>Estado</b> (bot = v5/v6/legacy; /bots para la lista)\n"
+    "Usa el panel inferior: las acciones habituales ya no requieren argumentos.\n"
+    "\n<b>Estado</b> (bot = v6/demo; /bots para la lista)\n"
     "/status [bot] — resumen de todos, o detalle de uno\n"
     "/bots — bots swing registrados y su cartera\n"
     "/prop — estado Prop/CFT y ultimos eventos\n"
@@ -398,16 +400,23 @@ HELP_TEXT = (
     "/prop_pause — pausar PropSwing\n"
     "/prop_resume — reanudar PropSwing\n"
     "\nAutomatico: alerta de rebalanceo, watchdog sin-tick, heartbeat diario "
-    "08:00 UTC, backup semanal."
+    "08:00 UTC, backup semanal. /menu vuelve a mostrar el panel."
 )
 
 BOT_COMMANDS = [
+    ("menu", "Mostrar panel de botones"),
     ("status", "Resumen de bots, o /status <bot>"),
+    ("status_v6", "Detalle V6 simulado"),
+    ("status_demo", "Detalle OKX Demo"),
     ("bots", "Bots swing registrados"),
     ("prop", "Estado Prop/CFT"),
     ("prop_report", "Eventos PropSwing"),
     ("report", "Ultimos rebalanceos"),
+    ("report_v6", "Rebalanceos V6"),
+    ("report_demo", "Rebalanceos OKX Demo"),
     ("equity", "Grafico equity vs B&H"),
+    ("equity_v6", "Equity V6 30 dias"),
+    ("equity_demo", "Equity Demo 30 dias"),
     ("chart", "Grafico precio + rebalanceos"),
     ("signals", "Target y senales actuales"),
     ("parity", "Paridad F15 y racha"),
@@ -478,11 +487,25 @@ def format_bots(snaps: list[dict]) -> str:
 def handle_command(text: str, get_session) -> str | None:
     """Devuelve la respuesta de texto, o None si el comando ya envio lo suyo
     (fotos, documentos, o el /update que se reinicia a si mismo)."""
+    text = resolve_menu_text(text)
+    shortcut = {
+        "/status_v6": "/status v6",
+        "/status_demo": "/status demo",
+        "/report_v6": "/report v6",
+        "/report_demo": "/report demo",
+        "/equity_v6": "/equity v6 30",
+        "/equity_demo": "/equity demo 30",
+    }
+    first = text.strip().split(maxsplit=1)[0].lower().split("@")[0] if text.strip() else ""
+    if first in shortcut:
+        text = shortcut[first]
     parts = text.strip().split()
     if not parts:
         return HELP_TEXT
     cmd = parts[0].lower().split("@")[0]
 
+    if cmd == "/menu":
+        return "\U0001F5B2 Panel listo. Elige una accion abajo."
     if cmd == "/status":
         now = datetime.now(timezone.utc)
         price = fetch_price()
@@ -594,7 +617,8 @@ def main() -> None:
             [{"command": c, "description": d} for c, d in BOT_COMMANDS])})
     except Exception as exc:
         logger.warning("setMyCommands fallo: {}", exc)
-    tg_send("\U0001F916 Control remoto conectado. /help para comandos.")
+    tg_send("\U0001F916 Control remoto conectado. Elige una accion abajo.",
+            reply_markup=main_menu_markup())
     logger.info("telegram_remote arrancado (rebalanceos ya registrados: {})", seen_rebalances)
 
     tg_state = _load_tg_state()
@@ -688,7 +712,7 @@ def main() -> None:
                 logger.exception("Comando '{}' fallo", text)
                 reply = f"⚠️ Error ejecutando '{_esc(text)}': {_esc(exc)}"
             if reply:
-                tg_send(reply, parse_mode="HTML")
+                tg_send(reply, parse_mode="HTML", reply_markup=main_menu_markup())
 
 
 if __name__ == "__main__":

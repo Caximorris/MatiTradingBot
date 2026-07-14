@@ -91,6 +91,34 @@ def test_unknown_command_returns_help(db_session):
     assert "/status" in handle_command("/loquesea", get_session)
 
 
+def test_menu_labels_and_shortcuts_expand_without_manual_arguments(monkeypatch, db_session):
+    from decimal import Decimal
+    import tools.telegram_remote as tr
+    snaps = [_snap_full("v6"), _snap_full("demo")]
+    monkeypatch.setattr(tr, "_load_snapshots", lambda gs: snaps)
+    monkeypatch.setattr(tr, "fetch_price", lambda *a, **k: Decimal("50000"))
+
+    @contextmanager
+    def get_session():
+        yield db_session
+
+    assert "SWING v6" in tr.handle_command("🟢 V6 sim", get_session)
+    assert "SWING demo" in tr.handle_command("/status_demo", get_session)
+    assert "REPORT [v6]" in tr.handle_command("📋 Report v6", get_session)
+    assert "Panel listo" in tr.handle_command("/menu", get_session)
+
+
+def test_main_menu_markup_is_persistent_and_read_only():
+    import json
+    from tools.tg_menu import main_menu_markup
+
+    menu = json.loads(main_menu_markup())
+    labels = {label for row in menu["keyboard"] for label in row}
+    assert menu["is_persistent"] is True
+    assert {"📊 Resumen", "🟢 V6 sim", "🟠 OKX demo", "🏁 Prop firm"} <= labels
+    assert not any("Pausar" in label or "Reiniciar" in label for label in labels)
+
+
 def test_split_bot_num_is_order_independent_and_clamps():
     from tools.telegram_remote import _split_bot_num
     assert _split_bot_num(["/report"], 10, 1, 100) == (None, 10)

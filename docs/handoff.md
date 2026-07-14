@@ -105,6 +105,7 @@ No comprar challenge sin:
 - `deploy/setup_prop_cft_paper.sh`: setup idempotente en VM.
 - `deploy/daily_checks.sh`: incluye estado Prop/CFT en check diario.
 - `tools/telegram_remote.py`: comandos `/prop`, `/prop_report`, `/prop_pause`, `/prop_resume`.
+- `tools/tg_menu.py`: panel persistente de botones, con atajos sin argumentos para v6/demo/Prop.
 
 ### Swing v6 default: simulado + OKX Demo
 
@@ -155,7 +156,7 @@ No copies `.env` ni `trading.db` desde Git: no se versionan.
 
 Runbook: `docs/ops/deploy-paper.md`.
 
-Comandos Telegram Swing (multi-bot desde 2026-07-06, commit `6e95f0d`; `bot` = v5/v6/legacy):
+Comandos Telegram Swing (`bot` = v6/demo; las acciones habituales tambien estan en el panel):
 
 - `/status [bot]` — resumen de todos, o detalle de uno
 - `/bots` — bots swing registrados y su cartera

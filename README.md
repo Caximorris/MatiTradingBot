@@ -185,17 +185,16 @@ python tools/journal_summary.py <path>
 
 ## Live deployment (paper)
 
-Paper bots run 24/7 on a GCP free-tier VM, each with an isolated fake wallet
-(`paper_state_<id>.json`): three Swing variants (**v5 / v6 / legacy**) plus the **Prop/CFT**
-candidate (its own `/prop` controls and CFT rule monitor). They're controlled remotely via a
-multi-bot Telegram interface (`/status`, `/report`, `/equity`, `/bots`, `/prop`, `/audit`) that
-pushes rebalance alerts and daily heartbeats. systemd (`Restart=always`) keeps the processes alive;
+Paper bots run 24/7 on a GCP free-tier VM: frozen **v6 simulated**, frozen **v6 on OKX Demo**,
+and the **Prop/CFT** candidate. They're controlled remotely through a persistent Telegram button
+panel for routine status, reports, charts, audits, and health checks; slash commands remain for
+advanced or state-changing operations. The bot also pushes rebalance alerts and daily heartbeats.
+systemd (`Restart=always`) keeps the processes alive;
 a daily cron runs parity + degradation checks, and `/audit` runs the anomaly engine on demand.
 
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
-**demo-trading** API key — fake funds only, created inside OKX's demo mode. Since 2026-07-13 a
-fourth bot (`demo`) is configured by current `main` to run frozen v6-2 while placing orders on
-OKX's demo engine (the VM must pull/restart to activate the repository update),
+**demo-trading** API key — fake funds only, created inside OKX's demo mode. The `demo` bot runs
+frozen v6-2 while placing orders on OKX's demo engine,
 exercising the real authenticated order path before a single real dollar is at stake (planned
 live: September 2026). Its first day already paid for itself: it surfaced a ghost-fill bug
 (engine-canceled market orders reported as filled), MiCA compliance blocks (USDT untradeable on
@@ -236,7 +235,7 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 
 Python 3.12 · typer + rich (CLI) · pandas + pandas-ta · python-okx · aiohttp / urllib
 (*deliberately not* `requests`) · SQLAlchemy + SQLite · python-telegram-bot · APScheduler ·
-`Decimal` for all money · 233 passing tests.
+`Decimal` for all money · 241 passing tests.
 
 > **The honest summary:** someone spent months building rigorous machinery to answer *"does this BTC
 > allocation strategy actually work, or am I fooling myself?"* — got to "+85% CAGR that survives the
