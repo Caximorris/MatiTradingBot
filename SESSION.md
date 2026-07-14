@@ -5,7 +5,7 @@ El detalle historico (logs de sesion, tablas de backtest, referencia por modulo,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
 **Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet deseada = v6 simulado + v6 OKX
-Demo + Prop Firm; legacy retirado y v5 desactivado mediante reconciliador idempotente. Fix de
+Demo + Prop Firm; registros legacy/v5 retirados mediante reconciliador idempotente. Fix de
 retry tras rebalanceo incompleto incluido. 238 tests pasan; falta pull+reconcile+restart en VM.)
 
 ---
@@ -25,14 +25,14 @@ inicio del dia desde el reloj UTC real; antes usaba la fecha local y la etiqueta
 
 v6 fue promovido porque v5/v6 empezaron paper simultaneamente, no existia ventaja forward previa
 de v5, y v6 domina las tres anclas y 7/8 rolling starts sin empeorar DD ni churn. Hoy seguimos en
-`bear_onset`: **v6 ≡ v5 en vivo hasta ~2026-10-07**. Decision usuario 2026-07-14: v5 queda
-desactivado; el rollback permanece documentado y su historial/wallet no se borran.
+`bear_onset`: **v6 ≡ v5 en vivo hasta ~2026-10-07**. Decision usuario 2026-07-14: se retira el
+registro v5; el rollback permanece documentado y su historial/wallet/estado no se borran.
 
 **PAPER DESPLEGADO** — VM GCP e2-micro us-central1 (free tier), Debian 13, VM `matitrbot`.
 Topologia deseada: exactamente `swing_allocator_v6_btc_usdt` (simulado),
 `swing_allocator_demo_btc_usdt` (OKX Demo) y `prop_swing_btc_usdt` (Prop Firm simulado).
-`tools/paper_fleet_setup.py` la reconcilia: elimina registro+estado legacy, desactiva otros bots
-y preserva historicos, wallets y filas internas v6/demo/prop. Observabilidad excluye ahora todas
+`tools/paper_fleet_setup.py` la reconcilia: elimina registros legacy/v5, desactiva otros bots
+y preserva historicos, wallets y filas internas v5/v6/demo/prop. Observabilidad excluye ahora todas
 las filas internas; `/status` solo muestra v6/demo y Prop sigue en `/prop`.
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
 Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
@@ -168,8 +168,8 @@ un backtest puntual.
 **Inmediato:**
 1. En VM: `git pull --ff-only origin main`, ejecutar `.venv/bin/python
    tools/paper_fleet_setup.py` y reiniciar `matibot` + `matibot-telegram`.
-2. Confirmar `main.py bot list`: solo v6 simulado, demo y prop activos; v5/otros desactivados,
-   legacy ausente. `/status` debe mostrar solo v6/demo, sin filas internas duplicadas.
+2. Confirmar `main.py bot list`: solo v6 simulado, demo y prop registrados/activos;
+   legacy/v5 ausentes. `/status` debe mostrar solo v6/demo, sin filas internas duplicadas.
 3. Verificar que demo sigue ~20% BTC y que un fill incompleto deja log `sin cooldown` y reintenta
    en el siguiente bloque 4H.
 

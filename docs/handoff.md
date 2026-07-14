@@ -99,7 +99,7 @@ No comprar challenge sin:
   `prop_swing`; journal operativo `data/runtime/prop_live_journal.jsonl`; hard-stop CFT.
 - `tools/prop_cft_setup.py`: registra bot PropSwing CFT paper.
 - `tools/paper_fleet_setup.py`: deja activo exactamente v6 simulado + v6 OKX Demo + Prop Firm,
-  elimina legacy y desactiva los demas bots sin borrar historicos ni wallets.
+  elimina registros legacy/v5 y desactiva los demas bots sin borrar historicos ni wallets.
 - `tools/prop_cft_status.py`: imprime estado del monitor.
 - `tools/prop_telegram.py`: formateo Telegram de Prop/CFT.
 - `deploy/setup_prop_cft_paper.sh`: setup idempotente en VM.
@@ -113,7 +113,7 @@ No comprar challenge sin:
 - `strategies/swing_funding_overlay.py`: overlay de funding cerrado/deduplicado.
 - `tools/swing_paper_setup.py`: registra Swing v6 paper aislado (`paper_portfolio_id=swing_v6`).
 - Enfoque actual: paper OOS del default V6-2 (`accumulation`, p10/p90, `+0.05`, ttl 7d)
-  en cartera simulada y cuenta OKX Demo. v5 queda desactivado como rollback historico.
+  en cartera simulada y cuenta OKX Demo. El registro v5 se retira, preservando su rollback.
 
 ### Prop research
 

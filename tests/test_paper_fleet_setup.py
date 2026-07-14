@@ -39,6 +39,7 @@ def test_reconcile_sets_exact_active_fleet_and_preserves_internal_state(db_sessi
     _add(db_session, "swing_allocator_btc_usdt", True)
     _add(db_session, "swing_allocator", False, {"initialized": True})
     _add(db_session, "swing_allocator_v5_btc_usdt", True)
+    _add(db_session, "swing_allocator_v5", False, {"initialized": True})
     _add(db_session, "swing_allocator_v6", False, {"last_eval_block": "2026-07-14T2"})
     _add(db_session, "swing_allocator_demo", False, {"initialized": True})
     _add(db_session, "prop_swing", False, {"position": None})
@@ -57,12 +58,17 @@ def test_reconcile_sets_exact_active_fleet_and_preserves_internal_state(db_sessi
     }
     assert "swing_allocator_btc_usdt" not in rows
     assert "swing_allocator" not in rows
-    assert rows["swing_allocator_v5_btc_usdt"].is_active is False
+    assert "swing_allocator_v5_btc_usdt" not in rows
+    assert rows["swing_allocator_v5"].get_config()["initialized"] is True
     assert rows["pro_trend_btc_usdt"].is_active is False
     assert rows["swing_allocator_v6"].get_config()["last_eval_block"] == "2026-07-14T2"
     assert rows["swing_allocator_demo"].get_config()["initialized"] is True
     assert rows["prop_swing"].get_config()["position"] is None
-    assert result["removed"] == ["swing_allocator", "swing_allocator_btc_usdt"]
+    assert result["removed"] == [
+        "swing_allocator",
+        "swing_allocator_btc_usdt",
+        "swing_allocator_v5_btc_usdt",
+    ]
 
 
 def test_reconcile_is_idempotent_and_configs_are_v6_explicit(db_session):

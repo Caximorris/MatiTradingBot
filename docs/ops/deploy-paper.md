@@ -2,7 +2,7 @@
 
 Topologia vigente desde 2026-07-14: exactamente tres bots activos en una VM gratuita:
 Swing v6-2 simulado, Swing v6-2 con ejecucion OKX Demo y Prop Firm/CFT simulado. Legacy se
-retira del registro; v5 queda desactivado y conserva historial para rollback.
+retira del registro; v5 tambien se retira pero conserva historial, wallet y estado para rollback.
 
 **Este documento es el punto de reanudacion**: si el proyecto se pausa, aqui esta todo lo
 necesario para retomar exactamente donde quedo (ver "Estado del despliegue" al final).
@@ -68,7 +68,7 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 ```
 
 El comando activa exactamente `swing_allocator_v6_btc_usdt`,
-`swing_allocator_demo_btc_usdt` y `prop_swing_btc_usdt`; elimina el registro legacy,
+`swing_allocator_demo_btc_usdt` y `prop_swing_btc_usdt`; elimina registros legacy/v5,
 desactiva cualquier otro bot operable y preserva wallets, journals y filas internas de estado.
 
 ## Operacion diaria

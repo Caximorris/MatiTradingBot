@@ -60,12 +60,16 @@ def reconcile_fleet(session, specs: list[FleetSpec]) -> dict:
 
     removed: list[str] = []
     deactivated: list[str] = []
-    legacy_names = {"swing_allocator_btc_usdt", "swing_allocator"}
+    retired_names = {
+        "swing_allocator_btc_usdt",
+        "swing_allocator_v5_btc_usdt",
+        "swing_allocator",
+    }
     for state in list(session.query(BotState).all()):
         key = (state.strategy_name, state.symbol)
         if key in desired_keys:
             continue
-        if state.symbol == "BTC-USDT" and state.strategy_name in legacy_names:
+        if state.symbol == "BTC-USDT" and state.strategy_name in retired_names:
             removed.append(state.strategy_name)
             session.delete(state)
         elif state.is_active:
