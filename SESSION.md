@@ -6,7 +6,7 @@ bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-arch
 
 **Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
 Demo + Prop Firm; registros legacy/v5 retirados. Fix de retry tras rebalanceo incompleto incluido.
-Telegram con panel persistente sin argumentos; status CLI multi-cartera corregido. 247 tests pasan.)
+Telegram con panel persistente sin argumentos; status CLI multi-cartera corregido. 257 tests pasan.)
 
 ---
 
@@ -38,6 +38,9 @@ persistente de botones para consultas v6/demo/Prop sin escribir argumentos; las 
 siguen como comandos explicitos para evitar pulsaciones accidentales. Demo se etiqueta como USDC,
 su rendimiento hibrido no se presenta como PnL comparable, `/audit` detecta gaps journal/cartera y
 las horas operativas se renderizan en Europe/Madrid (persistencia/scheduler siguen en UTC).
+Prop entra ya en snapshots/anomaly-check y su wallet inicial de 10k se persiste al arrancar.
+`reconcile-demo-journal` anexa un evento auditable/idempotente para la correccion fuera de banda;
+no la disfraza como BUY/SELL ni modifica la estrategia congelada.
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
 Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
 

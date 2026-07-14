@@ -15,6 +15,7 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from tools.paper_bots import count_strategy_events
 from tools.paper_snapshot import build_snapshots
 
 # --- FUENTE DE VERDAD del inicio del forward-test (== FORWARD_TEST_CONTRACT.md seccion 1) ---
@@ -77,7 +78,7 @@ def _bot_forward_metrics(snap: dict, start: datetime) -> dict:
         "name": snap.get("name"),
         "is_active": snap.get("is_active"),
         "wallet_exists": snap.get("wallet_exists"),
-        "n_rebalances_forward": len(fwd),
+        "n_rebalances_forward": count_strategy_events(fwd),
         "pre_start_dropped": dropped,
         "buys": directions.count("BUY"),
         "sells": directions.count("SELL"),

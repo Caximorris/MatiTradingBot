@@ -129,7 +129,14 @@ class OKXClient:
         self._paper_state_path = Path("data") / "runtime" / state_file
         self._persist_paper = persist_paper_state and self._is_paper
         if self._persist_paper:
+            state_existed = self._paper_state_path.exists()
             self._load_paper_state()
+            # A newly registered paper portfolio must be observable before its first
+            # order. Previously the default 10k balance lived only in memory until a
+            # balance-changing operation, so an active Prop bot appeared wallet-less.
+            if not state_existed:
+                with self._paper_lock:
+                    self._persist_paper_state()
 
         mode = "paper" if self._is_paper else "live"
         logger.info("OKXClient inicializado — modo={}, exchange_disponible={}", mode, self._available)

@@ -10,13 +10,18 @@ import html
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from tools.paper_bots import bot_label
+from tools.paper_bots import bot_label, count_strategy_events
 from tools.status_snapshot import MADRID, format_iso_madrid
 
 LIVENESS_MAX_AGE_MIN = 10   # last_run mas viejo que esto con bot activo = proceso caido
 PARITY_TARGET_DAYS = 30     # criterio de cierre F15
 
-_DIR_ICON = {"BUY": "\U0001F7E2", "SELL": "\U0001F534", "INIT": "⚪"}  # verde/rojo/blanco
+_DIR_ICON = {
+    "BUY": "\U0001F7E2",
+    "SELL": "\U0001F534",
+    "INIT": "⚪",
+    "RECONCILE": "\U0001F50E",
+}
 
 
 def _esc(s) -> str:
@@ -91,7 +96,7 @@ def format_status_summary(snaps: list[dict], price: Decimal | None, now: datetim
                 parts.append(f"bot/B&amp;H {ratio:.3f}")
         else:
             parts.append(f"{btc:.4f} BTC + {usdt:,.0f} {_esc(quote)}")
-        parts.append(f"{len(s['rebalances'])} reb")
+        parts.append(f"{count_strategy_events(s['rebalances'])} reb")
         lines.append(" · ".join(parts))
     if any(s.get("execution") == "okx_demo" for s in snaps):
         lines.append("<i>Demo: USDC real; valoracion con spot real, no usar como PnL.</i>")
@@ -145,7 +150,10 @@ def format_status(rows, balances: dict, price: Decimal | None,
             days = max(0, (now - datetime.fromisoformat(init["timestamp"])).days) \
                 if "timestamp" in init else 0
             lines.append("")
-            lines.append(f"\U0001F4C8 <b>Rendimiento</b> ({days} dias, {len(rebalances)} rebalanceos)")
+            lines.append(
+                f"\U0001F4C8 <b>Rendimiento</b> "
+                f"({days} dias, {count_strategy_events(rebalances)} rebalanceos)"
+            )
             lines.append(f"Bot {bot_ret:+.2f}% | B&amp;H BTC {bnh_ret:+.2f}% | bot/B&amp;H {ratio:.3f}")
     elif rebalances and not performance_comparable:
         lines.append("")
@@ -170,7 +178,12 @@ def format_status(rows, balances: dict, price: Decimal | None,
         rb = rebalances[-1]
         icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
         lines.append("")
-        lines.append("\U0001F501 <b>Ultimo rebalanceo</b>")
+        title = (
+            "Ultima reconciliacion"
+            if rb.get("direction") == "RECONCILE"
+            else "Ultimo rebalanceo"
+        )
+        lines.append(f"\U0001F501 <b>{title}</b>")
         lines.append(
             f"{icon} {format_iso_madrid(rb.get('timestamp'))} {rb.get('direction', '?')} "
             f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%} "
@@ -197,6 +210,7 @@ def format_report(rebalances: list[dict], n: int = 10, label: str | None = None)
     if not rebalances:
         return f"Sin rebalanceos registrados aun{tag}."
     total = len(rebalances)
+    operational = count_strategy_events(rebalances)
     first_ts = rebalances[0].get("timestamp", "?")[:10]
     body = []
     for rb in rebalances[-n:]:
@@ -207,7 +221,11 @@ def format_report(rebalances: list[dict], n: int = 10, label: str | None = None)
             f"@ ${rb.get('price', 0):,.0f} | ${rb.get('portfolio_usdt', 0):,.0f} "
             f"| {','.join(rb.get('signals', []))}"
         ))
-    lines = [f"\U0001F4D2 <b>REPORT{_esc(tag)}</b> — {total} rebalanceo(s) desde {first_ts}", ""]
+    lines = [
+        f"\U0001F4D2 <b>REPORT{_esc(tag)}</b> — {operational} rebalanceo(s), "
+        f"{total - operational} evento(s) de auditoria desde {first_ts}",
+        "",
+    ]
     lines.append("<pre>" + "\n".join(body) + "</pre>")
     if total > n:
         lines.append(f"... ({total - n} anteriores omitidos; /report {total} para todos)")
@@ -238,14 +256,19 @@ def format_anomalies(alerts: list) -> str:
 def format_rebalance_alert(rb: dict) -> str:
     icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
     tag = f" [{bot_label(rb['strategy'], None)}]" if rb.get("strategy") else ""
+    is_reconcile = rb.get("direction") == "RECONCILE"
+    heading = "RECONCILIACION DE AUDITORIA" if is_reconcile else "REBALANCEO"
     lines = [
-        f"{icon} <b>REBALANCEO{_esc(tag)}: {_esc(rb.get('direction', '?'))} "
+        f"{icon} <b>{heading}{_esc(tag)}: {_esc(rb.get('direction', '?'))} "
         f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%}</b>",
-        f"{rb.get('timestamp', '?')[:16]} @ ${rb.get('price', 0):,.0f}",
+        f"{format_iso_madrid(rb.get('timestamp'))} @ ${rb.get('price', 0):,.0f}",
         f"\U0001F4B0 Portfolio: ${rb.get('portfolio_usdt', 0):,.0f}",
     ]
     if rb.get("signals"):
         lines.append(f"senales: {_esc(', '.join(rb['signals']))}")
+    reason = rb.get("reconciliation", {}).get("reason")
+    if reason:
+        lines.append(f"motivo: {_esc(reason)}")
     return "\n".join(lines)
 
 

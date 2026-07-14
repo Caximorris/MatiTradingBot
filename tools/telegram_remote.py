@@ -35,7 +35,9 @@ sys.path.insert(0, str(ROOT))
 
 from loguru import logger
 
-from tools.paper_bots import bot_label, filter_rebalances, paper_state_path, resolve_bot
+from tools.paper_bots import (
+    bot_label, count_strategy_events, filter_rebalances, paper_state_path, resolve_bot,
+)
 from tools.tg_menu import main_menu_markup, resolve_menu_text
 from tools.tg_send import tg_api, tg_credentials, tg_send, tg_send_document, tg_send_photo
 from tools.tg_views import (
@@ -495,7 +497,7 @@ def format_bots(snaps: list[dict]) -> str:
         wallet = paper_state_path(s["portfolio_id"], RUNTIME).name
         state = "activo" if s["is_active"] else "pausado"
         lines.append(f"• <b>{_esc(s['label'])}</b> — {_esc(s['name'])} "
-                     f"[{state}] · {_esc(wallet)} · {len(s['rebalances'])} reb")
+                     f"[{state}] · {_esc(wallet)} · {count_strategy_events(s['rebalances'])} reb")
     return "\n".join(lines)
 
 

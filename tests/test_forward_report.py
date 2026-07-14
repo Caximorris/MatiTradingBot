@@ -34,6 +34,8 @@ def test_bot_forward_metrics_excludes_history():
              "portfolio_usdt": 9999, "btc_pct_after": 0.6},                 # pre-start
             {"timestamp": "2026-07-10T00:00:00+00:00", "direction": "BUY",
              "portfolio_usdt": 10000, "btc_pct_after": 0.7},
+            {"timestamp": "2026-07-14T00:00:00+00:00", "direction": "RECONCILE",
+             "portfolio_usdt": 12000, "btc_pct_after": 0.2},
         ],
     }
     m = fr._bot_forward_metrics(snap, start)
@@ -41,6 +43,7 @@ def test_bot_forward_metrics_excludes_history():
     assert m["pre_start_dropped"] == 1
     assert m["buys"] == 1
     assert m["max_exposure_pct"] == 70.0
+    assert m["last_rebalance_ts"].startswith("2026-07-14")
 
 
 class _Q:

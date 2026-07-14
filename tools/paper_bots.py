@@ -18,6 +18,7 @@ from pathlib import Path
 # Espejo de OKXClient._safe_state_name (core/exchange.py). Duplicado a proposito: importar
 # core.exchange arrastra el SDK de OKX; aqui solo necesitamos el mismo nombre de fichero.
 _LABEL_RE = re.compile(r"_?(v\d+)_", re.I)
+STRATEGY_EVENT_DIRECTIONS = frozenset({"INIT", "BUY", "SELL"})
 
 
 def safe_state_name(value: str) -> str:
@@ -38,6 +39,11 @@ def paper_state_path(portfolio_id: str | None, runtime_dir: Path) -> Path:
     return runtime_dir / "paper_state.json"
 
 
+def count_strategy_events(events: list[dict]) -> int:
+    """Count allocation events while excluding audit-only reconciliation rows."""
+    return sum(e.get("direction") in STRATEGY_EVENT_DIRECTIONS for e in events)
+
+
 def bot_label(name: str, config: dict | None) -> str:
     """Etiqueta corta y estable para referirse al bot desde Telegram (v5, v6, legacy...).
 
@@ -46,6 +52,11 @@ def bot_label(name: str, config: dict | None) -> str:
     inst = (config or {}).get("instance_id")
     if inst:
         return str(inst)
+    lowered = str(name).lower()
+    if lowered.startswith("prop_swing"):
+        return "prop"
+    if "_demo_" in f"_{lowered}_":
+        return "demo"
     m = _LABEL_RE.search(name or "")
     if m:
         return m.group(1).lower()

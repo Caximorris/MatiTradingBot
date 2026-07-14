@@ -1,8 +1,7 @@
 """Comandos de observabilidad del paper forward-test (plan T4.1/T5.1/T6.1/T7.1/T13.1).
 
-Todos READ-ONLY: leen DB + data/runtime + ticker publico. No tocan la logica de trading ni
-pausan bots. La logica pura vive en tools/{paper_snapshot,anomaly_check,forward_report,
-data_audit,decision_explain}.py; aqui solo va el render Rich y el cableado de Telegram.
+Todos salvo ``reconcile-demo-journal`` son READ-ONLY. La reconciliacion es una mutacion de
+auditoria explicita: anexa una linea, nunca reescribe historia ni coloca ordenes.
 """
 from __future__ import annotations
 
@@ -235,9 +234,69 @@ def explain(
     console.print(explain_rebalance(entry))
 
 
+def reconcile_demo_journal_cmd(
+    reason: str = typer.Option(
+        "Correccion manual previa ejecutada fuera del journal",
+        "--reason",
+        help="Motivo que quedara grabado en el evento de auditoria.",
+    ),
+):
+    """Reconcilia el espejo OKX Demo con el journal mediante un evento auditable e idempotente."""
+    from core.database import get_session, init_db
+    from tools.demo_journal_reconcile import reconcile_demo_journal
+    from tools.paper_bots import paper_state_path
+    from tools.paper_snapshot import REBALANCES, RUNTIME, discover_bots, fetch_spot_price
+
+    init_db()
+    with get_session() as session:
+        demos = [b for b in discover_bots(session) if b.get("execution") == "okx_demo"]
+    if len(demos) != 1:
+        console.print(
+            f"[red]Se esperaba exactamente un bot OKX Demo operable; encontrados: {len(demos)}.[/red]"
+        )
+        raise typer.Exit(1)
+
+    price = fetch_spot_price()
+    if price is None:
+        console.print("[red]No se pudo obtener BTC-USDT spot; journal sin cambios.[/red]")
+        raise typer.Exit(1)
+
+    demo = demos[0]
+    wallet = paper_state_path(demo.get("portfolio_id"), RUNTIME)
+    try:
+        result = reconcile_demo_journal(
+            strategy=demo["name"],
+            symbol=demo["symbol"],
+            wallet_path=wallet,
+            journal_path=REBALANCES,
+            price=price,
+            execution_quote=str(demo.get("execution_quote") or "USDC"),
+            reason=reason,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]Reconciliacion rechazada: {exc}[/red]")
+        raise typer.Exit(1) from exc
+
+    if result.status == "appended":
+        event = result.event or {}
+        console.print(
+            "[green]RECONCILE anexado[/green] "
+            f"{event.get('btc_pct_before', 0):.1%} -> {event.get('btc_pct_after', 0):.1%} "
+            f"(gap previo {result.gap_pp:.1f}pp)."
+        )
+    elif result.status == "already_reconciled":
+        console.print("[green]El mismo snapshot Demo ya estaba reconciliado; sin cambios.[/green]")
+    else:
+        console.print(
+            f"[green]Journal y cartera ya estan alineados[/green] "
+            f"(gap {result.gap_pp:.1f}pp <= 15pp); sin cambios."
+        )
+
+
 def register(app: typer.Typer) -> None:
     app.command(name="paper-status")(paper_status)
     app.command(name="anomaly-check")(anomaly_check)
     app.command(name="forward-report")(forward_report)
     app.command(name="data-audit")(data_audit)
     app.command(name="explain")(explain)
+    app.command(name="reconcile-demo-journal")(reconcile_demo_journal_cmd)

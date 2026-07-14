@@ -167,12 +167,13 @@ python main.py baselines --from 2018-01-01 --to 2026-01-01       # benchmark all
 python main.py sensitivity --from 2018-01-01 --to 2026-01-01     # parameter sweeps
 python main.py random-backtest --strategy swing --windows 10 --months 24  # random windows
 
-# Forward-test observability (read-only, never touches the strategy)
-python main.py paper-status            # control center for v5/v6/legacy bots
+# Forward-test observability (does not change strategy decisions)
+python main.py paper-status            # control center for v6/demo/prop bots
 python main.py anomaly-check           # infra/data/state red-flags (incl. stale-cron detection)
 python main.py forward-report          # metrics from post-start data only
 python main.py data-audit              # OHLCV cache integrity (never re-downloads)
 python main.py explain --bot v6        # plain-language "why" of an executed rebalance
+python main.py reconcile-demo-journal  # audited, idempotent repair after an out-of-band Demo trade
 
 # Spanish IRPF tax report (FIFO, Excel + JSON)
 python main.py report --year 2025
@@ -195,6 +196,9 @@ a daily cron runs parity + degradation checks, and `/audit` runs the anomaly eng
 the real `BTC-USDC` execution pair and labels cash as USDC while retaining BTC-USDT as the signal
 space. Demo performance ratios are intentionally suppressed because simulated fills and real-spot
 valuation are not a comparable PnL series.
+New simulated portfolios persist their initial $10,000 wallet immediately, so Prop is observable
+before its first trade. If Demo was corrected outside the strategy, `reconcile-demo-journal`
+appends a distinct `RECONCILE` audit event; it never places an order or rewrites prior history.
 
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
 **demo-trading** API key — fake funds only, created inside OKX's demo mode. The `demo` bot runs

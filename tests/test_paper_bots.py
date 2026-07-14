@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tools.paper_bots import (
     bot_label,
+    count_strategy_events,
     filter_rebalances,
     is_operable_bot_name,
     paper_state_path,
@@ -18,6 +19,15 @@ def test_bot_label_prefers_instance_id_then_name_then_legacy():
     assert bot_label("swing_allocator_v6_btc_usdt", {"instance_id": "v6"}) == "v6"
     assert bot_label("swing_allocator_v5_btc_usdt", {}) == "v5"          # del nombre
     assert bot_label("swing_allocator_btc_usdt", None) == "legacy"       # sin version
+    assert bot_label("swing_allocator_demo_btc_usdt", None) == "demo"
+    assert bot_label("prop_swing_btc_usdt", None) == "prop"
+
+
+def test_count_strategy_events_excludes_reconciliation_rows():
+    events = [
+        {"direction": "INIT"}, {"direction": "SELL"}, {"direction": "RECONCILE"},
+    ]
+    assert count_strategy_events(events) == 2
 
 
 def test_paper_state_path_isolated_vs_legacy():

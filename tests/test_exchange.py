@@ -4,6 +4,7 @@ Nunca llaman a la API real de OKX.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -337,6 +338,18 @@ def test_paper_state_roundtrip_survives_restart(tmp_path, monkeypatch):
     balance = c2.get_balance()
     assert balance["USDT"] == Decimal("4000")
     assert balance["BTC"] == Decimal("0.123456")
+
+
+def test_new_named_paper_portfolio_is_persisted_before_first_order(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    settings = _paper_settings()
+    with patch("core.exchange.OKXClient._init_apis"):
+        OKXClient(settings, persist_paper_state=True, paper_state_name="prop_cft")
+
+    path = tmp_path / "data" / "runtime" / "paper_state_prop_cft.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["balances"] == {"USDT": "10000"}
+    assert payload["counter"] == 0
 
 
 def test_paper_state_not_persisted_by_default(tmp_path, monkeypatch, client):

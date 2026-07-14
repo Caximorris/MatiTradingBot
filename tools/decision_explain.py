@@ -17,6 +17,9 @@ from __future__ import annotations
 _SIGNAL_RULES: list[tuple[str, str]] = [
     ("init",
      "Primera asignacion del bot (INIT): siembra la cartera en el %BTC base."),
+    ("manual_wallet_reconcile",
+     "Reconciliacion de auditoria: adopta el balance actual tras un ajuste ejecutado fuera "
+     "del journal; no representa una orden de la estrategia."),
     ("regime_bull_suppressed_bear_onset",
      "Regimen alcista detectado pero SUPRIMIDO por fase bear_onset (mitigacion Q4 2025, v2) "
      "-> no se aplica sesgo alcista."),

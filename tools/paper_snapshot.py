@@ -26,6 +26,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
+from tools.paper_bots import count_strategy_events
+
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "data" / "runtime"
 REBALANCES = RUNTIME / "swing_rebalances.jsonl"
@@ -87,7 +89,7 @@ def fetch_spot_price(symbol: str = "BTC-USDT", timeout: int = 10) -> Decimal | N
 # ---------------------------------------------------------------------------
 
 def discover_bots(session) -> list[dict]:
-    """Datos planos de cada bot swing operable. Excluye la fila de estado interno.
+    """Datos planos de cada bot paper de la fleet. Excluye filas internas/legacy.
 
     Cada dict: label, name, symbol, is_active, last_run (datetime|None), portfolio_id.
     Se adapta solo a 1/2/3 carteras sin hardcodear (mismo criterio que
@@ -95,11 +97,12 @@ def discover_bots(session) -> list[dict]:
     from tools.paper_bots import bot_label, is_operable_bot_name
     from core.database import BotState
 
-    rows = (session.query(BotState)
-            .filter(BotState.strategy_name.like("swing%"))
-            .all())
+    rows = session.query(BotState).all()
     out = []
     for r in rows:
+        name = str(r.strategy_name).lower()
+        if not name.startswith(("swing_allocator", "prop_swing")):
+            continue
         if not is_operable_bot_name(r.strategy_name, r.symbol):
             continue
         cfg = r.get_config() or {}
@@ -208,7 +211,7 @@ def build_snapshots(session, *, price: Decimal | None = None,
             "btc_pct": btc_pct,
             "bnh_ratio": ratio,
             "rebalances": rebalances,
-            "n_rebalances": len(rebalances),
+            "n_rebalances": count_strategy_events(rebalances),
             "last_rebalance": last_reb,
             "last_run_age_min": age_min,
             "stale": stale,

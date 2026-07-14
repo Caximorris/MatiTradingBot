@@ -79,6 +79,23 @@ def test_next_4h_eval_rounds_to_block():
     assert mins == 165
 
 
+def test_discover_bots_includes_prop_and_excludes_other_strategies():
+    rows = [
+        _FakeBot("swing_allocator_v6_btc_usdt", "BTC-USDT", True, NOW,
+                 {"instance_id": "v6", "paper_portfolio_id": "swing_v6"}),
+        _FakeBot("prop_swing_btc_usdt", "BTC-USDT", True, NOW,
+                 {"instance_id": "prop", "paper_portfolio_id": "prop_cft"}),
+        _FakeBot("pro_trend_btc_usdt", "BTC-USDT", False, NOW, {}),
+        _FakeBot("prop_swing", "BTC-USDT", False, NOW, {}),
+    ]
+
+    bots = ps.discover_bots(_FakeSession(rows))
+
+    assert [b["name"] for b in bots] == [
+        "swing_allocator_v6_btc_usdt", "prop_swing_btc_usdt",
+    ]
+
+
 def test_build_snapshots_marks_stale_and_computes_metrics(tmp_path, monkeypatch):
     monkeypatch.setattr(ps, "RUNTIME", tmp_path)
     reb_path = tmp_path / "reb.jsonl"

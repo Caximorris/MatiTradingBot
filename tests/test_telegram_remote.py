@@ -250,6 +250,29 @@ def test_format_report_truncates_and_counts():
     assert out.count("regime_bull") == 10
 
 
+def test_reconcile_is_reported_as_audit_not_strategy_rebalance():
+    from tools.tg_views import format_rebalance_alert
+
+    events = [
+        {"strategy": "swing_allocator_demo_btc_usdt",
+         "timestamp": "2026-07-13T14:00:00+00:00", "direction": "INIT",
+         "btc_pct_before": 0.0, "btc_pct_after": 0.6, "price": 60000.0,
+         "portfolio_usdt": 10000.0, "signals": ["init"]},
+        {"strategy": "swing_allocator_demo_btc_usdt",
+         "timestamp": "2026-07-14T09:00:00+00:00", "direction": "RECONCILE",
+         "btc_pct_before": 0.58, "btc_pct_after": 0.192, "price": 62557.0,
+         "portfolio_usdt": 10749.0, "signals": ["manual_wallet_reconcile"],
+         "reconciliation": {"reason": "ajuste manual"}},
+    ]
+
+    report = format_report(events)
+    alert = format_rebalance_alert(events[-1])
+
+    assert "1 rebalanceo(s), 1 evento(s) de auditoria" in report
+    assert "RECONCILIACION DE AUDITORIA [demo]" in alert
+    assert "motivo: ajuste manual" in alert
+
+
 def test_parse_daily_checks_and_streak():
     from tools.telegram_remote import format_parity, parse_daily_checks, parity_streak
     log = (

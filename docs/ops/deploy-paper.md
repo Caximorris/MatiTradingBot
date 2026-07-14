@@ -97,6 +97,7 @@ evitar pulsaciones accidentales y siguen disponibles en el menu de comandos de T
 | Salud VM (servicios, RAM, disco, errores) | Telegram `/health` |
 | Red-flags de infra/datos/estado (incl. cron viejo) | Telegram `/audit` (= CLI `anomaly-check`) |
 | "Por que rebalanceo?" en lenguaje llano | SSH: `python main.py explain --bot v6` |
+| Reconciliar una correccion Demo fuera del journal | SSH: `python main.py reconcile-demo-journal` |
 | Logs sin SSH | Telegram `/logs` o `/logs 100` |
 | Backup DB+estado al chat | Telegram `/backup` (ademas automatico semanal) |
 | Reiniciar el bot sin SSH | Telegram `/restart` |
@@ -125,6 +126,19 @@ serie no es comparable. `/audit` alerta `journal-allocation-gap` cuando la carte
 mas de 15pp del ultimo evento, por ejemplo tras una correccion manual fuera del journal. Las horas
 de datos, rebalanceos, checks y proximas evaluaciones se muestran en Europe/Madrid; la programacion
 interna y la DB permanecen en UTC.
+
+Tras una correccion Demo ejecutada manualmente fuera de la estrategia, correr una vez:
+
+```bash
+.venv/bin/python main.py reconcile-demo-journal
+.venv/bin/python main.py anomaly-check
+```
+
+El primer comando no opera ni reescribe historia: anexa un evento `RECONCILE` con el motivo,
+snapshot exacto de BTC y el alias USDT del efectivo USDC, mas un fingerprint idempotente.
+Repetirlo sobre el mismo snapshot no anade
+otra linea. `anomaly-check` incluye tambien Prop; las carteras simuladas nuevas escriben su balance
+inicial de 10,000 USDT al arrancar, antes del primer trade.
 
 ## Prop/CFT paper en la misma VM
 
@@ -205,8 +219,9 @@ sudo systemctl restart matibot-telegram   # OJO: servicio SEPARADO — sin esto 
 
 Verificacion: `/bots` muestra el bot `demo`; su cartera se espeja en
 `data/runtime/paper_state_okx_demo.json` (espejo read-only del balance en OKX — editarlo no
-cambia nada), asi que `/status demo`, `/report demo`, `/equity demo` funcionan igual que con
-los demas. Si las credenciales demo faltan o son invalidas, el arranque SALTA solo ese bot
+cambia nada), asi que `/status demo` y `/report demo` leen ese estado. `/equity demo` se bloquea
+porque la serie hibrida no es PnL comparable. Si las credenciales demo faltan o son invalidas,
+el arranque SALTA solo ese bot
 (los otros dos arrancan normal) y lo dice en el log de arranque.
 
 Peculiaridades del entorno demo (medidas 2026-07-13, no afectan al live):
