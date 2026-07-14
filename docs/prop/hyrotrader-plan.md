@@ -793,6 +793,21 @@ Comparativa externa simulada con E9+bybit+funding:
 - **Phase-router CFT**: `entry_halving_phases="bear_onset,accumulation"` + r1.8/n0.8
   bajo `bybit_cons` pasa stress: 2020-26 74.8/2.0; shift -60 74.2/16.0; 2018 shift
   -60 71.9/13.9. Candidato vivo, CFT-only; Hyro sigue fuera por breach/trade loss.
+  **CORRECCION 2026-07-14 — estos numeros son INVALIDOS.** `model_funding=True` (parte
+  de esta config) nunca se aplicaba de verdad: `load_funding()` devolvia los settlements
+  sin ordenar (cache en orden de paginacion API, mas reciente primero), el puntero
+  monotono de `_accrue_funding` nunca avanzaba, y el funding NUNCA se devengaba en
+  ninguna estrategia que lo usara (`funding_extreme.py`, `prop_swing.py`, y
+  `basis_carry.py`, encontrado alli). Fix en `strategies/funding_extreme.py:load_funding`
+  (`sorted(rows)`), 271/271 tests. Re-corrido 2020-01 -> 2026-01, `bybit_cons`, buffer
+  0.2, misma config exacta (`tools/prop_challenge_sim.py --rules cft`):
+  **pass_rate 0.454 (era 0.748), breach_rate 0.148 (era 0.020)**, 304 ventanas
+  (138 passed / 45 breach / 121 timeout). El gate de adopcion (P(pasar)>=60% con
+  costes conservadores) **YA NO SE CUMPLE** — 45.4% < 60%. El candidato NO deberia
+  seguir marcado "vivo" con estos numeros; decision de Matias pendiente sobre si
+  re-evaluar otro candidato o pausar el paper. Backtest de un solo tramo (no rolling)
+  con la misma config: CAGR +7.5%/ano, Max DD -15.71%, PF 1.54, Calmar 0.48 — para
+  contexto, no reemplaza el simulador de reglas CFT (ese es el que decide el gate).
 - **Manual Breakout**: viable solo como plan de senales propias + ejecucion manual, pero
   hay que confirmar soporte/API/bots y que una alerta de sistema propio no se considere
   senal de tercero. No comprar sin confirmacion escrita.

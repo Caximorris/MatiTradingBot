@@ -155,12 +155,30 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
   - A3 risk 2% (bybit_cons): +84.08% | CAGR 11.5% | DD -16.58% | PF 1.32. Sobrevive.
   - Mensual (tools/monthly_dist.py, A2): media +1.23%/mes, mediana +0.90%, 60% meses
     positivos, peor mes -7.1%, racha max 3 meses negativos. (~$123/mes sobre $10k.)
-- Decision: parked (gate: CAGR 14.8% vs >=15% requerido — fallo marginal de 0.2pp; DD, PF cons
-  y % meses positivos cumplen. Falta A4 (OOS 2026), BLOQUEADO: correr post-2026-01 mutaria el
-  cache OHLCV canonico (incidente 2026-07-06). Decision de adopcion pendiente de Matias.)
+- Decision: **rejected** (2026-07-14, decision explicita de Matias + analisis comparativo).
+  No por el fallo marginal de gate (CAGR 14.8% vs 15%): aun ignorando ese 0.2pp, el motor
+  NO compite con Swing v6 en ninguna metrica ajustada a riesgo. Calmar (CAGR/MaxDD):
+  Swing v6 2015-26 realistic = 1.64 (86.51%/-52.73%) vs mejor variante funding_extreme = 0.98
+  (A2, risk 2%) o 0.96 (cap 1.0 sin leverage); escalar con leverage real (3%/1.5x) DEGRADA
+  el Calmar a 0.85. Ninguna configuracion de la frontera de riesgo (ver tabla en
+  `docs/income/plan.md`) alcanza el Calmar de Swing. Ademas no es diversificacion real:
+  ambos motores son long-only direccional BTC, correlacionados en el tail risk (un crash
+  de BTC golpea a los dos). El valor practico de la señal (funding en percentil extremo)
+  ya esta capturado con costo marginal casi nulo por `strategies/swing_funding_overlay.py`
+  dentro de v6-2 (tilt ±0.05, sin leverage ni infra de perps nueva) — construir un vehiculo
+  separado apalancado para el mismo insight, con peor Calmar, es esfuerzo duplicado. Segunda
+  vez que este motor se rechaza en un framing distinto (primera vez: prop firm, gate CFT
+  two-step 27% pass/37% breach, `docs/prop/hyrotrader-plan.md`). A4 (OOS 2026) NO se ejecuta:
+  el plan ya marca OOS aqui como indicativo, no como gate, y no cambia el veredicto.
 - Razon: plan completo, gates y resultados en `docs/income/plan.md` (Via A).
 - Permitido en forward-test?: no (nunca default; paper propio solo si pasa gate + OK explicito)
 - Referencias: `docs/income/plan.md`, `docs/prop/hyrotrader-plan.md` §15
+- **CORRECCION 2026-07-14:** los numeros de A0-A3 arriba se calcularon con un bug real
+  en `load_funding()` (settlements sin ordenar -> el devengo de funding nunca se aplicaba
+  al balance, ver EXP-013). Corregido y re-corrido A2 (risk 2%, bybit): CAGR +12.8% (antes
+  14.8%), Max DD -15.22% (antes -15.06%), PF 1.43 (antes 1.42), Calmar 0.84 (antes 0.98).
+  El veredicto NO cambia — sigue muy por debajo del Calmar de Swing v6 (1.64) y ahora con
+  margen mayor, no menor. La decision "rejected" se mantiene, reforzada.
 
 ### EXP-012 — MR-Regimen 1H (mean reversion condicionada por regimen macro)
 - Fecha: 2026-07-13 (pre-registrado)
@@ -197,6 +215,35 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Permitido en forward-test?: no (bot aislado nuevo solo si pasa gates + OK explicito)
 - Referencias: `docs/income/plan.md`
 
+### EXP-013 — Basis Carry (cash-and-carry, market-neutral)
+- Fecha: 2026-07-14 (pre-registrado)
+- Estrategia: nueva (`strategies/basis_carry.py`)
+- Hipotesis: spot BTC long + short sintetico de igual qty (patron `prop_swing.py`) deja
+  exposicion neta a precio ~0; el retorno viene solo del funding (Bybit). A diferencia de
+  Swing/funding_extreme/mr_regime, esta NO es una apuesta direccional — es diversificacion
+  real, no una version mas lenta del mismo riesgo direccional.
+- Bug encontrado durante la implementacion: `load_funding()` devolvia settlements SIN
+  ordenar (cache en orden de paginacion de API, mas reciente primero) — el puntero
+  monotono de `_advance_settle_idx`/`_accrue_funding` (compartido con `funding_extreme.py`
+  y `prop_swing.py`) nunca avanzaba, asi que el funding NUNCA se devengaba en ninguna de
+  las tres estrategias. Fix en `load_funding()` (ahora `sorted(rows)`), 271/271 suite.
+  Ver correccion retroactiva en EXP-011 arriba.
+- Metricas (2020-06 -> 2026-01, `--costs bybit`, config default sin ajustar):
+  Balance final $47,151 (+371.51%) | CAGR +32.0%/ano | Max DD -1.09% | Calmar 29.36 |
+  Sharpe 10.45 / Sortino 67.28 | 9 ciclos, 94.9% tiempo en mercado.
+- Decision: **promising, no adoptado** — dos caveats bloquean paper/live todavia:
+  (1) 45% del gain total ($16,776 de $37,151) viene de UN solo tramo (Q2 2021, el
+  regimen de funding mas extremo de la historia de BTC) — no extrapolar ~32%/ano como
+  expectativa; (2) el short sintetico NO modela riesgo de margen/liquidacion (asume
+  balance USDT ilimitado via `adjust_balance`) — un cash-and-carry real en un short
+  squeeze violento podria liquidarse antes de que el spot compense. Backtest no puede
+  ver ese riesgo. Falta revisar la distribucion completa (cuanto sostiene el resultado
+  fuera de 2021) antes de decidir.
+- Razon: pre-registro completo (hipotesis, mecanica, gate) en `docs/income/plan.md` (Via D).
+- Permitido en forward-test?: no (nuevo bot aislado, requeriria modelar riesgo de margen
+  primero + OK explicito)
+- Referencias: `docs/income/plan.md`, `strategies/prop_swing.py` (patron de short sintetico)
+
 ### EXP-010 — Prop: router CFT-only (entry_halving_phases=bear_onset,accumulation)
 - Fecha: ver `docs/prop/hyrotrader-plan.md`
 - Estrategia: prop_swing
@@ -205,3 +252,11 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Razon: requiere validar reglas reales CFT/Match/MT5 con confirmacion ESCRITA antes de cualquier compra. Sin eso, NO comprar.
 - Permitido en forward-test?: n/a (no es una decision de codigo)
 - Referencias: `docs/prop/hyrotrader-plan.md`
+- **CORRECCION 2026-07-14:** los numeros que promovieron este candidato (2020-26
+  74.8% pass / 2.0% breach) se calcularon con `model_funding=True` que era un no-op
+  silencioso (bug en `load_funding()`, ver EXP-013). Re-corridos con el fix: **pass
+  0.454, breach 0.148** — YA NO cumple el gate de adopcion (>=60% pass). El candidato
+  esta corriendo en paper en la VM (`prop_swing_btc_usdt`) sobre numeros invalidos.
+  No se ha comprado challenge (sin riesgo de capital real), pero el track record de
+  paper acumulado desde el despliegue puede estar tambien afectado si el bot mantuvo
+  algun short con funding no devengado — pendiente de verificar en la VM.

@@ -1,9 +1,16 @@
 #!/usr/bin/env python
-"""Reconcile the paper fleet to v6 simulated + v6 OKX Demo + Prop Firm.
+"""Reconcile the paper fleet to v6 simulated + v6 OKX Demo.
 
 This command changes BotState only. Historical trades, journals, and wallet files are
 preserved. It is idempotent and safe to run after every deployment before restarting
 ``matibot``.
+
+Prop Firm (``prop_swing_btc_usdt``) retired from the active fleet 2026-07-14: its CFT
+gate promotion numbers (74.8% pass / 2.0% breach) were computed with a funding-accrual
+bug (`load_funding()` returned unsorted settlements, so `model_funding=True` never
+actually applied — see EXPERIMENTS.md EXP-013). Re-run with the fix: 45.4% pass / 14.8%
+breach, below the >=60% adoption gate. Deactivated here rather than deleted — its
+BotState, wallet, and journal are preserved for audit/rollback (`docs/prop/hyrotrader-plan.md`).
 """
 from __future__ import annotations
 
@@ -24,25 +31,14 @@ class FleetSpec:
     config: dict
 
 
-def desired_fleet(
-    symbol: str = "BTC-USDT",
-    account_size: float = 50_000.0,
-    phase: str = "p1",
-    daily_dd: float = 0.06,
-    max_loss: float = 0.12,
-) -> list[FleetSpec]:
+def desired_fleet(symbol: str = "BTC-USDT") -> list[FleetSpec]:
     from tools.okx_demo_setup import bot_name as demo_name, demo_config
-    from tools.prop_cft_setup import bot_name as prop_name, prop_config
     from tools.swing_paper_setup import _bot_name as swing_name, _v6_config
 
     symbol = symbol.upper()
     return [
         FleetSpec(swing_name("v6", symbol), symbol, _v6_config()),
         FleetSpec(demo_name(symbol), symbol, demo_config()),
-        FleetSpec(
-            prop_name(symbol), symbol,
-            prop_config(account_size, phase, daily_dd, max_loss),
-        ),
     ]
 
 
@@ -87,23 +83,17 @@ def reconcile_fleet(session, specs: list[FleetSpec]) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--symbol", default="BTC-USDT")
-    parser.add_argument("--account-size", type=float, default=50_000.0)
-    parser.add_argument("--phase", default="p1", choices=("p1", "p2", "funded"))
-    parser.add_argument("--daily-dd", type=float, default=0.06)
-    parser.add_argument("--max-loss", type=float, default=0.12)
     args = parser.parse_args()
 
     from core.database import get_session, init_db
 
-    specs = desired_fleet(
-        args.symbol, args.account_size, args.phase, args.daily_dd, args.max_loss,
-    )
+    specs = desired_fleet(args.symbol)
     init_db()
     with get_session() as session:
         result = reconcile_fleet(session, specs)
 
     print(json.dumps(result, sort_keys=True))
-    print("Fleet lista: v6 simulated + v6 OKX Demo + Prop Firm. Reiniciar matibot.")
+    print("Fleet lista: v6 simulated + v6 OKX Demo. Reiniciar matibot.")
     return 0
 
 

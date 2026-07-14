@@ -1,13 +1,33 @@
-# DEPLOY_PAPER.md — v6-2 simulado + v6-2 OKX Demo + Prop Firm (runbook)
+# DEPLOY_PAPER.md — v6-2 simulado + v6-2 OKX Demo (runbook)
 
-Topologia vigente desde 2026-07-14: exactamente tres bots activos en una VM gratuita:
-Swing v6-2 simulado, Swing v6-2 con ejecucion OKX Demo y Prop Firm/CFT simulado. Legacy se
-retira del registro; v5 tambien se retira pero conserva historial, wallet y estado para rollback.
+Topologia vigente desde 2026-07-14 (tarde): **dos** bots activos en una VM gratuita:
+Swing v6-2 simulado y Swing v6-2 con ejecucion OKX Demo. Legacy se retira del registro;
+v5 tambien se retira pero conserva historial, wallet y estado para rollback.
 
-Estado verificado 2026-07-14: `main` en la VM ya contiene el fleet setup; los tres bots tienen
-ticks recientes, `paper_state_prop_cft.json` existe con 10,000 USDT iniciales, Demo quedó
-reconciliado mediante un evento auditable `RECONCILE`, y `main.py anomaly-check` no reporta
-anomalias. No hay otro paso de instalación pendiente; desde aquí solo se mantienen F13/F15/F19.
+**Prop Firm/CFT (`prop_swing_btc_usdt`) RETIRADO de la fleet activa 2026-07-14.** Su
+promocion a "candidato vivo" (74.8% pass / 2.0% breach, `docs/prop/hyrotrader-plan.md`)
+se calculo con un bug real: `load_funding()` devolvia los settlements de funding SIN
+ordenar, asi que `model_funding=True` nunca se aplicaba (ver EXPERIMENTS.md EXP-013).
+Corregido y re-corrido: **45.4% pass / 14.8% breach — no cumple el gate de adopcion
+(>=60%)**. `tools/paper_fleet_setup.py` ya no lo incluye en `desired_fleet()`; correrlo
+tras el pull DEACTIVA `prop_swing_btc_usdt` (no lo borra — wallet, journal y BotState se
+preservan para auditoria/rollback, igual que v5).
+
+**Accion requerida en la VM tras el proximo `git pull`:**
+```bash
+.venv/bin/python tools/paper_fleet_setup.py
+sudo systemctl restart matibot
+```
+Sin este paso, la mera actualizacion de codigo (`/update` = pull + restart) NO desactiva
+el bot por si sola — `paper_fleet_setup.py` no se auto-ejecuta en cada restart, solo en
+la instalacion inicial (`deploy/install_vm.sh`). El comando es idempotente y seguro de
+repetir.
+
+Estado verificado 2026-07-14 (antes del retiro de Prop): `main` en la VM ya contenia el
+fleet setup; los tres bots tenian ticks recientes, `paper_state_prop_cft.json` existia
+con 10,000 USDT iniciales, Demo quedó reconciliado mediante un evento auditable
+`RECONCILE`, y `main.py anomaly-check` no reportaba anomalias. Desde aqui, con Prop
+retirado, solo quedan v6 simulado y v6 Demo; F13/F15/F19 siguen aplicando a esos dos.
 
 **Este documento es el punto de reanudacion**: si el proyecto se pausa, aqui esta todo lo
 necesario para retomar exactamente donde quedo (ver "Estado del despliegue" al final).
@@ -72,9 +92,10 @@ Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 .venv/bin/python tools/paper_fleet_setup.py
 ```
 
-El comando activa exactamente `swing_allocator_v6_btc_usdt`,
-`swing_allocator_demo_btc_usdt` y `prop_swing_btc_usdt`; elimina registros legacy/v5,
-desactiva cualquier otro bot operable y preserva wallets, journals y filas internas de estado.
+El comando activa exactamente `swing_allocator_v6_btc_usdt` y
+`swing_allocator_demo_btc_usdt`; elimina registros legacy/v5, desactiva cualquier otro
+bot operable (incluido `prop_swing_btc_usdt` desde 2026-07-14, ver arriba) y preserva
+wallets, journals y filas internas de estado.
 
 ## Operacion diaria
 
@@ -147,6 +168,12 @@ otra linea. `anomaly-check` incluye tambien Prop; las carteras simuladas nuevas 
 inicial de 10,000 USDT al arrancar, antes del primer trade.
 
 ## Prop/CFT paper en la misma VM
+
+**RETIRADO de la fleet activa 2026-07-14** (ver nota al inicio de este documento — gate
+de adopcion no cumplido tras corregir el bug de funding). Esta seccion describe la
+operativa de cuando estaba activo; se conserva por si se re-evalua un candidato
+corregido en el futuro (`deploy/setup_prop_cft_paper.sh` sigue disponible para
+re-registrarlo manualmente, fuera de `paper_fleet_setup.py`).
 
 El PropSwing CFT queda separado del Swing:
 
@@ -293,6 +320,10 @@ Peculiaridades del entorno demo (medidas 2026-07-13, no afectan al live):
 - [ ] F19 sin alertas al cierre de la ventana
 - [x] Bot demo OKX registrado y activo (deploy y primer fill verificados 2026-07-13; estado
       operativo confirmado 2026-07-14).
+- [x] **Prop Firm/CFT RETIRADO de la fleet activa (2026-07-14).** Gate de adopcion
+      corregido (bug de funding, EXP-013) fallo: 45.4% pass vs >=60% requerido. Pendiente
+      en la VM: pull + `tools/paper_fleet_setup.py` + `systemctl restart matibot` para
+      desactivar `prop_swing_btc_usdt` (BotState/wallet/journal se preservan).
 - Incidencias/pausas: (anotar fecha y motivo)
   - **2026-07-07 → 2026-07-11 — cron de daily_checks sin correr (INFRA, contrato 6b).**
     `deploy/daily_checks.sh` perdio el bit +x en el commit `2019859` (2026-07-06); cron

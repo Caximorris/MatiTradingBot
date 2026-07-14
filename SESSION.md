@@ -5,8 +5,9 @@ El detalle historico (logs de sesion, tablas de backtest, referencia por modulo,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
 **Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
-Demo + Prop Firm; registros legacy/v5 retirados. Fix de retry tras rebalanceo incompleto incluido.
-Telegram con panel persistente sin argumentos; status CLI multi-cartera corregido. 257 tests pasan.)
+Demo (**Prop Firm RETIRADO** ese mismo dia, ver bloque abajo); registros legacy/v5 retirados.
+Fix de retry tras rebalanceo incompleto incluido. Telegram con panel persistente sin argumentos;
+status CLI multi-cartera corregido. 272 tests pasan.)
 
 ---
 
@@ -42,10 +43,30 @@ Prop entra ya en snapshots/anomaly-check y su wallet inicial de 10k se persiste 
 `reconcile-demo-journal` anexa un evento auditable/idempotente para la correccion fuera de banda;
 no la disfraza como BUY/SELL ni modifica la estrategia congelada.
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
-Verificacion operativa en VM 2026-07-14: los tres bots tienen tick reciente, la cartera Prop ya
-persiste sus 10,000 USDT iniciales, Demo fue reconciliado de 58.0% a 19.2% BTC con un evento
-`RECONCILE`, y `anomaly-check` termina sin anomalias. F13 (24h), F15 (30d) y F19 siguen siendo
-ventanas de observacion, no tareas de despliegue.
+Verificacion operativa en VM 2026-07-14 (antes del retiro de Prop, ver abajo): los tres bots
+tenian tick reciente, la cartera Prop persistia sus 10,000 USDT iniciales, Demo fue reconciliado
+de 58.0% a 19.2% BTC con un evento `RECONCILE`, y `anomaly-check` terminaba sin anomalias.
+F13 (24h), F15 (30d) y F19 siguen siendo ventanas de observacion para v6/demo, no tareas de
+despliegue.
+
+**PROP FIRM RETIRADO DE LA FLEET ACTIVA (2026-07-14, mas tarde el mismo dia).** Bug real
+encontrado en `load_funding()` (settlements de funding sin ordenar — cache en orden de
+paginacion API, mas reciente primero): el puntero monotono de `_advance_settle_idx`/
+`_accrue_funding` nunca avanzaba, asi que `model_funding=True` era un no-op silencioso en
+`prop_swing.py`, `funding_extreme.py` Y el nuevo `basis_carry.py` (donde se descubrio). Fix
+de una linea en `strategies/funding_extreme.py:load_funding` (`sorted(rows)`), 272/272 tests.
+Re-corrida la simulacion de reglas CFT que promovio a Prop como "candidato vivo"
+(`entry_halving_phases=bear_onset,accumulation`, r1.8/n0.8, `bybit_cons`, 2020-26): **pass
+45.4% (era 74.8%), breach 14.8% (era 2.0%)** — YA NO cumple el gate de adopcion (>=60% pass).
+`tools/paper_fleet_setup.py` ya no incluye `prop_swing_btc_usdt` en `desired_fleet()`.
+**Accion pendiente en la VM:** tras el proximo `git pull`, correr
+`.venv/bin/python tools/paper_fleet_setup.py` + `sudo systemctl restart matibot` para
+desactivar el bot (BotState/wallet/journal se preservan, no se borran — igual que v5).
+Sin ese paso manual, el pull + restart normal NO lo desactiva por si solo. Pendiente tambien
+verificar en la VM si el bot mantuvo algun short (regimen bear, `allow_shorts=true`) desde su
+despliegue (2026-07-11) — de ser asi, su equity/DD registrados en ese tramo no reflejan
+funding real. Detalle completo: `docs/prop/hyrotrader-plan.md`, `EXPERIMENTS.md` EXP-010/013,
+`docs/income/plan.md` Via D.
 
 **OBSERVABILIDAD FORWARD-TEST (2026-07-06)** — suite read-only que NO toca la estrategia (plan
 `docs/forward-test/research-lab-plan.md`, fases 1-3). Reglas del test congeladas en
@@ -176,9 +197,11 @@ un backtest puntual.
 
 ## SIGUIENTE PASO (sesion 2026-07-14+)
 
-El despliegue, la limpieza de fleet, la persistencia inicial de Prop y la reconciliacion Demo ya
-están completados. El siguiente trabajo es observacion, no otra migracion:
-1. Dejar correr los tres bots y revisar `main.py status`, Telegram `/audit` y el heartbeat diario.
+El despliegue, la limpieza de fleet y la reconciliacion Demo ya estan completados. Prop se
+retiro el mismo dia (ver bloque arriba) — **pendiente correr `paper_fleet_setup.py` en la VM**.
+El siguiente trabajo es observacion de v6/demo, no otra migracion:
+1. Confirmar el retiro de Prop en la VM (pull + `paper_fleet_setup.py` + restart), luego dejar
+   correr v6 simulado + v6 Demo y revisar `main.py status`, Telegram `/audit` y el heartbeat diario.
 2. Cerrar F13 (24h), F15 (30d) y F19 con sus ventanas completas; una semana sin trades no es
    una alerta por si misma para un allocator de 2–3 rebalanceos mensuales.
 3. Resolver la frescura del cache de funding antes de `accumulation` (~2026-10-07); si sigue

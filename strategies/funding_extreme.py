@@ -81,11 +81,22 @@ def build_funding_signals(rows: list[tuple[int, float]], window: int = 90,
 
 
 def load_funding(symbol: str) -> list[tuple[int, float]]:
+    """Devuelve settlements ordenados ASCENDENTE por timestamp.
+
+    El cache en disco esta en el orden crudo de paginacion de la API (mas
+    reciente primero, `tools/alpha_screens.py` pagina hacia atras con
+    `endTime`) — SIN ordenar. `_advance_settle_idx`/`_accrue_funding` (aqui,
+    en `prop_swing.py` y en `basis_carry.py`) asumen orden ascendente para su
+    puntero monotono; sin el `sorted()` el puntero nunca avanza (el primer
+    elemento tiene el timestamp mas reciente) y el funding NUNCA se devenga.
+    Bug encontrado 2026-07-14 mientras se depuraba `basis_carry.py`.
+    """
     sym = symbol.replace("-", "").upper()
     path = _ROOT / "data" / "cache" / f"funding_bybit_{sym}.json"
     if not path.exists():
         return []
-    return [(int(ts), float(rate)) for ts, rate in json.load(open(path))]
+    rows = [(int(ts), float(rate)) for ts, rate in json.load(open(path))]
+    return sorted(rows)
 
 
 # ---------------------------------------------------------------------------

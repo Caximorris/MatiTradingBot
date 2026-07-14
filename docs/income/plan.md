@@ -1,6 +1,9 @@
 # Plan "pata corta" — investigacion de estrategias de trades cortos (base $10k hipotetica)
 
-Fecha: 2026-07-13. Estado: PLAN APROBADO PARA EJECUCION (backtests si; paper/deploy con OK explicito).
+Fecha: 2026-07-13. Estado (2026-07-14): Via A y Via B CERRADAS, ambas rejected (ver EXP-011/
+EXP-012 en EXPERIMENTS.md). Via C (colector microestructura) sigue sin empezar, infra de bajo
+riesgo, revision trimestral — no es una estrategia. Sin candidato vivo de "pata de ingresos"
+por ahora; el objetivo del plan no se cumplio con las hipotesis probadas.
 Objetivo: comparar la rentabilidad de estrategias de frecuencia media/alta contra el Swing v5,
 con base hipotetica $10,000, y medir si alguna sirve como "pata de ingresos" (ganancias mas
 frecuentes, DD bajo). NO es un compromiso de capital real — es investigacion comparativa.
@@ -123,6 +126,27 @@ necesita el journal.
 CAGR >= 15% con Max DD <= 20%, >= 60% meses positivos (monthly_dist), PF > 1.3 en bybit_cons.
 Si no pasa: se registra rejected como vehiculo propio (confirmando §15 del plan prop) y FIN.
 
+### Decision final Via A (2026-07-14) — REJECTED, ver EXP-011 en EXPERIMENTS.md
+No solo por el fallo marginal de gate (CAGR 14.8% vs 15%, -0.2pp). Comparado contra Swing v6
+por Calmar (CAGR/MaxDD, la metrica que de verdad importa para elegir vehiculo):
+
+| Vehiculo | CAGR | Max DD | Calmar |
+|---|---:|---:|---:|
+| Swing v6 (2015-26 realistic) | +86.51% | -52.73% | **1.64** |
+| funding_extreme A2 (risk 2%, bybit) | +14.8% | -15.06% | 0.98 |
+| funding_extreme cap 1.0 sin leverage | +19.8% | -20.59% | 0.96 |
+| funding_extreme risk 3%/leverage 1.5x | +22.6% | -26.61% | 0.85 (peor) |
+
+Ninguna variante de la frontera de riesgo alcanza el Calmar de Swing; escalar con leverage
+real EMPEORA el ratio. Tampoco es diversificacion real: ambos motores son long-only
+direccional BTC, correlacionados en el tail risk. El insight de fondo (funding en percentil
+extremo) ya esta capturado sin este vehiculo por `strategies/swing_funding_overlay.py` dentro
+de v6-2 (tilt ±0.05, sin apalancamiento ni infra de perps nueva) — construir un vehiculo
+propio aparte, con peor Calmar, es esfuerzo duplicado. Segunda vez que este motor se rechaza
+en un framing distinto (primera vez: prop firm CFT, `docs/prop/hyrotrader-plan.md` §15).
+A4 (OOS 2026) NO se ejecuta — el plan ya marca ese resultado como indicativo, no gate, y no
+cambiaria el veredicto. Via A queda cerrada.
+
 ### A5 — Camino a paper (SOLO si pasa el gate; NO empezar antes)
 funding_extreme es hoy solo-backtest (funding accrual via `adjust_balance`). Para paper:
 1. Feed de funding en vivo: Bybit 403 en la VM. Opciones en orden: (a) medir correlacion
@@ -233,6 +257,124 @@ Vigilar RAM/CPU de la e2-micro tras el deploy (ya corren 4-5 procesos).
 Parser de cada endpoint con payload grabado; rotacion/gzip; dedup de trades.
 
 ---
+
+## Via D — EXP-013: Basis Carry (cash-and-carry, market-neutral)
+
+### D0 — PRE-REGISTRO (2026-07-14)
+
+**Hipotesis estructural:** a diferencia de todo lo probado en Via A/B (y de Swing v6),
+esta NO es una apuesta direccional sobre el precio de BTC. Comprar BTC spot y abrir un
+short SINTETICO de igual cantidad (solo backtest, mark-to-market por barra, patron de
+`prop_swing.py`) deja la exposicion neta al precio en ~0: las ganancias/perdidas de
+ambas patas se cancelan. El retorno viene SOLO del funding rate (los longs pagan a los
+shorts cuando el funding es positivo). Motivo para probarlo: es la unica idea de esta
+sesion que no repite el patron de fallo de EXP-011/012 (direccional, correlacionado con
+Swing) — es diversificacion real, no una version mas lenta del mismo riesgo.
+
+**Mecanica:** `strategies/basis_carry.py`. Entra cuando el promedio movil trailing de
+90 settlements (30 dias) de funding Bybit es > `funding_min_avg` (default 0.0 — umbral
+estructural "carry esperado positivo", no fitted); sale a plano cuando el promedio cae
+por debajo. Sizing: `notional_pct` del equity en la pata spot (misma qty en la pata
+corta). Fuente de datos: Bybit (igual que EXP-011 — el endpoint publico de OKX solo
+retiene ~3 meses de funding, confirmado empiricamente el 2026-07-14).
+
+**Gate (una sola config por defecto, sin grid — el parametro no se ajusta buscando
+mejor resultado, es un umbral estructural fijo):** rentable neto de costes, Max DD
+sustancialmente menor que Swing (se espera <5%, dado que el hedge es delta-neutral),
+Calmar y/o Sharpe reportados aunque el CAGR absoluto sea bajo — el objetivo de este
+vehiculo es diversificacion, no competir en CAGR con Swing.
+
+**Ventana:** todo el historico de funding Bybit disponible (~2020-03 -> hoy), la misma
+que uso EXP-011 — no hay split IS/OOS clasico porque no hay parametros de entrada/salida
+que ajustar mas alla del umbral estructural fijo.
+
+### D1 — Implementacion (hecho 2026-07-14)
+- `strategies/basis_carry.py`: reusa `load_funding()` de `funding_extreme.py` (DRY) y el
+  patron de short sintetico de `prop_swing.py` (mtm + accrue_funding + cierre).
+  Registrado en `strategies/registry.py` (`basis_carry`, alias `basis`). 6 tests
+  unitarios (senal pura + from_dict/to_dict). Suite completa 271/271.
+
+**CAVEAT de reporting (descubierto 2026-07-14, aplica tambien a `funding_extreme` y a
+los shorts de `prop_swing`):** la tabla "Ganadores/Perdedores / Avg Win / PF" del
+backtest usa `BacktestEngine._compute_trade_pnl_acb`, que empareja SOLO las ordenes
+reales que pasan por `place_order` (`self._client._executed`) — es CIEGA a cualquier
+`adjust_balance` (mark-to-market del short sintetico, funding). Para `basis_carry` esto
+es especialmente enganoso: la tabla muestra el P&L de la pata SPOT SOLA (sin cobertura),
+con oscilaciones grandes que parecen una apuesta direccional volatil, cuando la cartera
+real (pata corta + funding incluidos) es casi plana. **Las metricas de verdad para
+esta estrategia son Balance final / CAGR / Max Drawdown / Sharpe** (vienen del balance
+real, que si integra cada `adjust_balance`) — NO la tabla de trades. No arreglar el
+motor generico para esto (afectaria el reporting de otras estrategias); documentar el
+caveat y leer las metricas correctas basta.
+
+**Resultado full-history (2026-07-14), `--costs bybit`, `funding_min_avg=0.0` (config
+default, sin ajustar):**
+
+| Ventana | Balance final | CAGR | Max DD | Time in market |
+|---|---:|---:|---:|---:|
+| 2020-06 -> 2026-01 | $9,728.36 | -0.49%/ano | **-2.60%** | 94.9% |
+
+Lectura: la tesis de neutralidad delta se CONFIRMA con fuerza — Max DD de -2.60% en
+una ventana que incluye el crash de mayo 2021 (-50%+ en semanas) y el bear 2022, contra
+el -52.73% de Swing v6 en ventanas comparables. Pero la tesis de rentabilidad NO se
+confirma con el gate por defecto (`funding_min_avg=0.0`, "mantener mientras el
+promedio trailing sea positivo"): el resultado neto de costes es ligeramente negativo.
+El motor SI capturo el episodio de funding extremo de 2021 (documentado
+historicamente como uno de los regimenes de funding mas altos de la historia de
+BTC) pero lo perdio de vuelta en tramos posteriores donde el funding promedio
+apenas superaba cero (insuficiente para cubrir fees+slippage de mantener la cesta).
+### Bug real encontrado (2026-07-14): `load_funding()` devolvia settlements SIN ordenar
+`data/cache/funding_bybit_{SYMBOL}.json` esta en el orden crudo de paginacion de la API
+(mas reciente primero — `tools/alpha_screens.py` pagina hacia atras con `endTime`), NUNCA
+ordenado. `_advance_settle_idx`/`_accrue_funding` (puntero monotono, usado por
+`basis_carry.py`, `funding_extreme.py` Y `prop_swing.py` — los tres importan
+`load_funding()` de `funding_extreme.py`) asumen orden ASCENDENTE: sin ordenar, el primer
+elemento tiene el timestamp MAS RECIENTE, la condicion del puntero (`settlements[idx][0]
+<= ts_ms`) es falsa desde el principio para cualquier fecha de backtest anterior a hoy, y
+el funding NUNCA se devenga — `model_funding=True` era un no-op silencioso en las TRES
+estrategias. `build_funding_signals` no se vio afectada (ordena internamente con
+`sorted(rows)` para las señales), pero el DEVENGO de funding (que mueve balance real via
+`adjust_balance`) si. Fix: `load_funding()` ahora hace `sorted(rows)` antes de devolver
+(`strategies/funding_extreme.py`). Suite completa 271/271 tras el fix (sin regresiones).
+
+**Impacto en EXP-011 (funding_extreme):** los numeros de A0-A3 en este documento y en
+EXPERIMENTS.md fueron calculados SIN devengo de funding real — corregidos abajo.
+**Impacto en `prop_swing.py`:** el bot Prop Firm que corre en PAPER en la VM
+(`prop_swing_btc_usdt`, `model_funding: true`) tenia el mismo no-op — su funding
+modelado nunca se aplico hasta este fix. Es papel, no capital real, pero el veredicto
+CFT (`docs/prop/hyrotrader-plan.md` §15) se baso en backtests con el mismo bug; revisar
+si vale la pena re-correr esos numeros aparte de esta sesion.
+
+### Resultado corregido Via D (2026-07-14, post-fix)
+`--costs bybit`, config default (`funding_min_avg=0.0`, sin ajustar — el gate no se toco):
+
+| Metrica | Antes del fix (bug) | Despues del fix |
+|---|---:|---:|
+| Balance final | $9,728.36 | **$47,151.00** |
+| CAGR | -0.49%/ano | **+32.0%/ano** |
+| Max DD | -2.60% | **-1.09%** |
+| Calmar | -0.19 | **29.36** |
+| Sharpe / Sortino | -16.34 / -16.34 | **10.45 / 67.28** |
+
+**Decision: promising, no adoptado todavia — dos caveats reales antes de considerar
+paper:**
+1. **Concentracion:** de los +$37,151 totales, +$16,776 (45%) vienen de UN solo tramo
+   (Q2 2021), el regimen de funding mas extremo de la historia de BTC (documentado en
+   `docs/prop/hyrotrader-plan.md`). El resto del historico (2022-2025, sin verse en
+   detalle aun) sostiene el resultado pero no hay que extrapolar ~32%/ano como
+   expectativa futura solo por este backtest — un solo evento historico domina.
+2. **Riesgo de margen/liquidacion NO modelado:** el short sintetico (patron
+   `prop_swing.py`) asume balance USDT ilimitado via `adjust_balance` — CERO modelo de
+   margen o liquidacion. Un cash-and-carry real requiere colateral en el perp y puede
+   ser liquidado en un short-squeeze violento (comun en cripto) antes de que el spot
+   compense. El backtest no puede ver ese riesgo. Cualquier paso a paper/live necesitaria
+   modelar esto primero, no solo pasar el gate de CAGR/DD.
+
+**Siguiente paso, si se quiere seguir:** revisar la distribucion completa (no solo el
+resumen trimestral — esa tabla del motor SOLO ve la pata spot via ACB pairing, sigue
+sin reflejar el hedge; ver caveat de reporting arriba) para separar cuanto del resultado
+viene de 2021 vs el resto, antes de decidir si esto es un candidato real o un artefacto
+de un unico evento historico.
 
 ## Orden de ejecucion propuesto (estos dias)
 

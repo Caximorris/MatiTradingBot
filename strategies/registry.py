@@ -113,6 +113,13 @@ _REGISTRY: list[StrategyMeta] = [
         aliases=("mr",),
     ),
     StrategyMeta(
+        name="basis_carry",      display_name="Basis Carry (EXP-013)",
+        module="strategies.basis_carry",
+        bot_cls="BasisCarryBot", config_cls="BasisCarryConfig",
+        warmup_days=45, output="trade",
+        aliases=("basis",),
+    ),
+    StrategyMeta(
         name="swing_allocator",  display_name="Swing Allocator",
         module="strategies.swing_allocator",
         bot_cls="SwingAllocatorBot", config_cls="SwingAllocatorConfig",

@@ -3,23 +3,30 @@
 Este archivo es el punto de arranque para continuar mañana desde otro PC.
 
 > **ESTADO ACTUAL:** trabajar sobre `main`. Swing v6-2 es el default congelado; v5 queda como
-> control/rollback historico. El cliente OKX Demo, Prop/CFT y el fleet de tres bots estan
-> desplegados y verificados en la VM; el estado operativo y los siguientes pasos viven en
-> `SESSION.md`. Commit de sincronizacion inicial:
-> `7d61ca5`; este handoff se mantiene actualizado para continuar desde otro PC.
+> control/rollback historico. El cliente OKX Demo y el fleet de dos bots (v6 + Demo) estan
+> desplegados y verificados en la VM; **Prop/CFT se RETIRO de la fleet activa el 2026-07-14**
+> (gate de adopcion invalidado por un bug de funding — ver SESSION.md y EXPERIMENTS.md EXP-013).
+> El estado operativo y los siguientes pasos viven en `SESSION.md`. Commit de sincronizacion
+> inicial: `7d61ca5`; este handoff se mantiene actualizado para continuar desde otro PC.
 
 ## 1. Estado rapido
 
 - Rama de trabajo: `main`.
 - Default de estrategia: **Swing Allocator v6-2**, congelado.
-- Paper fleet: v6 simulado + v6 OKX Demo + Prop Firm simulado, activos en VM GCP `matitrbot`, con
-  Telegram y checks diarios; legacy/v5 se retiraron del registro, conservando rollback e historial.
-- Prop/CFT: paper operativo preparado, no comprado challenge, no live.
+- Paper fleet: v6 simulado + v6 OKX Demo, activos en VM GCP `matitrbot`, con Telegram y checks
+  diarios; legacy/v5 se retiraron del registro, conservando rollback e historial.
+- **Prop/CFT: RETIRADO de la fleet activa (2026-07-14).** Su promocion a "candidato vivo"
+  (74.8% pass / 2.0% breach) se calculo con `model_funding=True` roto (bug real en
+  `load_funding()`, settlements sin ordenar — nunca se aplicaba). Corregido y re-corrido:
+  **45.4% pass / 14.8% breach**, no cumple el gate (>=60%). No se compro challenge (sin riesgo
+  de capital real). Pendiente en la VM: pull + `tools/paper_fleet_setup.py` + restart para
+  desactivar `prop_swing_btc_usdt` (se preserva, no se borra). Ver `EXPERIMENTS.md` EXP-013,
+  `docs/prop/hyrotrader-plan.md`.
 - Swing v5: control paper y rollback exacto (`use_phase_policy_router=false`,
   `use_funding_overlay=false`).
-- Tests al cierre: `257 passed`.
-- Verificacion VM 2026-07-14: tres heartbeats recientes, wallet Prop persistida en 10,000 USDT,
-  Demo reconciliado 58.0% → 19.2% BTC y `anomaly-check` sin anomalias.
+- Tests al cierre: `272 passed`.
+- Verificacion VM 2026-07-14 (antes del retiro de Prop): tres heartbeats recientes, wallet Prop
+  persistida en 10,000 USDT, Demo reconciliado 58.0% → 19.2% BTC y `anomaly-check` sin anomalias.
 
 ## 2. Archivos que debes leer primero
 
@@ -95,14 +102,15 @@ No comprar challenge sin:
 
 ## 4. Cambios preparados en esta rama
 
-### Prop/CFT operativo
+### Prop/CFT operativo (RETIRADO de la fleet activa 2026-07-14 — ver arriba)
 
 - `core/cft_monitor.py`: monitor CFT con estado en `data/runtime/prop_cft_status.json`.
 - `strategies/prop_swing.py`: persistencia live/paper de posicion/dia/funding idx en BotState
   `prop_swing`; journal operativo `data/runtime/prop_live_journal.jsonl`; hard-stop CFT.
-- `tools/prop_cft_setup.py`: registra bot PropSwing CFT paper.
-- `tools/paper_fleet_setup.py`: deja activo exactamente v6 simulado + v6 OKX Demo + Prop Firm,
-  elimina registros legacy/v5 y desactiva los demas bots sin borrar historicos ni wallets.
+- `tools/prop_cft_setup.py`: registra bot PropSwing CFT paper (manual, ya no via fleet setup).
+- `tools/paper_fleet_setup.py`: deja activo exactamente v6 simulado + v6 OKX Demo; **desactiva
+  Prop Firm** (retirado 2026-07-14, gate de adopcion invalido) ademas de legacy/v5, sin borrar
+  historicos ni wallets.
 - `tools/prop_cft_status.py`: imprime estado del monitor.
 - `tools/prop_telegram.py`: formateo Telegram de Prop/CFT.
 - `deploy/setup_prop_cft_paper.sh`: setup idempotente en VM.
@@ -207,22 +215,26 @@ python tools/prop_cft_status.py
 python main.py status
 ```
 
-Ultima validacion local (2026-07-14):
+Ultima validacion local (2026-07-14, tras retirar Prop y anadir basis_carry/mr_regime):
 
 ```text
-257 passed
+272 passed
 ```
 
 ## 8. Siguiente paso recomendado
 
-1. Mantener los tres bots corriendo y revisar `/status`, `/audit` y el heartbeat diario.
-2. Cerrar F13 (24h), F15 (30d) y F19; no interpretar la ausencia de trades como fallo del
-   allocator.
+1. **Pull + `tools/paper_fleet_setup.py` + restart en la VM para desactivar Prop** (pendiente,
+   ver seccion 1). Luego mantener v6 + Demo corriendo y revisar `/status`, `/audit` y el
+   heartbeat diario.
+2. Cerrar F13 (24h), F15 (30d) y F19 para v6/demo; no interpretar la ausencia de trades como
+   fallo del allocator.
 3. Resolver la frescura del cache funding antes de `accumulation` (~2026-10-07).
 4. Mantener v5 como rollback documentado; no promover un sucesor de v6 sin evidencia forward
-   diferenciada ni comprar un challenge Prop.
+   diferenciada. Prop queda retirado — no re-evaluar sin una config que supere el gate corregido.
 
 ## 9. Riesgos pendientes
 
 - El cache funding de Bybit devuelve 403 desde la IP de la VM; sin cache fresco v6 degrada a v5.
 - `docs/prop/hyrotrader-plan.md` esta en el limite de 800 lineas. No seguir ampliandolo; crear docs nuevos.
+- Verificar si el bot Prop (antes de su retiro) mantuvo algun short en la VM desde su despliegue
+  (2026-07-11) — su equity/DD en ese tramo no reflejaria funding real (mismo bug, ver EXP-013).
