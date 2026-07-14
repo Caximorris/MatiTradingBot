@@ -66,7 +66,7 @@ system against the two ways quant backtests deceive you:
   candle-for-candle across runs and machines.
 
 Money is `Decimal` everywhere (never `float`). Dates are UTC in storage, converted to Europe/Madrid
-only in reporting. **257 passing tests** (2026-07-14).
+only in reporting. **272 passing tests** (2026-07-14).
 
 ---
 
@@ -117,7 +117,7 @@ Seven are registered; only one is active.
 |---|---|---|
 | `swing_allocator` | Dynamic BTC/cash allocation | **Default, frozen at v6-2**; v5 rollback/control |
 | `pro_trend` | Multi-timeframe trend following (1856 lines) | Paused indefinitely, frozen at v13 |
-| `prop_swing` / `funding_extreme` | Prop-firm challenge (someone else's capital) | **Running in paper** (CFT-only candidate); backtest gates not yet met — no challenge purchased |
+| `prop_swing` / `funding_extreme` | Prop-firm challenge (someone else's capital) | **Retired from the active fleet** (2026-07-14): a funding-accrual bug fix invalidated the numbers that had promoted it (pass 74.8% → 45.4%); no challenge was ever purchased |
 | `adaptive_trend`, `scalp_momentum`, `range_reversion` | Older experiments | Dormant |
 
 **External-context feeds** (all offset to avoid lookahead): `macro_context.py` (MVRV + halving,
@@ -144,7 +144,7 @@ python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --cos
 Run it in paper mode (fake money):
 
 ```bash
-python tools/paper_fleet_setup.py  # v6 simulated + v6 OKX Demo + Prop Firm
+python tools/paper_fleet_setup.py  # reconciles the fleet: v6 simulated + v6 OKX Demo
 python main.py start        # live/paper — requires explicit intent
 python main.py dashboard    # in another terminal
 ```
@@ -186,8 +186,10 @@ python tools/journal_summary.py <path>
 
 ## Live deployment (paper)
 
-Paper bots run 24/7 on a GCP free-tier VM: frozen **v6 simulated**, frozen **v6 on OKX Demo**,
-and the **Prop/CFT** candidate. They're controlled remotely through a persistent Telegram button
+Paper bots run 24/7 on a GCP free-tier VM: frozen **v6 simulated** and frozen **v6 on OKX Demo**
+(the Prop/CFT candidate was retired 2026-07-14 — its wallet and history are preserved, the bot
+is deactivated pending the fleet-reconciliation step on the VM). They're controlled remotely
+through a persistent Telegram button
 panel for routine status, reports, charts, audits, and health checks; slash commands remain for
 advanced or state-changing operations. The bot also pushes rebalance alerts and daily heartbeats.
 systemd (`Restart=always`) keeps the processes alive;
@@ -200,10 +202,10 @@ New simulated portfolios persist their initial $10,000 wallet immediately, so Pr
 before its first trade. If Demo was corrected outside the strategy, `reconcile-demo-journal`
 appends a distinct `RECONCILE` audit event; it never places an order or rewrites prior history.
 
-Current deployment check (2026-07-14): all three bots have recent heartbeats; the Prop wallet is
-persisted at its $10,000 initial balance; Demo's out-of-band allocation correction is recorded as
-`RECONCILE` (58.0% → 19.2% BTC); and `main.py anomaly-check` reports no anomalies. The next gate is
-forward observation (F13/F15/F19), not another setup migration.
+Current deployment check (2026-07-14, taken before the Prop retirement later that day): all bots
+had recent heartbeats; Demo's out-of-band allocation correction is recorded as `RECONCILE`
+(58.0% → 19.2% BTC); and `main.py anomaly-check` reports no anomalies. The next gate is
+forward observation of v6/Demo (F13/F15/F19), not another setup migration.
 
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
 **demo-trading** API key — fake funds only, created inside OKX's demo mode. The `demo` bot runs
@@ -221,11 +223,20 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 - **Swing v6-2** — the frozen default (v5-equivalent phase router + accumulation-only funding
   overlay). It behaves identically to the v5 control until ~Oct 2026; v5 remains available as an
   exact rollback. Decision record: [`docs/swing/v6-plan.md`](docs/swing/v6-plan.md).
-- **Prop firm (Hyro / CFT / Bybit)** — an attempt to pass a funded-account challenge. Backtest
-  verdict: the edge is real, but the pass/breach rate doesn't yet meet the firm's gates, so **no
-  challenge has been purchased**. The CFT-only candidate is nonetheless **running in paper** on the
-  same VM (isolated wallet, its own `/prop` Telegram controls and CFT rule monitor) to gather forward
-  data before committing real capital.
+- **Prop firm (Hyro / CFT / Bybit)** — an attempt to pass a funded-account challenge. Final
+  verdict (2026-07-14): **retired**. A one-line bug (funding settlements never sorted, so funding
+  costs silently accrued as zero) had inflated the candidate's simulated pass rate from 45.4% to
+  74.8%; with funding modeled correctly it fails the adoption gate. No challenge was ever
+  purchased — the discipline system worked. Wallet and paper history are preserved.
+- **Idle-capital research (Via E, EXP-016/017)** — "can the ~80% stablecoin balance earn
+  something during the year-long bear windows?" Answered with measurements, all recorded in
+  [`docs/income/plan.md`](docs/income/plan.md): a calendar short is rejected (n=3, circular,
+  liquidation risk); on-exchange yield earns ~1.7% net today (below the adoption gate);
+  parking funds off-exchange is dead — `tools/delay_sensitivity_replay.py` showed that delaying
+  only the BUY side costs **3.1–3.8pp of CAGR** (a 6h delay costs as much as 72h: the loss is
+  event risk on violent rallies, not duration). Bonus operational finding: delaying *both* sides
+  24h costs just 0.15pp — a full bot outage is cheap; an asymmetric one (can sell, can't buy) is
+  what kills.
 
 ---
 
@@ -248,7 +259,7 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 
 Python 3.12 · typer + rich (CLI) · pandas + pandas-ta · python-okx · aiohttp / urllib
 (*deliberately not* `requests`) · SQLAlchemy + SQLite · python-telegram-bot · APScheduler ·
-`Decimal` for all money · 257 passing tests.
+`Decimal` for all money · 272 passing tests.
 
 > **The honest summary:** someone spent months building rigorous machinery to answer *"does this BTC
 > allocation strategy actually work, or am I fooling myself?"* — got to "+85% CAGR that survives the

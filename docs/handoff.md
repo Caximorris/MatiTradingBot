@@ -24,6 +24,14 @@ Este archivo es el punto de arranque para continuar mañana desde otro PC.
   `docs/prop/hyrotrader-plan.md`.
 - Swing v5: control paper y rollback exacto (`use_phase_policy_router=false`,
   `use_funding_overlay=false`).
+- **Via "capital ocioso" CERRADA con medicion (2026-07-14, mas tarde ese dia):** EXP-016
+  (short de calendario en bear_onset) rechazado en fase de idea; EXP-017 (yield/treasury
+  sobre el stable) parked — earn USDC EEA rinde ~1.6-1.8% neto hoy (bajo gate), y
+  `tools/delay_sensitivity_replay.py` midio que retrasar solo BUYs cuesta -3.1 a -3.8pp
+  CAGR (mata parking off-exchange y sweep manual). Unica llave de reapertura: re-medir
+  APR al go-live (sept 2026). Colateral operativo: retraso simetrico 24h = -0.15pp (una
+  caida total del bot es barata; la asimetria vender-si/comprar-no es lo letal).
+  Detalle: `docs/income/plan.md` Via E.
 - Tests al cierre: `272 passed`.
 - Verificacion VM 2026-07-14 (antes del retiro de Prop): tres heartbeats recientes, wallet Prop
   persistida en 10,000 USDT, Demo reconciliado 58.0% → 19.2% BTC y `anomaly-check` sin anomalias.

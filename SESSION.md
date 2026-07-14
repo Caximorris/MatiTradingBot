@@ -7,7 +7,9 @@ bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-arch
 **Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
 Demo (**Prop Firm RETIRADO** ese mismo dia, ver bloque abajo); registros legacy/v5 retirados.
 Fix de retry tras rebalanceo incompleto incluido. Telegram con panel persistente sin argumentos;
-status CLI multi-cartera corregido. 272 tests pasan.)
+status CLI multi-cartera corregido. 272 tests pasan. Mas tarde el mismo dia: via "capital
+ocioso" CERRADA con medicion — EXP-016 short de calendario rechazado, EXP-017 yield/treasury
+parked (ver bloque CAPITAL OCIOSO abajo).)
 
 ---
 
@@ -143,6 +145,20 @@ NO vale).
 **Pro Trend v13 — PAUSADO INDEFINIDAMENTE** (decision sesion 14). Codigo congelado y reversible,
 fuera del roadmap activo. Framework de validacion estaba completo. Detalle en archive.
 
+**CAPITAL OCIOSO EN BEAR (2026-07-14) — VIA CERRADA CON MEDICION.** Pregunta: ¿como aprovechar
+el ~80% stable parado durante bear_onset/accumulation? Respuestas, todas medidas (detalle en
+`docs/income/plan.md` Via E + EXP-016/017):
+- Short de calendario en bear_onset: **rechazado en fase de idea** (EXP-016) — circular (el
+  "patron" es la propia regla del allocator), n=3, funding era no-op hasta el fix, liquidacion.
+- Yield on-exchange (OKX "Margin Reward"/Simple Earn EEA): rate real hoy ~1.6-1.8% neto →
+  +0.20pp CAGR, NO pasa el gate. **Parked con una sola llave de reapertura: re-medir APR al
+  go-live (sept 2026); si neto >=2% sostenido, disenar auto-redeem integrado.**
+- Parking off-exchange y sweep manual: **muertos** — `tools/delay_sensitivity_replay.py` midio
+  que retrasar solo los BUYs cuesta -3.1 a -3.8pp CAGR (6h ≈ 72h: riesgo de EVENTO en los
+  saltos a target 1.00, no de duracion). 41/66 BUYs consumen >80% del stable en un evento.
+- **Colateral operativo (para incidentes/F19):** retrasar AMBOS lados 24h cuesta solo -0.15pp
+  → una caida total del bot ~1 dia es barata; lo letal es la asimetria (vender si, comprar no).
+
 ---
 
 ## REGLAS INVARIANTES ANTES DE TOCAR CODIGO
@@ -232,8 +248,13 @@ v5-vs-v6 empieza a dar señal desde ~2026-10-07.
 - **Limpieza/refactor de codigo:** backlog en `docs/archive/refactor-backlog.md`. Difiere al cierre del paper
   (no romper determinismo/paridad). (El codigo muerto `execution/order_manager.py` +
   `position_tracker.py` ya se borro en `5ec7a97`, 2026-07-06.)
+- **Re-medir APR de earn USDC al go-live (sept 2026):** unica llave de reapertura de EXP-017
+  (yield sobre stable ocioso). Si neto >=2% sostenido → disenar auto-redeem integrado; si no,
+  el stable se queda liquido en el exchange y la via se cierra del todo.
 - **Descartado y NO reintentar:** latch del cap, regime_delta 0.15, VIX, MVRV, Pi Cycle, floor<0.20,
-  global max_btc_pct cap, ATR intradia, halving_only, clock_aligned_cadence, fill_next_open.
+  global max_btc_pct cap, ATR intradia, halving_only, clock_aligned_cadence, fill_next_open,
+  short de calendario en bear_onset (EXP-016), parking off-exchange del stable y sweep manual
+  de earn (EXP-017, medidos con `delay_sensitivity_replay.py`).
 
 ---
 
