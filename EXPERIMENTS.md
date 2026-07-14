@@ -394,7 +394,9 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Permitido en forward-test?: E3 si (capa de reporting/espejo paper, no toca
   estrategia ni paridad); mover dinero real requiere OK explicito de Matias.
 - Referencias: `docs/income/plan.md` (Via E), EXP-016 (derivada que origino la via),
-  scratchpad `idle_usdt_prize.py` (metodologia del premio)
+  `tools/idle_usdt_prize.py` (metodologia del premio E0), `tools/worst_rebalance_draw.py`
+  (41/66 BUYs >80% del stable), `tools/delay_sensitivity_replay.py` (E2), journal ancla
+  versionado `backtests/journal_swing_allocator_btc_usdt_BTCUSDT_1H_20260714_143617.json`
 
 ### EXP-010 — Prop: router CFT-only (entry_halving_phases=bear_onset,accumulation)
 - Fecha: ver `docs/prop/hyrotrader-plan.md`
