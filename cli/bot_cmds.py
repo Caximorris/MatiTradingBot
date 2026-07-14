@@ -14,10 +14,12 @@ from cli.common import console
 def bot_list():
     """Lista todos los bots configurados en la DB."""
     from core.database import BotState, get_session, init_db
+    from tools.paper_bots import is_operable_bot_name
     init_db()
     with get_session() as s:
         rows = [(b.strategy_name, b.symbol, b.is_active, b.created_at)
-                for b in s.query(BotState).order_by(BotState.strategy_name).all()]
+                for b in s.query(BotState).order_by(BotState.strategy_name).all()
+                if is_operable_bot_name(b.strategy_name, b.symbol)]
     if not rows:
         console.print("[dim]Sin bots configurados.[/dim]")
         return
