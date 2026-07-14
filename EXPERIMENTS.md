@@ -324,7 +324,7 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Referencias: `strategies/onchain_flow.py`, `strategies/swing_allocator.py`,
   `SESSION.md` "Frontera de Max DD... CERRADA" (ahora con un lever on-chain mas en la lista).
 
-### EXP-015 — Short de calendario durante bear_onset (idea, rechazada sin screen)
+### EXP-016 — Short de calendario durante bear_onset (idea, rechazada sin screen)
 - Fecha: 2026-07-14 (rechazado en fase de idea — ni screen ni backtest; esta entrada
   existe para que la proxima vez que los graficos "muestren" el patron, la respuesta
   ya este escrita)
@@ -365,6 +365,36 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Permitido en forward-test?: no
 - Referencias: EXP-013 (riesgo margen medido), EXP-010 (colapso al modelar funding),
   `docs/income/plan.md` (derivada de yield), SESSION.md descartados (shorts/perps)
+
+### EXP-017 — Yield sobre el stable ocioso (treasury sweep, no-direccional)
+- Fecha: 2026-07-14 (pre-registrado; ejecucion E1 pendiente)
+- Estrategia: ninguna (capa de tesoreria EXTERNA — cero cambios en `swing_allocator.py`,
+  cero cambios en el motor de backtest congelado)
+- Hipotesis: el balance stable del Swing (32.1% del portfolio time-weighted 2015-26;
+  >60% durante ~360 dias seguidos en 2018 y 2021-22, y en la ventana actual desde
+  2025-10) puede devengar yield flexible (OKX Simple Earn USDC o equivalente) sin
+  alterar NUNCA un rebalanceo. Premio medido sobre el journal ancla v6-2 realistic:
+  APR 2% -> +0.24pp CAGR | 4% -> +0.47pp | 6% -> +0.71pp. Referencia de escala: todo
+  el trabajo v5->v6-2 valio +0.67pp — un yield aburrido vale lo mismo con ~0 riesgo
+  de mercado adicional (el capital ya vive en OKX; earn añade riesgo de PRODUCTO
+  sobre el mismo counterparty, se capea).
+- Decision: parked (E0+E1+E2-medicion HECHOS 2026-07-14) con UNA sola condicion de
+  reapertura: re-medir el APR real de USDC earn al go-live (sept 2026); si neto >=2%
+  sostenido, disenar auto-redeem integrado en el pipeline. Todo lo demas quedo MEDIDO
+  y muerto: (a) rates hoy 1.85-2.06% bruto → ~1.6-1.8% neto < gate; (b) parking
+  off-exchange: retrasar solo BUYs cuesta -3.2 a -3.8pp CAGR (24-72h) vs ~+0.5-1pp de
+  yield — un orden de magnitud en contra; (c) sweep manual: 6h de retraso cuestan casi
+  lo mismo que 72h (-3.12pp, riesgo de EVENTO concentrado en los saltos a target 1.00,
+  no de duracion) → cualquier redencion con humano en el loop paga el coste entero.
+  Colateral operativo positivo: retrasar AMBOS lados 24h cuesta solo -0.15pp — una
+  caida total del bot de ~1 dia es barata (referencia para playbook de incidentes/F19).
+- Razon: resultados completos y metodologia (replay del journal ancla, sanity 0.9999
+  vs ancla) en `docs/income/plan.md` Via E; harness reproducible en
+  `tools/delay_sensitivity_replay.py`.
+- Permitido en forward-test?: E3 si (capa de reporting/espejo paper, no toca
+  estrategia ni paridad); mover dinero real requiere OK explicito de Matias.
+- Referencias: `docs/income/plan.md` (Via E), EXP-016 (derivada que origino la via),
+  scratchpad `idle_usdt_prize.py` (metodologia del premio)
 
 ### EXP-010 — Prop: router CFT-only (entry_halving_phases=bear_onset,accumulation)
 - Fecha: ver `docs/prop/hyrotrader-plan.md`

@@ -418,6 +418,135 @@ Cerrado por ahora. Reabrir solo si: (a) se confirma portfolio margin en la cuent
 (b) se decide empezar con notional muy pequeno y monitoreo activo, no con el `notional_pct=0.90`
 de este backtest.
 
+## Via E — EXP-017: Yield sobre el stable ocioso (treasury sweep, no-direccional)
+
+Origen: derivada viva de EXP-016 (short de calendario, rechazado). El problema real que
+sobrevive: durante bear_onset/accumulation el portfolio pasa ~un año con >60-80% en stable
+sin devengar nada. La monetizacion correcta NO es direccional — es yield con liquidez
+instantanea. Esta via NO es una estrategia de trading: es tesoreria.
+
+### E0 — Cuantificacion del premio (HECHO 2026-07-14)
+Script sobre el journal ancla v6-2 (2015-2026 realistic, $9.53M, 137 eventos):
+- Stable share medio time-weighted: **32.1%** (el "80% parado" solo ocurre en las ventanas
+  muertas: 2018-01→2018-12 (~358d), 2021-11→2022-10 (~360d), y la actual desde 2025-10).
+- Uplift simple (sin compounding, APR sobre stable-dollar-days $2.47B):
+  **APR 2% → +0.24pp CAGR | 4% → +0.47pp | 6% → +0.71pp** (+$135k/+$270k/+$405k sobre $9.53M).
+- Referencia de escala: TODO el trabajo v5→v6-2 valio +0.67pp. Un yield aburrido al 4-6%
+  vale lo mismo con ~0 riesgo de mercado adicional. Esa es la tesis.
+- Realidad temporal: hoy el capital es paper — no hay nada ocioso REAL hasta el live
+  (septiembre 2026). Deadline natural de E1-E2 = go-live, no esta semana.
+
+### E1 — Research de producto (sin codigo, 1 sesion)
+- Cuenta EEA/MiCA (`my.okx.com`), USDT bloqueado → el producto tiene que ser sobre USDC
+  (o EUR como secundario).
+- Inventariar OKX EU Simple Earn / flexible savings USDC: APR real historico (no el
+  promocional), mecanica de redencion (instantanea vs diferida — REQUISITO DURO, ver E2),
+  disponibilidad para cuentas EEA, endpoints API v5 (`/api/v5/finance/savings/*`), y si
+  existe en el entorno demo (casi seguro NO → la validacion operativa sera live con
+  importe minimo).
+- Descalificar formalmente off-exchange (tokenized T-bills, DeFi lending): latencia de
+  transferencia + lockups violan la restriccion de liquidez, y añaden counterparty nuevo.
+  Documentar el porque para no reabrirlo cada ciclo.
+- Riesgo: earn añade riesgo de PRODUCTO (rehypothecation) sobre el mismo counterparty que
+  ya custodia el capital. Decidir cap: p.ej. max 80% del stable en earn, buffer siempre
+  liquido. La decision final de producto con dinero real es de Matias (Claude no es asesor
+  financiero licenciado).
+
+### Resultados E1 (2026-07-14) — research HECHO; gate NO se cumple a rates de hoy
+- **Producto EEA existe**: "EEA Simple Earn User Agreement" en okx.com/en-eu — el flexible
+  se llama ahi **"Margin Reward Flexible Term"** (rebranding EEA del Simple Earn Flexible;
+  los endpoints API siguen siendo `finance/savings/*`). Sin exclusiones geograficas
+  intra-EEA declaradas. Fee: **15% de los returns**.
+- **API confirmada en el dominio EEA**: `GET /api/v5/finance/savings/lending-rate-summary`
+  responde en `my.okx.com` (verificado 2026-07-14). Existen `purchase-redempt`, `balance`,
+  `set-lending-rate`, `lending-history` (privados, requieren key real — earn casi seguro
+  NO existe en demo; los endpoints de finanzas no operan con `x-simulated-trading`).
+- **APR real USDC hoy**: rate publicado 2.5%; `lending-rate-history` muestra el rate
+  DEVENGADO real en 1.85-2.06% bruto (hourly, ultima semana) → **~1.6-1.8% neto** tras el
+  15% de fee. A ese rate el uplift es ~+0.20pp CAGR → **por debajo del gate E4 (>=0.3pp /
+  APR>=2%)**. Veredicto hoy: NO automatizar; sweep manual o nada. Revisar el rate real al
+  go-live (septiembre) — es variable por hora y ciclico.
+- **Correlacion adversa estructural** (bajar expectativas): el lending rate lo mueve la
+  demanda de margen LONG → es alto en bull (cuando el allocator esta 100% BTC y no hay
+  stable que prestar) y bajo en bear (cuando el stable ocioso es maximo). El estimado de
+  APR constante de E0 SOBREESTIMA el uplift realizado. La cota realista esta mas cerca del
+  escenario 2% que del 4-6%.
+- **La redencion NO es contractualmente instantanea**: el agreement EEA permite retrasarla
+  o restringirla "a discrecion de OKX" con liquidez insuficiente (FIFO, reordenable). En
+  practica es instantanea, pero el contrato no lo garantiza — y los momentos de estres de
+  liquidez correlacionan con los giros de mercado donde caen los BUYs grandes. Producto
+  ademas NO principal-protected y FUERA del safeguarding MiCA.
+- **Dato de diseño del journal ancla (weaponiza E2): 41 de 66 BUYs consumen >80% del
+  stable pre-rebalanceo en UN solo evento** (53/66 consumen >50%; los saltos a target 1.00
+  drenan todo). Un "buffer liquido del 20%" NO funciona: casi cualquier BUY necesita
+  redimir casi todo. El diseño obligatorio es redeem-antes-de-execute en cada BUY, con
+  el retraso de redencion tratado como evento de infra (alerta + ejecutar con lo liquido +
+  retry del resto), nunca como skip.
+
+### E2 — Diseño del treasury sweep (capa EXTERNA, cero cambios en swing_allocator.py)
+- Restriccion estructural que manda: UN solo rebalanceo puede necesitar TODO el stable
+  (target 0.20→1.00 en un giro bear→bull). Por eso la redencion instantanea es requisito
+  duro, no nice-to-have.
+- Pipeline: la estrategia calcula target → el sweep redime lo necesario → se ejecuta la
+  orden. Orquestacion en la capa de ejecucion (`cli/live_cmds.py`); la estrategia ve el
+  balance total (liquido + earn) y no sabe que el sweep existe.
+- Si la redencion no es instantanea o la API no existe para EEA: v1 se degrada a sweep
+  MANUAL (mensual, buffer grande). KISS: empezar manual es perfectamente aceptable; la
+  automatizacion es una mejora, no un prerequisito.
+- Regla de oro: el sweep NUNCA bloquea/retrasa/altera un rebalanceo. Fallo de redencion =
+  alerta Telegram + rebalancear con lo liquido disponible; jamas skip.
+
+### Resultados E2 — medicion de sensibilidad al retraso (2026-07-14) — VEREDICTO FINAL
+Harness: `tools/delay_sensitivity_replay.py` (replay del journal ancla v6-2: mismas
+decisiones/targets, solo cambia el precio de ejecucion a la vela N horas despues, mismos
+costes realistic; el error de modelo se cancela comparando replay-0h vs replay-Nh; sanity
+replay-0h vs ancla = ratio 0.9999).
+
+| delay | lado retrasado | final $ | CAGR | dCAGR | MaxDD |
+|---|---|---|---|---|---|
+| 0h | — | 9.53M | 86.56% | — | 53.17% |
+| 6h | solo BUYs | 7.91M | 83.44% | **-3.12pp** | 53.62% |
+| 24h | solo BUYs | 7.90M | 83.41% | **-3.15pp** | 53.06% |
+| 72h | solo BUYs | 7.60M | 82.76% | **-3.80pp** | 52.87% |
+| 168h | solo BUYs | 7.75M | 83.09% | -3.47pp | 54.88% |
+| 24h | ambos | 9.43M | 86.41% | -0.15pp | 53.21% |
+| 72h | ambos | 8.78M | 85.25% | -1.31pp | 53.79% |
+
+Lecturas (cierran la via casi entera):
+1. **Parking off-exchange: MUERTO.** Retrasar solo los BUYs 24-72h cuesta **-3.2 a -3.8pp
+   de CAGR** — un orden de magnitud mas que el yield que se ganaria fuera (~+0.5-1pp).
+   El stable TIENE que estar liquido en el exchange cuando el bot dispara.
+2. **La perdida NO es funcion de la duracion del retraso**: 6h cuesta casi lo mismo que
+   72h (-3.12 vs -3.80pp) y 168h no es peor que 72h. El daño esta concentrado en unos
+   pocos eventos violentos (los saltos a target 1.00 en dias de momentum): es riesgo de
+   EVENTO, no de latencia acumulada. Consecuencia: hasta una redencion manual "rapida"
+   (horas) de earn ya paga el coste completo → **el sweep manual tambien esta muerto**;
+   solo un auto-redeem integrado en el pipeline de ejecucion (redeem→execute en el mismo
+   tick) evita el coste, y eso solo se justifica si el APR pasa el gate E4.
+3. **Hallazgo operativo colateral (positivo, para F19/incidentes):** retrasar AMBOS lados
+   24h cuesta solo -0.15pp — una caida total del bot de ~1 dia es barata (los retrasos
+   simetricos casi se cancelan por la deriva alcista). La asimetria (solo-buys) es lo
+   letal. Anotado tambien como referencia para el playbook de incidentes.
+
+**Estado de la via tras E0-E2: PARKED con una unica condicion de reapertura** — re-medir
+el APR real de USDC earn al go-live (septiembre 2026). Si el neto >=2% sostenido, disenar
+el auto-redeem integrado (E2/E3/E4); si no, la via se cierra y el stable se queda liquido
+en el exchange, punto. Ninguna variante off-exchange ni manual se reabre: quedaron
+medidas, no opinadas.
+
+### E3 — Ensayo en paper (capa de reporting; motor congelado intacto)
+- Acrecion simulada a APR fijo en el espejo paper (`paper_state`), SOLO para ensayar la
+  operativa (timing sweep/redeem vs rebalanceos), no para medir retorno.
+- No entra en el forward-test contract: no toca estrategia, journals de estrategia ni
+  paridad F15.
+
+### E4 — Gates de adopcion
+- 0 rebalanceos retrasados/perdidos/alterados durante >=4 semanas de ensayo.
+- Uplift esperado >=0.3pp CAGR al APR real observado; si el APR real es <2%, la version
+  automatizada no compensa la complejidad → quedarse en manual o descartar.
+- Live: importe minimo primero (septiembre), escalar despues. Mover dinero real y `start`
+  live siguen requiriendo OK explicito.
+
 ## Orden de ejecucion propuesto (estos dias)
 
 | Dia | Bloque | Entregable |
