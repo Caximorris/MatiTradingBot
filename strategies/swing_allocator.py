@@ -484,7 +484,6 @@ class SwingAllocatorBot:
             result    = self._client.place_order(
                 self._cfg.symbol, "sell", "market", sell_qty, strategy=self.name
             )
-            qty       = sell_qty
             direction = "SELL"
 
         else:
@@ -494,15 +493,21 @@ class SwingAllocatorBot:
             logger.warning("[{}] Orden rechazada: {}", self.name, result.error)
             return
 
-        self._last_rebalance = self._client.current_time()
-        self._save_live_state()   # no-op en backtest
         pct_after = self._current_btc_pct()
-
+        residual = abs(target - pct_after)
+        # Un fill incompleto no debe ocultar durante 3 dias una cartera lejos del target.
+        if residual < self._cfg.rebalance_threshold:
+            self._last_rebalance = self._client.current_time()
+            self._save_live_state()   # no-op en backtest
+        else:
+            logger.warning("[{}] Rebalanceo incompleto: target {:.1f}%, actual {:.1f}% "
+                           "(residual {:.1f}%); sin cooldown, reintento en proximo bloque 4H",
+                           self.name, target * 100, pct_after * 100, residual * 100)
         logger.info(
             "[{}] {} | {:.0f}% -> {:.0f}% | {:.2f} USDT | qty {:.6f}",
             self.name, direction,
             current * 100, pct_after * 100,
-            float(price), float(qty),
+            float(price), float(result.filled_qty),
         )
 
         self._log_rebalance(
@@ -511,7 +516,7 @@ class SwingAllocatorBot:
             pct_after=pct_after,
             direction=direction,
             price=float(price),
-            qty=float(qty),
+            qty=float(result.filled_qty),
             portfolio_usdt=float(total),
             signals=signals,
         )

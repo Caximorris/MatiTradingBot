@@ -7,6 +7,7 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
+from core.exchange import OrderResult
 from strategies.swing_allocator import SwingAllocatorBot, SwingAllocatorConfig
 
 
@@ -36,6 +37,43 @@ class FakeClient:
 
 class BacktestClient(FakeClient):
     """El nombre de clase exacto activa la rama backtest en _is_backtest_client()."""
+
+
+class PartialFillClient(FakeClient):
+    def __init__(self, fill_ratio: Decimal):
+        super().__init__()
+        self.fill_ratio = fill_ratio
+        self.balances = {"BTC": Decimal("6"), "USDT": Decimal("400")}
+        self.orders: list[Decimal] = []
+
+    def get_balance(self):
+        return self.balances.copy()
+
+    def place_order(self, symbol, side, order_type, size, price=None, strategy=""):
+        self.orders.append(size)
+        filled_qty = size * self.fill_ratio
+        if side == "sell":
+            self.balances["BTC"] -= filled_qty
+            self.balances["USDT"] += filled_qty * self.price
+        else:
+            self.balances["BTC"] += filled_qty
+            self.balances["USDT"] -= filled_qty * self.price
+        return OrderResult(
+            order_id=f"partial-{len(self.orders)}",
+            symbol=symbol,
+            side=side,
+            order_type=order_type,
+            size=size,
+            limit_price=price,
+            filled_price=self.price,
+            filled_qty=filled_qty,
+            fee=Decimal("0"),
+            fee_currency="USDT",
+            status="filled",
+            is_paper=True,
+            strategy=strategy,
+            timestamp=self.now,
+        )
 
 
 @pytest.fixture
@@ -228,6 +266,39 @@ def test_live_market_data_failure_does_not_consume_block(db_session):
     client.now = datetime(2026, 7, 1, 12, 5, tzinfo=timezone.utc)
     bot.run()
     assert bot._live_state["last_eval_block"] is None   # se reintenta en el proximo tick
+
+
+def test_incomplete_fill_does_not_start_cooldown_and_retries_next_block():
+    client = PartialFillClient(fill_ratio=Decimal("0.25"))
+    bot = SwingAllocatorBot(client=client, config=SwingAllocatorConfig())
+    bot._initialized = True
+    bot._market_data_ok = lambda: True
+    bot._compute_target = lambda current: (0.2, ["test_target"])
+
+    client.now = datetime(2026, 7, 1, 12, 5, tzinfo=timezone.utc)
+    bot.run()
+    assert len(client.orders) == 1
+    assert bot._current_btc_pct() == pytest.approx(0.5)
+    assert bot._last_rebalance is None
+    assert bot._rebalance_log[-1]["qty"] == pytest.approx(1.0)
+
+    client.now = datetime(2026, 7, 1, 16, 5, tzinfo=timezone.utc)
+    bot.run()
+    assert len(client.orders) == 2
+    assert bot._current_btc_pct() == pytest.approx(0.425)
+    assert bot._last_rebalance is None
+
+
+def test_fill_that_reaches_target_starts_normal_cooldown():
+    client = PartialFillClient(fill_ratio=Decimal("1"))
+    bot = SwingAllocatorBot(client=client, config=SwingAllocatorConfig())
+
+    bot._rebalance(target=0.2, current=0.6, signals=["test_target"])
+
+    assert client.orders == [Decimal("4.000000")]
+    assert bot._current_btc_pct() == pytest.approx(0.2)
+    assert bot._last_rebalance == client.now
+    assert bot._rebalance_log[-1]["qty"] == pytest.approx(4.0)
 
 
 def test_phase_policy_router_v5_equiv_matches_legacy_targets():
