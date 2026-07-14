@@ -59,7 +59,6 @@ REBALANCES = RUNTIME / "swing_rebalances.jsonl"
 DAILY_CHECKS_LOG = ROOT / "data" / "runtime" / "daily_checks.log"
 TG_STATE = ROOT / "data" / "runtime" / "tg_state.json"   # heartbeat/backup/watchdog persistido
 TRADING_DB = ROOT / "trading.db"
-STATE_ROW_NAME = "swing_allocator"   # fila de estado interno — NUNCA pausar/reanudar esta
 UNIT_BOT = "matibot"
 UNIT_TG = "matibot-telegram"
 HEARTBEAT_HOUR_UTC = 8               # 1 mensaje/dia: el silencio deja de ser ambiguo
@@ -72,19 +71,21 @@ BACKUP_EVERY_DAYS = 7                # backup automatico semanal al chat
 
 def swing_bot_rows(session) -> list:
     from core.database import BotState
+    from tools.paper_bots import is_operable_bot_name
     return [
         r for r in session.query(BotState)
         .filter(BotState.strategy_name.like("swing%")).all()
-        if r.strategy_name != STATE_ROW_NAME
+        if is_operable_bot_name(r.strategy_name, r.symbol)
     ]
 
 
 def prop_bot_rows(session) -> list:
     from core.database import BotState
+    from tools.paper_bots import is_operable_bot_name
     return [
         r for r in session.query(BotState)
         .filter(BotState.strategy_name.like("prop_swing%")).all()
-        if r.strategy_name != "prop_swing"
+        if is_operable_bot_name(r.strategy_name, r.symbol)
     ]
 
 

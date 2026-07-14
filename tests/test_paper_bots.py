@@ -5,6 +5,7 @@ from pathlib import Path
 from tools.paper_bots import (
     bot_label,
     filter_rebalances,
+    is_operable_bot_name,
     paper_state_path,
     resolve_bot,
     safe_state_name,
@@ -30,6 +31,15 @@ def test_safe_state_name_matches_exchange_rules():
     assert safe_state_name("swing_V6") == "swing_v6"
     assert safe_state_name("a/b c") == "a_b_c"
     assert safe_state_name("___") == "default"
+
+
+def test_operable_bot_name_excludes_internal_state_rows():
+    assert is_operable_bot_name("swing_allocator_v6_btc_usdt", "BTC-USDT") is True
+    assert is_operable_bot_name("swing_allocator_demo_btc_usdt", "BTC-USDT") is True
+    assert is_operable_bot_name("prop_swing_btc_usdt", "BTC-USDT") is True
+    assert is_operable_bot_name("swing_allocator_v6", "BTC-USDT") is False
+    assert is_operable_bot_name("swing_allocator_demo", "BTC-USDT") is False
+    assert is_operable_bot_name("prop_swing", "BTC-USDT") is False
 
 
 def _bots():

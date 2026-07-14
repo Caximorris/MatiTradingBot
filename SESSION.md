@@ -4,9 +4,9 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-14** (v6-2 congelado y documentacion/Graphify sincronizados;
-fix de frontera diaria UTC en `RiskManager.check_daily_loss`; 233 tests pasan. El bot demo OKX
-esta desplegado, pero falta confirmar pull+restart de la configuracion v6-2 en la VM.)
+**Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet deseada = v6 simulado + v6 OKX
+Demo + Prop Firm; legacy retirado y v5 desactivado mediante reconciliador idempotente. Fix de
+retry tras rebalanceo incompleto incluido. 238 tests pasan; falta pull+reconcile+restart en VM.)
 
 ---
 
@@ -20,26 +20,27 @@ v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d
 - 2018-26 realistic: $229.0k | +47.90% | -53.72% | 53 | 0.8785
 - 2015-26 conservative: $9.255M | +86.06% | -52.88% | 70 | 0.8281
 
-Validacion local 2026-07-14: **233/233 tests**. `RiskManager.check_daily_loss` calcula ahora el
+Validacion local 2026-07-14: **238/238 tests**. `RiskManager.check_daily_loss` calcula ahora el
 inicio del dia desde el reloj UTC real; antes usaba la fecha local y la etiquetaba como UTC.
 
 v6 fue promovido porque v5/v6 empezaron paper simultaneamente, no existia ventaja forward previa
 de v5, y v6 domina las tres anclas y 7/8 rolling starts sin empeorar DD ni churn. Hoy seguimos en
-`bear_onset`: **v6 ≡ v5 en vivo hasta ~2026-10-07**. Mantener la instancia v5 aislada como control.
+`bear_onset`: **v6 ≡ v5 en vivo hasta ~2026-10-07**. Decision usuario 2026-07-14: v5 queda
+desactivado; el rollback permanece documentado y su historial/wallet no se borran.
 
-**PAPER DESPLEGADO** — VM GCP e2-micro us-central1 (free tier), Debian 13, VM `matitrbot`. Los 3 bots
-en paper con carteras aisladas (`paper_state_<id>.json`; v5 legacy sigue en `paper_state.json`).
-Control remoto Telegram **multi-bot** (2026-07-06, commit `6e95f0d`): descubre los bots swing desde
-BotState y los distingue por etiqueta (v5/v6/legacy). `/status` resume todos; `/status|/report|/equity
-<bot>` apuntan a uno; `/bots` lista carteras. Alertas de rebalanceo y heartbeat por bot. Prop sigue en
-`/prop`. Capa pura en `tools/paper_bots.py` + `tools/tg_views.py` (telegram_remote 674 lineas <800).
+**PAPER DESPLEGADO** — VM GCP e2-micro us-central1 (free tier), Debian 13, VM `matitrbot`.
+Topologia deseada: exactamente `swing_allocator_v6_btc_usdt` (simulado),
+`swing_allocator_demo_btc_usdt` (OKX Demo) y `prop_swing_btc_usdt` (Prop Firm simulado).
+`tools/paper_fleet_setup.py` la reconcilia: elimina registro+estado legacy, desactiva otros bots
+y preserva historicos, wallets y filas internas v6/demo/prop. Observabilidad excluye ahora todas
+las filas internas; `/status` solo muestra v6/demo y Prop sigue en `/prop`.
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
 Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
 
 **OBSERVABILIDAD FORWARD-TEST (2026-07-06)** — suite read-only que NO toca la estrategia (plan
 `docs/forward-test/research-lab-plan.md`, fases 1-3). Reglas del test congeladas en
 `docs/forward-test/contract.md` (inicio 2026-07-04, taxonomia fallo-estrategia vs fallo-infra).
-Comandos: `paper-status` (control center v5/v6/legacy), `anomaly-check` (red-flags + Telegram
+Comandos: `paper-status` (control center v6/demo), `anomaly-check` (red-flags + Telegram
 dedup), `forward-report` (solo datos post-inicio, filtro duro), `data-audit` (integridad OHLCV,
 nunca re-descarga). Capa pura: `tools/{paper_snapshot,anomaly_check,forward_report,data_audit}.py`
 + `cli/paper_cmds.py`. **Hallazgo de `data-audit`:** cache canonico tiene 474 filas duplicadas
@@ -165,14 +166,12 @@ un backtest puntual.
 ## SIGUIENTE PASO (sesion 2026-07-14+)
 
 **Inmediato:**
-1. Verificar el primer rebalanceo del bot demo via bridge (evaluacion 4H de ~20:00 UTC del
-   2026-07-13): en `journalctl -u matibot` deben verse `[DEMO-BRIDGE] pata sell BTC-EUR` +
-   `pata buy USDC-EUR`, alerta Telegram `[demo]`, y el bot quedar en target 0.20 como los otros 3.
-   Si el bridge fallo: revisar sCode en el log (los books demo cambian de estado sin aviso).
-2. Confirmar que tras `systemctl restart matibot-telegram` funcionan `/status demo` y las
-   etiquetas de alerta correctas.
-3. Limpieza menor pendiente: registro huerfano `swing_allocator_v6` [pausado] que comparte
-   `paper_state.json` con legacy (confunde el listado de /bots).
+1. En VM: `git pull --ff-only origin main`, ejecutar `.venv/bin/python
+   tools/paper_fleet_setup.py` y reiniciar `matibot` + `matibot-telegram`.
+2. Confirmar `main.py bot list`: solo v6 simulado, demo y prop activos; v5/otros desactivados,
+   legacy ausente. `/status` debe mostrar solo v6/demo, sin filas internas duplicadas.
+3. Verificar que demo sigue ~20% BTC y que un fill incompleto deja log `sin cooldown` y reintenta
+   en el siguiente bloque 4H.
 
 **Marco general:** optimizacion de backtest del Swing = CERRADA. Hito = validacion forward:
 cerrar F13 (smoke 24h), F15 (paridad 30d — racha reiniciada ~2026-07-11 por el incidente cron)

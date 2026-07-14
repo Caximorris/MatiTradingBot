@@ -93,6 +93,8 @@ def test_build_snapshots_marks_stale_and_computes_metrics(tmp_path, monkeypatch)
         _FakeBot("swing_allocator_v5_btc_usdt", "BTC-USDT", True,
                  NOW - timedelta(minutes=30), {"paper_portfolio_id": "v5", "instance_id": "v5"}),
         _FakeBot("swing_allocator", "BTC-USDT", True, NOW, {}),   # fila de estado -> excluida
+        _FakeBot("swing_allocator_v5", "BTC-USDT", False, NOW,
+                 {"initialized": True}),   # estado de instancia -> excluido
     ]
     snaps = ps.build_snapshots(_FakeSession(rows), price=Decimal("40000"), now=NOW,
                                rebalances_path=reb_path)

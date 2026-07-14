@@ -43,6 +43,7 @@ def _add_bot(session, name, symbol="BTC-USDT", active=True):
 def test_set_swing_active_ignores_internal_state_row(db_session):
     _add_bot(db_session, "swing_allocator_btc_usdt", active=True)
     _add_bot(db_session, "swing_allocator", active=False)   # fila de estado interno
+    _add_bot(db_session, "swing_allocator_v6", active=False)  # estado de instancia
     _add_bot(db_session, "pro_trend_btc_usdt", active=True)  # otra estrategia: no tocar
 
     names = set_swing_active(db_session, False)
@@ -50,6 +51,7 @@ def test_set_swing_active_ignores_internal_state_row(db_session):
     assert names == ["swing_allocator_btc_usdt"]
     rows = {r.strategy_name: r.is_active for r in swing_bot_rows(db_session)}
     assert rows["swing_allocator_btc_usdt"] is False
+    assert "swing_allocator_v6" not in rows
 
 
 def test_pause_and_resume_commands_flip_is_active(db_session):

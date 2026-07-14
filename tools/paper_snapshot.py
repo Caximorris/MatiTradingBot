@@ -34,10 +34,6 @@ LEGACY_PAPER_STATE = RUNTIME / "paper_state.json"
 # Espejo de tg_views.LIVENESS_MAX_AGE_MIN: bot activo sin tick mas viejo que esto = proceso caido.
 LIVENESS_MAX_AGE_MIN = 10
 
-# Nombre de la fila de estado interno del Swing en BotState — NO es un bot operable.
-_STATE_ROW_NAME = "swing_allocator"
-
-
 # ---------------------------------------------------------------------------
 # Lectores de runtime (puros; toleran archivos ausentes en la maquina de dev)
 # ---------------------------------------------------------------------------
@@ -96,7 +92,7 @@ def discover_bots(session) -> list[dict]:
     Cada dict: label, name, symbol, is_active, last_run (datetime|None), portfolio_id.
     Se adapta solo a 1/2/3 carteras sin hardcodear (mismo criterio que
     telegram_remote.swing_bot_rows + discover_bots)."""
-    from tools.paper_bots import bot_label
+    from tools.paper_bots import bot_label, is_operable_bot_name
     from core.database import BotState
 
     rows = (session.query(BotState)
@@ -104,7 +100,7 @@ def discover_bots(session) -> list[dict]:
             .all())
     out = []
     for r in rows:
-        if r.strategy_name == _STATE_ROW_NAME:
+        if not is_operable_bot_name(r.strategy_name, r.symbol):
             continue
         cfg = r.get_config() or {}
         out.append({

@@ -25,6 +25,12 @@ def safe_state_name(value: str) -> str:
     return safe.strip("_-") or "default"
 
 
+def is_operable_bot_name(name: str, symbol: str) -> bool:
+    """True for runnable registrations; False for internal strategy-state rows."""
+    suffix = "_" + str(symbol).upper().replace("-", "_").lower()
+    return str(name).lower().endswith(suffix)
+
+
 def paper_state_path(portfolio_id: str | None, runtime_dir: Path) -> Path:
     """Ruta de la cartera paper de un bot. Sin portfolio_id -> fichero legacy compartido."""
     if portfolio_id:

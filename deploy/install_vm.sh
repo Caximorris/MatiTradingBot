@@ -41,8 +41,8 @@ if [ ! -f .env ]; then
     exit 0
 fi
 
-echo "== 5/6 Registrar y activar el bot Swing en paper =="
-.venv/bin/python main.py bot enable swing_allocator_btc_usdt BTC-USDT
+echo "== 5/6 Configurar fleet paper: v6 simulado + v6 demo + Prop Firm =="
+.venv/bin/python tools/paper_fleet_setup.py
 
 echo "== 6/6 Servicios systemd + cron diario =="
 for unit in matibot matibot-telegram; do

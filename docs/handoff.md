@@ -98,20 +98,22 @@ No comprar challenge sin:
 - `strategies/prop_swing.py`: persistencia live/paper de posicion/dia/funding idx en BotState
   `prop_swing`; journal operativo `data/runtime/prop_live_journal.jsonl`; hard-stop CFT.
 - `tools/prop_cft_setup.py`: registra bot PropSwing CFT paper.
+- `tools/paper_fleet_setup.py`: deja activo exactamente v6 simulado + v6 OKX Demo + Prop Firm,
+  elimina legacy y desactiva los demas bots sin borrar historicos ni wallets.
 - `tools/prop_cft_status.py`: imprime estado del monitor.
 - `tools/prop_telegram.py`: formateo Telegram de Prop/CFT.
 - `deploy/setup_prop_cft_paper.sh`: setup idempotente en VM.
 - `deploy/daily_checks.sh`: incluye estado Prop/CFT en check diario.
 - `tools/telegram_remote.py`: comandos `/prop`, `/prop_report`, `/prop_pause`, `/prop_resume`.
 
-### Swing v6 default y control v5
+### Swing v6 default: simulado + OKX Demo
 
 - `docs/swing/v6-plan.md`: decision, validacion y rollback de v6.
 - `strategies/swing_phase_policy.py`: router `v5_equiv` con paridad exacta.
 - `strategies/swing_funding_overlay.py`: overlay de funding cerrado/deduplicado.
 - `tools/swing_paper_setup.py`: registra Swing v6 paper aislado (`paper_portfolio_id=swing_v6`).
 - Enfoque actual: paper OOS del default V6-2 (`accumulation`, p10/p90, `+0.05`, ttl 7d)
-  contra la instancia v5 aislada. No ajustar mas parametros sobre la muestra cerrada.
+  en cartera simulada y cuenta OKX Demo. v5 queda desactivado como rollback historico.
 
 ### Prop research
 

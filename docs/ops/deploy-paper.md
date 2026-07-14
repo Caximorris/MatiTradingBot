@@ -1,9 +1,8 @@
-# DEPLOY_PAPER.md — Paper trading Swing v6-2 + control v5 en la nube (runbook)
+# DEPLOY_PAPER.md — v6-2 simulado + v6-2 OKX Demo + Prop Firm (runbook)
 
-Plan aprobado 2026-07-02 (sesion 16), actualizado tras promover v6-2 el 2026-07-13. Objetivo:
-correr la validacion forward del default v6-2 y mantener Swing v5 como control/rollback
-(smoke 24h F13 + paridad 30 dias F15 + degradacion F19) en una VM gratuita, con control
-remoto por Telegram, sin depender del PC de casa. Coste objetivo: $0.
+Topologia vigente desde 2026-07-14: exactamente tres bots activos en una VM gratuita:
+Swing v6-2 simulado, Swing v6-2 con ejecucion OKX Demo y Prop Firm/CFT simulado. Legacy se
+retira del registro; v5 queda desactivado y conserva historial para rollback.
 
 **Este documento es el punto de reanudacion**: si el proyecto se pausa, aqui esta todo lo
 necesario para retomar exactamente donde quedo (ver "Estado del despliegue" al final).
@@ -21,14 +20,13 @@ VM Linux gratuita (Oracle Free / GCP e2-micro)
 Estado persistente (sobrevive a reinicios de proceso y de VM):
 ├── trading.db                        → BotState: is_active, estado del Swing (initialized,
 │                                        last_rebalance, last_eval_block)
-├── data/runtime/paper_state.json     → portfolio paper del bot legacy (sin paper_portfolio_id)
 ├── data/runtime/paper_state_<id>.json → portfolio paper de cada bot aislado (swing_v6, prop_cft...)
 ├── data/runtime/swing_rebalances.jsonl → cada rebalanceo (tag `strategy` por bot; fuente /report y F19)
 └── data/runtime/daily_checks.log     → historial de checks diarios
 ```
 
 Claves de diseno:
-- **Paper local = sin claves de trading**: los bots v5/v6/legacy solo usan datos publicos.
+- **Paper local = sin claves de trading**: v6 simulado y Prop Firm solo usan datos publicos.
   La instancia `demo` usa una API key exclusiva de OKX Demo y Telegram usa su propio token;
   ninguna clave permite operar capital real.
 - **`OKX_SANDBOX=false` obligatorio**: datos del exchange real. El sandbox demo tiene precios
@@ -63,12 +61,22 @@ bash deploy/install_vm.sh        # 2a pasada: bot enable + systemd + cron
 Verificacion inmediata: mensaje "Control remoto conectado" en Telegram, y
 `journalctl -u matibot -f` mostrando el tick del scheduler.
 
+## Topologia deseada e idempotente
+
+```bash
+.venv/bin/python tools/paper_fleet_setup.py
+```
+
+El comando activa exactamente `swing_allocator_v6_btc_usdt`,
+`swing_allocator_demo_btc_usdt` y `prop_swing_btc_usdt`; elimina el registro legacy,
+desactiva cualquier otro bot operable y preserva wallets, journals y filas internas de estado.
+
 ## Operacion diaria
 
-> **Multi-bot (v5/v6/legacy):** cada bot swing con `paper_portfolio_id` tiene su cartera
+> **Multi-bot (v6/demo):** cada bot swing con `paper_portfolio_id` tiene su cartera
 > aislada (`paper_state_<id>.json`) y el control remoto los distingue. `/status` sin argumento
 > resume TODOS; `/status <bot>`, `/report <bot>`, `/equity <bot>` apuntan a uno. `/bots` lista
-> los registrados y su etiqueta (v5/v6/legacy). Prop sigue en su propio `/prop`.
+> los registrados y su etiqueta (v6/demo). Prop sigue en su propio `/prop`.
 
 | Quiero... | Como |
 |---|---|
@@ -172,7 +180,7 @@ Requisitos (manuales):
    INIT y rebalancea directo en la primera evaluacion 4H. El resto de monedas se ignora.
 
 ```bash
-.venv/bin/python tools/okx_demo_setup.py --enable
+.venv/bin/python tools/paper_fleet_setup.py
 sudo systemctl restart matibot
 sudo systemctl restart matibot-telegram   # OJO: servicio SEPARADO — sin esto /status demo
                                           # no existe y las alertas salen con etiqueta vieja
@@ -182,7 +190,7 @@ Verificacion: `/bots` muestra el bot `demo`; su cartera se espeja en
 `data/runtime/paper_state_okx_demo.json` (espejo read-only del balance en OKX — editarlo no
 cambia nada), asi que `/status demo`, `/report demo`, `/equity demo` funcionan igual que con
 los demas. Si las credenciales demo faltan o son invalidas, el arranque SALTA solo ese bot
-(los otros tres arrancan normal) y lo dice en el log de arranque.
+(los otros dos arrancan normal) y lo dice en el log de arranque.
 
 Peculiaridades del entorno demo (medidas 2026-07-13, no afectan al live):
 

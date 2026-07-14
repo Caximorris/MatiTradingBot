@@ -144,8 +144,7 @@ python main.py backtest --strategy swing --from 2015-01-01 --to 2026-01-01 --cos
 Run it in paper mode (fake money):
 
 ```bash
-python main.py bot add swing BTC-USDT
-python main.py bot enable swing_allocator_btc_usdt BTC-USDT
+python tools/paper_fleet_setup.py  # v6 simulated + v6 OKX Demo + Prop Firm
 python main.py start        # live/paper — requires explicit intent
 python main.py dashboard    # in another terminal
 ```
