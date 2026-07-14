@@ -1,5 +1,10 @@
 # MatiTradingBot — CLAUDE.md
 
+@AGENTS.md
+
+`AGENTS.md` is the canonical source for current project architecture, state, constraints,
+and model escalation rules. If this file conflicts with `AGENTS.md`, follow `AGENTS.md`.
+
 Bot de trading automatizado para OKX. Python 3.12+. Windows 10, PowerShell.
 Leer este archivo Y `SESSION.md` antes de tocar cualquier archivo.
 `SESSION.md` es corto (estado vivo + reglas invariantes). El detalle historico completo esta en

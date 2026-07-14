@@ -23,6 +23,11 @@
 | **Evaluation date (first)** | 2026-10-04 (execution stability + data integrity review). **No strategy verdict before this.** |
 | **v6-vs-v5 evaluation date** | not before ~2027-01-05 (see minimum observation period). |
 
+**Amendment 2026-07-14 — active fleet:** the original v5/legacy rows below describe the
+historical test identity and are not instructions to resurrect those bots. The VM currently
+runs exactly `swing_allocator_v6_btc_usdt`, `swing_allocator_demo_btc_usdt`, and
+`prop_swing_btc_usdt`; v5 is retained only as a rollback/control record and legacy is retired.
+
 ## 2. Variants under test
 
 | Label | Bot (`BotState.strategy_name`) | Wallet file | Notes |
@@ -34,6 +39,10 @@
 **Amendment 2026-07-13:** v6-2 became the code/default-paper configuration by explicit user
 decision after paired validation. The original labels and start-date rules above remain locked:
 v5 is now the rollback/control, v6 is the default, and no live authorization is implied.
+
+**Amendment 2026-07-14:** fleet reconciliation removed legacy/v5 registrations without deleting
+their historical wallets or journals. Prop has an isolated paper wallet and is included in the
+status/anomaly snapshots; Demo out-of-band corrections use an auditable `RECONCILE` event.
 
 Wallets are ISOLATED per `instance_id` / `paper_portfolio_id`. Never share or reset a wallet
 mid-test.

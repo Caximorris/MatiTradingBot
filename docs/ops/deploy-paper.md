@@ -4,6 +4,11 @@ Topologia vigente desde 2026-07-14: exactamente tres bots activos en una VM grat
 Swing v6-2 simulado, Swing v6-2 con ejecucion OKX Demo y Prop Firm/CFT simulado. Legacy se
 retira del registro; v5 tambien se retira pero conserva historial, wallet y estado para rollback.
 
+Estado verificado 2026-07-14: `main` en la VM ya contiene el fleet setup; los tres bots tienen
+ticks recientes, `paper_state_prop_cft.json` existe con 10,000 USDT iniciales, Demo quedó
+reconciliado mediante un evento auditable `RECONCILE`, y `main.py anomaly-check` no reporta
+anomalias. No hay otro paso de instalación pendiente; desde aquí solo se mantienen F13/F15/F19.
+
 **Este documento es el punto de reanudacion**: si el proyecto se pausa, aqui esta todo lo
 necesario para retomar exactamente donde quedo (ver "Estado del despliegue" al final).
 
@@ -73,10 +78,11 @@ desactiva cualquier otro bot operable y preserva wallets, journals y filas inter
 
 ## Operacion diaria
 
-> **Multi-bot (v6/demo):** cada bot swing con `paper_portfolio_id` tiene su cartera
+> **Multi-bot (v6/demo/prop):** cada bot con `paper_portfolio_id` tiene su cartera
 > aislada (`paper_state_<id>.json`) y el control remoto los distingue. `/status` sin argumento
 > resume TODOS; `/status <bot>`, `/report <bot>`, `/equity <bot>` apuntan a uno. `/bots` lista
-> los registrados y su etiqueta (v6/demo). Prop sigue en su propio `/prop`.
+> los registrados y su etiqueta (v6/demo). Prop también aparece en `status`/`audit` y conserva
+> sus controles `/prop`.
 
 Telegram muestra un panel persistente con botones para las acciones de lectura habituales:
 resumen, detalle v6/demo, Prop, auditoria, salud, reports, equity, grafico BTC, senales y paridad.
@@ -192,7 +198,7 @@ Chequeos:
 
 ## Bot demo OKX en la misma VM (pre-live septiembre 2026)
 
-Cuarto bot (label `demo`): misma estrategia v6-2 congelada, pero las ordenes van a la cuenta
+Bot `demo` (uno de los tres activos): misma estrategia v6-2 congelada, pero las ordenes van a la cuenta
 DEMO real de OKX (header `x-simulated-trading:1`) via `core/okx_demo_client.py`. Ejercita el
 camino de ordenes AUTENTICADO (firma, params, errores) que ningun otro bot toca. El market
 data sigue siendo el REAL (flag=0) → la paridad F15 no se ve afectada. Medido 2026-07-11: el
@@ -280,13 +286,13 @@ Peculiaridades del entorno demo (medidas 2026-07-13, no afectan al live):
 - [x] VM instalada (2026-07-04 08:58 UTC): servicios matibot + matibot-telegram verdes,
       /status y /report responden. Fix necesario: DetachedInstanceError en bot enable (9214e1e).
       INIT 0%->60% + SELL 60%->20% (regime_bear,halving_bear_onset) — coincide con parity F15.
-- [ ] Smoke 24h (F13) — corre desde 2026-07-04 08:58 UTC; revisar journalctl 2026-07-05.
-      Superado: ____ — fecha inicio 30 dias: ____
+- [ ] Smoke 24h (F13) — ventana de observacion iniciada 2026-07-04 08:58 UTC; confirmar el
+      cierre en el reporte de forward-test.
 - [ ] 30 dias de paridad (F15) — sin PARITY_FAIL desde: **2026-07-11** (racha anterior de 3
       invalidada por el incidente del cron, ver abajo; nunca hubo PARITY_FAIL, solo dias sin medir)
 - [ ] F19 sin alertas al cierre de la ventana
-- [ ] Bot demo OKX registrado y activo (codigo listo 2026-07-11; falta API key demo en .env,
-      setup y restart — ver seccion "Bot demo OKX")
+- [x] Bot demo OKX registrado y activo (deploy y primer fill verificados 2026-07-13; estado
+      operativo confirmado 2026-07-14).
 - Incidencias/pausas: (anotar fecha y motivo)
   - **2026-07-07 → 2026-07-11 — cron de daily_checks sin correr (INFRA, contrato 6b).**
     `deploy/daily_checks.sh` perdio el bit +x en el commit `2019859` (2026-07-06); cron

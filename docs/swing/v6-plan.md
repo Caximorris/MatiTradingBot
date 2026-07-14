@@ -433,15 +433,15 @@ Rolling starts:
 python tools/swing_rolling_start_matrix.py --start-every-days 30 --costs realistic
 ```
 
-Paper aislado:
+Paper aislado (para una instalación nueva; la VM existente usa el reconciliador de fleet):
 
 ```bash
 python tools/swing_paper_setup.py --enable
 ```
 
 Esto registra `swing_allocator_v6_btc_usdt` con `instance_id=v6` y
-`paper_portfolio_id=swing_v6`. Si no existe un v5 legacy corriendo y se quiere registrar una
-instancia v5 aislada nueva:
+`paper_portfolio_id=swing_v6`. No registrar legacy/v5 como parte de la fleet operativa; si se
+necesita el rollback, conservar su wallet/journal histórico y activarlo solo de forma explícita:
 
 ```bash
 python tools/swing_paper_setup.py --include-v5 --enable

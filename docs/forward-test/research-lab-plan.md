@@ -1,11 +1,13 @@
 # FORWARD_TEST_AND_RESEARCH_LAB_PLAN.md
 
 > Tracking document. Evolves MatiTradingBot from a "trading bot" into a **BTC allocation
-> research lab + paper-forward-test control system**, WITHOUT contaminating the running
-> v5/v6/legacy forward test.
+> research lab + paper-forward-test control system**, WITHOUT contaminating the frozen
+> forward-test record. The currently operable fleet is v6 simulated + v6 OKX Demo + Prop/CFT;
+> legacy and v5 remain historical/rollback records, not active comparison bots.
 >
-> **Created:** 2026-07-06 | **Owner:** Mati | **Status doc, not code.** Nothing here is
-> implemented yet. Read `CLAUDE.md` + `SESSION.md` before acting on any task.
+> **Created:** 2026-07-06 | **Owner:** Mati | **Status doc, not code.** The plan is partially
+> implemented; the remaining gates are forward observation. Read `CLAUDE.md` + `SESSION.md`
+> before acting on any task.
 >
 > This plan was written after inspecting the actual repo. It reuses existing modules and
 > naming conventions and does NOT invent parallel infrastructure where an equivalent already
@@ -54,10 +56,11 @@ Every task uses this block:
     flag=0 / real authenticated orders on OKX demo flag=1) + `tools/okx_demo_setup.py` + routing
     in `cli/live_cmds.py`. First-ever exercise of the authenticated order path. Found P1 bug in
     the (never-run) `OKXClient._live_place_order`: missing `tgtCcy=base_ccy` means a spot market
-    BUY interprets `sz` as USDT, not BTC. Demo client sets it; OKXClient fix pending own commit.
+    BUY interprets `sz` as USDT, not BTC. Both the Demo client and `OKXClient` now set
+    `tgtCcy=base_ccy`; coverage lives in `tests/test_exchange.py`.
 
 - **2026-07-06** — Phase 1 + first observability wave shipped (read-only, forward-safe):
-  T3.1, T4.2, T4.1, T13.1, T6.1, T7.1. 26 new tests (179/179 total). New files:
+  T3.1, T4.2, T4.1, T13.1, T6.1, T7.1. 26 new tests (historical 179-test checkpoint). New files:
   `FORWARD_TEST_CONTRACT.md`, `tools/paper_snapshot.py`, `tools/anomaly_check.py`,
   `tools/forward_report.py`, `tools/data_audit.py`, `cli/paper_cmds.py` (+ `main.py` reg).
   - **DATA FINDING (T7.1, unactioned by design):** `data-audit` found **474 exact-duplicate
@@ -87,10 +90,11 @@ was the frozen default when the forward test started).
 The near-term goal is **NOT** to raise CAGR or optimize the strategy. The 2015-2026 window is
 CLOSED for optimization (SESSION.md rule 5). Instead:
 
-- Monitor live paper behavior of the 3 deployed bots (v5 / v6 / legacy).
+- Monitor live paper behavior of the 3 deployed bots (v6 simulated / Demo / Prop).
 - Validate execution stability (heartbeats, VM health, API reliability).
 - Detect data and execution anomalies before they silently corrupt the experiment.
-- Compare v5 vs v6 vs legacy forward behavior (note: v6 == v5 in live until ~2026-10-07).
+- Compare v6 against its preserved v5 rollback evidence only after the expected divergence
+  (~2026-10-07); legacy is not an active comparison stream.
 - Preserve experiment integrity — no post-hoc reinterpretation, no tuning on forward data.
 - Make every decision auditable (why a rebalance did / did not happen).
 - Package the project as a serious, honest, portfolio-quality engineering artifact.
@@ -159,10 +163,10 @@ we read more results, so nothing can be reinterpreted after the fact.
     - Notes: Content must include, at minimum:
         - **Forward test start date** (the deploy/reset baseline; pull from `DEPLOY_PAPER.md`
           and the earliest `swing_rebalances.jsonl` INIT per bot — do not guess).
-        - **Variants under test:** v6-2 (current frozen default), v5 (rollback/control; default at
-          test start), and legacy (`paper_state.json` bot).
-        - **Paper wallets:** `data/runtime/paper_state_<id>.json` per bot; legacy shared
-          `paper_state.json`. Map each `instance_id` -> wallet file.
+        - **Variants under test:** v6-2 simulated, v6-2 OKX Demo, and Prop/CFT paper. v5 is the
+          rollback/control record; legacy is retired after fleet reconciliation.
+        - **Paper wallets:** `data/runtime/paper_state_<id>.json` per active bot, including
+          `paper_state_prop_cft.json` and the Demo mirror. Map each `instance_id` -> wallet file.
         - **Allowed interventions:** restart VM/process, restart Telegram service, fix
           observability code, restore cache from git, patch data-integrity tooling.
         - **Forbidden interventions:** edit strategy code/params, re-tune, delete/rewrite
@@ -170,8 +174,8 @@ we read more results, so nothing can be reinterpreted after the fact.
         - **Evaluation date + minimum observation period:** v6 vs v5 divergence not expected
           until ~2026-10-07 (day 900, bear_onset->accumulation). State a minimum window past
           that before ANY v6 judgment.
-        - **Metrics tracked:** equity, drawdown, rebalance count, exposure stats, v5/v6/legacy
-          divergence, uptime, data-gap count. Definitions locked here.
+        - **Metrics tracked:** equity, drawdown, rebalance count, exposure stats, v6-v5
+          divergence after the expected date, uptime, data-gap count. Definitions locked here.
         - **Failure conditions & invalidation rules:**
             - *Real forward-test failure* = strategy behaves as designed but outcome breaches a
               pre-declared bound (e.g. drawdown beyond backtest envelope) over the min window.

@@ -20,7 +20,7 @@ v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d
 - 2018-26 realistic: $229.0k | +47.90% | -53.72% | 53 | 0.8785
 - 2015-26 conservative: $9.255M | +86.06% | -52.88% | 70 | 0.8281
 
-Validacion local 2026-07-14: **247/247 tests**. `RiskManager.check_daily_loss` calcula ahora el
+Validacion local 2026-07-14: **257/257 tests**. `RiskManager.check_daily_loss` calcula ahora el
 inicio del dia desde el reloj UTC real; antes usaba la fecha local y la etiquetaba como UTC.
 
 v6 fue promovido porque v5/v6 empezaron paper simultaneamente, no existia ventaja forward previa
@@ -42,18 +42,22 @@ Prop entra ya en snapshots/anomaly-check y su wallet inicial de 10k se persiste 
 `reconcile-demo-journal` anexa un evento auditable/idempotente para la correccion fuera de banda;
 no la disfraza como BUY/SELL ni modifica la estrategia congelada.
 Operacion normal = leer heartbeat + check diario; consola innecesaria. Runbook: `docs/ops/deploy-paper.md`.
-Smoke F13 (24h) y paridad F15 (30d) corriendo desde 2026-07-04. Tests 179/179.
+Verificacion operativa en VM 2026-07-14: los tres bots tienen tick reciente, la cartera Prop ya
+persiste sus 10,000 USDT iniciales, Demo fue reconciliado de 58.0% a 19.2% BTC con un evento
+`RECONCILE`, y `anomaly-check` termina sin anomalias. F13 (24h), F15 (30d) y F19 siguen siendo
+ventanas de observacion, no tareas de despliegue.
 
 **OBSERVABILIDAD FORWARD-TEST (2026-07-06)** — suite read-only que NO toca la estrategia (plan
 `docs/forward-test/research-lab-plan.md`, fases 1-3). Reglas del test congeladas en
 `docs/forward-test/contract.md` (inicio 2026-07-04, taxonomia fallo-estrategia vs fallo-infra).
-Comandos: `paper-status` (control center v6/demo), `anomaly-check` (red-flags + Telegram
+Comandos: `paper-status` (control center v6/demo/prop), `anomaly-check` (red-flags + Telegram
 dedup), `forward-report` (solo datos post-inicio, filtro duro), `data-audit` (integridad OHLCV,
 nunca re-descarga). Capa pura: `tools/{paper_snapshot,anomaly_check,forward_report,data_audit}.py`
 + `cli/paper_cmds.py`. **Hallazgo de `data-audit`:** cache canonico tiene 474 filas duplicadas
 benignas (identico OHLCV) en el empalme 2017 → 102457 distintas de 102931; NO deduplicar en
-forward-test (mutacion de cache prohibida, ver CLAUDE.md). Pendiente: correr la suite EN la VM
-(datos paper reales viven alli, no en dev).
+forward-test (mutacion de cache prohibida, ver CLAUDE.md). La suite completa pasa en dev
+(257 tests); en la VM se verifican los artefactos y heartbeats, porque sus datos runtime no se
+versionan.
 
 **SEMANA 1 DEL FORWARD-TEST (revision 2026-07-11)** — v5/legacy y v6 sanos (ambos target 0.20,
 señales identicas `regime_bear,halving_bear_onset`, paridad OK). Dos bugs de INFRA (contrato 6b,
@@ -70,19 +74,18 @@ Ademas: `/audit` en Telegram (mismo motor que `anomaly-check`), `main.py explain
 `EXPERIMENTS.md` (T11.1) — todo en `7107631` (SIN PUSH). Suite observabilidad corrida EN la VM
 por primera vez: limpia (los 474 dups del cache = hallazgo conocido, no accion).
 
-**CLIENTE OKX DEMO TRADING (2026-07-11) — construido, SIN COMMIT, pendiente deploy.** Objetivo:
+**CLIENTE OKX DEMO TRADING (desplegado 2026-07-13; verificado 2026-07-14).** Objetivo:
 ejercitar por PRIMERA vez el camino de ordenes autenticado real de OKX antes del live de
 septiembre 2026. `core/okx_demo_client.py` (hibrido: market data REAL flag=0 → paridad F15
 intacta; ordenes/balance DEMO flag=1 con credenciales `OKX_DEMO_*`), `tools/okx_demo_setup.py`
 (registro original con flags v6 desactivados; `main` actual fija v6-2 + `execution=okx_demo`),
 routing en `cli/live_cmds.py` (fallo de credenciales = skip solo ese bot). Espejo de balances en
 `paper_state_okx_demo.json` → Telegram `/status demo` etc. funcionan sin cambios. 12 tests nuevos
-(210/210). MEDIDO 2026-07-11: el feed de precios demo tiene high/low inflados $80-250/vela 1H →
+(257 tests totales). MEDIDO 2026-07-11: el feed de precios demo tiene high/low inflados $80-250/vela 1H →
 NUNCA usar flag=1 para market data (confirma la regla de CLAUDE.md con datos).
-**HALLAZGO P1 (arreglar ANTES de live):** `OKXClient._live_place_order` no fija `tgtCcy` — en
-OKX spot un market BUY interpreta `sz` como QUOTE (USDT), no BASE (BTC): compraria ~64000x menos
-de lo pedido. El cliente demo ya lo fija (`tgtCcy=base_ccy`); el fix en OKXClient necesita su
-propio commit+test. La API key demo se crea DENTRO del modo demo trading de OKX (la real NO vale).
+El hallazgo P1 de `tgtCcy` quedó corregido el 2026-07-13 en `OKXClient` y cubierto por
+`tests/test_exchange.py`; la API key demo se crea DENTRO del modo demo trading de OKX (la real
+NO vale).
 
 **PRUEBAS DEMO EN DEV (2026-07-13) — cuenta EEA/MiCA, hallazgos CRITICOS:**
 - La cuenta de Matias es de la entidad europea: API en `https://my.okx.com` (keys EEA dan 60032
@@ -102,7 +105,8 @@ propio commit+test. La API key demo se crea DENTRO del modo demo trading de OKX 
   conversion a EUR solo al retirar). `OKXDemoClient(exec_quote="USDC")`: ordenes/consultas *-USDT
   → *-USDC, balance USDC presentado como USDT; la estrategia y /status siguen en espacio USDT.
   Config del bot: `execution_quote: "USDC"` en okx_demo_setup.py, enrutado en live_cmds.py.
-  Verificado E2E contra la API demo real: BUY "BTC-USDT" → fill real en BTC-USDC. Tests 219/219.
+  Verificado E2E contra la API demo real: BUY "BTC-USDT" → fill real en BTC-USDC (219-test
+  historical checkpoint; current suite 257/257).
 - **DESPLEGADO EN VM 2026-07-13 ~14:36 UTC.** Primer tick: INIT BUY 0.096 BTC filled; el SELL
   a target 0.20 lo cancelo el motor (book demo USDC con bids bajo la banda 51138) → **bridge EUR
   implementado** (`execution_bridge: "EUR"`): market cancelada por el motor se reintenta en 2
@@ -112,8 +116,8 @@ propio commit+test. La API key demo se crea DENTRO del modo demo trading de OKX 
   reiniciarlo tras cada pull o /bots y las etiquetas de alertas quedan con codigo viejo (visto:
   alertas del demo salian como "[legacy]" y /status demo no existia). Precios del motor demo
   divergen ~5% del feed real (fills ~59.4k vs real 62.5k): el equity del espejo mezcla fills
-  demo con valoracion real — distorsion conocida, no es PnL. Registro huerfano `swing_allocator_v6`
-  [pausado] compartiendo paper_state.json con legacy: limpieza pendiente.
+  demo con valoracion real — distorsion conocida, no es PnL. La limpieza de legacy/v5 se aplicó
+  con `paper_fleet_setup.py`; solo quedan los tres bots operables y sus carteras aisladas.
 
 **Pro Trend v13 — PAUSADO INDEFINIDAMENTE** (decision sesion 14). Codigo congelado y reversible,
 fuera del roadmap activo. Framework de validacion estaba completo. Detalle en archive.
@@ -172,20 +176,20 @@ un backtest puntual.
 
 ## SIGUIENTE PASO (sesion 2026-07-14+)
 
-**Inmediato:**
-1. En VM: `git pull --ff-only origin main`, ejecutar `.venv/bin/python
-   tools/paper_fleet_setup.py` y reiniciar `matibot` + `matibot-telegram`.
-2. Confirmar `main.py bot list`: solo v6 simulado, demo y prop registrados/activos;
-   legacy/v5 ausentes. `/status` debe mostrar solo v6/demo, sin filas internas duplicadas.
-3. Verificar que demo sigue ~20% BTC y que un fill incompleto deja log `sin cooldown` y reintenta
-   en el siguiente bloque 4H.
+El despliegue, la limpieza de fleet, la persistencia inicial de Prop y la reconciliacion Demo ya
+están completados. El siguiente trabajo es observacion, no otra migracion:
+1. Dejar correr los tres bots y revisar `main.py status`, Telegram `/audit` y el heartbeat diario.
+2. Cerrar F13 (24h), F15 (30d) y F19 con sus ventanas completas; una semana sin trades no es
+   una alerta por si misma para un allocator de 2–3 rebalanceos mensuales.
+3. Resolver la frescura del cache de funding antes de `accumulation` (~2026-10-07); si sigue
+   stale, v6 degrada silenciosamente a v5 y PropSwing modela funding=0.
 
 **Marco general:** optimizacion de backtest del Swing = CERRADA. Hito = validacion forward:
 cerrar F13 (smoke 24h), F15 (paridad 30d — racha reiniciada ~2026-07-11 por el incidente cron)
 y F19 (degradacion). Bot demo = ensayo del camino de ordenes real pre-live; sus fills a precio
 demo NO se comparan con los paper (distorsion ~5% conocida del motor demo). Live real planeado
-para SEPTIEMBRE 2026 (`start` live requiere confirmacion explicita; pendiente decidir alli
-par de ejecucion USDC y dominio my.okx.com en OKXClient, mismo patron que el demo). El paper
+para SEPTIEMBRE 2026 (`start` live requiere confirmacion explicita; el mapeo USDC y el dominio
+`my.okx.com` ya estan implementados en el cliente demo, pero live sigue sin autorizacion). El paper
 v5-vs-v6 empieza a dar señal desde ~2026-10-07.
 
 ---

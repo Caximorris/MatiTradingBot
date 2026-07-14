@@ -66,7 +66,7 @@ system against the two ways quant backtests deceive you:
   candle-for-candle across runs and machines.
 
 Money is `Decimal` everywhere (never `float`). Dates are UTC in storage, converted to Europe/Madrid
-only in reporting. 233 passing tests.
+only in reporting. **257 passing tests** (2026-07-14).
 
 ---
 
@@ -200,6 +200,11 @@ New simulated portfolios persist their initial $10,000 wallet immediately, so Pr
 before its first trade. If Demo was corrected outside the strategy, `reconcile-demo-journal`
 appends a distinct `RECONCILE` audit event; it never places an order or rewrites prior history.
 
+Current deployment check (2026-07-14): all three bots have recent heartbeats; the Prop wallet is
+persisted at its $10,000 initial balance; Demo's out-of-band allocation correction is recorded as
+`RECONCILE` (58.0% → 19.2% BTC); and `main.py anomaly-check` reports no anomalies. The next gate is
+forward observation (F13/F15/F19), not another setup migration.
+
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
 **demo-trading** API key — fake funds only, created inside OKX's demo mode. The `demo` bot runs
 frozen v6-2 while placing orders on OKX's demo engine,
@@ -243,7 +248,7 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 
 Python 3.12 · typer + rich (CLI) · pandas + pandas-ta · python-okx · aiohttp / urllib
 (*deliberately not* `requests`) · SQLAlchemy + SQLite · python-telegram-bot · APScheduler ·
-`Decimal` for all money · 247 passing tests.
+`Decimal` for all money · 257 passing tests.
 
 > **The honest summary:** someone spent months building rigorous machinery to answer *"does this BTC
 > allocation strategy actually work, or am I fooling myself?"* — got to "+85% CAGR that survives the

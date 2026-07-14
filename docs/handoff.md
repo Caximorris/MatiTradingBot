@@ -1,22 +1,25 @@
-# Handoff 2026-07-13 — MatiTradingBot
+# Handoff 2026-07-14 — MatiTradingBot
 
 Este archivo es el punto de arranque para continuar mañana desde otro PC.
 
 > **ESTADO ACTUAL:** trabajar sobre `main`. Swing v6-2 es el default congelado; v5 queda como
-> control/rollback. El cliente OKX Demo esta desplegado; el repo lo configura con v6-2, pendiente
-> confirmar `git pull` + restart en la VM. El estado operativo y los siguientes pasos viven en
+> control/rollback historico. El cliente OKX Demo, Prop/CFT y el fleet de tres bots estan
+> desplegados y verificados en la VM; el estado operativo y los siguientes pasos viven en
 > `SESSION.md`. Commit de sincronizacion inicial:
-> `0d24671`; este handoff se mantiene actualizado para continuar desde otro PC.
+> `7d61ca5`; este handoff se mantiene actualizado para continuar desde otro PC.
 
 ## 1. Estado rapido
 
 - Rama de trabajo: `main`.
 - Default de estrategia: **Swing Allocator v6-2**, congelado.
-- Paper Swing v6/v5/legacy: desplegado en VM GCP `matitrbot`, con Telegram y checks diarios.
+- Paper fleet: v6 simulado + v6 OKX Demo + Prop Firm simulado, activos en VM GCP `matitrbot`, con
+  Telegram y checks diarios; legacy/v5 se retiraron del registro, conservando rollback e historial.
 - Prop/CFT: paper operativo preparado, no comprado challenge, no live.
 - Swing v5: control paper y rollback exacto (`use_phase_policy_router=false`,
   `use_funding_overlay=false`).
-- Tests al cierre: `233 passed`.
+- Tests al cierre: `257 passed`.
+- Verificacion VM 2026-07-14: tres heartbeats recientes, wallet Prop persistida en 10,000 USDT,
+  Demo reconciliado 58.0% → 19.2% BTC y `anomaly-check` sin anomalias.
 
 ## 2. Archivos que debes leer primero
 
@@ -40,7 +43,7 @@ Para historial de versiones:
 
 No optimizar de nuevo por ahora. La fase actual es forward/paper:
 
-- F13: smoke 24h de VM.
+- F13: smoke 24h de VM (ventana aun en observacion).
 - F15: 30 dias de paridad live/backtest.
 - F19: degradacion/frecuencia de rebalanceos.
 
@@ -116,7 +119,7 @@ No comprar challenge sin:
 - `strategies/swing_funding_overlay.py`: overlay de funding cerrado/deduplicado.
 - `tools/swing_paper_setup.py`: registra Swing v6 paper aislado (`paper_portfolio_id=swing_v6`).
 - Enfoque actual: paper OOS del default V6-2 (`accumulation`, p10/p90, `+0.05`, ttl 7d)
-  en cartera simulada y cuenta OKX Demo. El registro v5 se retira, preservando su rollback.
+  en cartera simulada y cuenta OKX Demo. El registro v5 se retiró, preservando su rollback.
 
 ### Prop research
 
@@ -204,19 +207,20 @@ python tools/prop_cft_status.py
 python main.py status
 ```
 
-Ultima validacion local:
+Ultima validacion local (2026-07-14):
 
 ```text
-233 passed
+257 passed
 ```
 
 ## 8. Siguiente paso recomendado
 
-1. Hacer `git pull origin main` en el otro PC.
-2. Verificar que la VM sigue viva con Telegram `/status` y `/health`.
-3. Si se quiere continuar Prop/CFT: activar paper, no comprar challenge.
-4. Resolver la frescura del cache funding en la VM antes de `accumulation` (~2026-10-07).
-5. Mantener v5 como control; no promover un sucesor de v6 sin evidencia forward diferenciada.
+1. Mantener los tres bots corriendo y revisar `/status`, `/audit` y el heartbeat diario.
+2. Cerrar F13 (24h), F15 (30d) y F19; no interpretar la ausencia de trades como fallo del
+   allocator.
+3. Resolver la frescura del cache funding antes de `accumulation` (~2026-10-07).
+4. Mantener v5 como rollback documentado; no promover un sucesor de v6 sin evidencia forward
+   diferenciada ni comprar un challenge Prop.
 
 ## 9. Riesgos pendientes
 

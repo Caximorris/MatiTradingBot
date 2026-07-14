@@ -5,6 +5,141 @@ Leer este archivo Y `SESSION.md` antes de tocar cualquier archivo.
 
 ---
 
+## Available model tiers
+
+Last verified: 2026-07-14. Use the selector values for the tool currently running:
+
+- Current lightweight model — Codex: `GPT-5.6 Luna` (`gpt-5.6-luna`); Claude Code: `haiku`
+- Standard development model — Codex: `GPT-5.6 Terra` (`gpt-5.6-terra`); Claude Code: `sonnet`
+- Strongest reasoning model — Codex: `GPT-5.6 Sol` (`gpt-5.6-sol`); Claude Code: `fable`
+- Claude Code high-capability model: `opus` (use when `fable` is unavailable)
+
+In Claude Code, these aliases select the latest available model in each family: Haiku,
+Sonnet, Opus, and Fable. In Codex, use the exact display names above. Luna is for
+low-risk, repetitive work; Terra is the default for normal development; Sol is for
+complex reasoning and high-risk work. If a selector no longer offers one of these
+values, inspect the current selector and update this section before relying on it.
+
+## Model escalation protocol
+
+Before making any changes, evaluate whether the current model is appropriate for the
+requested task.
+
+The current model should only execute tasks that are low-risk, well-scoped, mechanical,
+and straightforward.
+
+### Continue with the current model when
+
+- The change is localized and its cause is already known.
+- The task affects only a small number of files.
+- The implementation follows an existing project pattern.
+- The task consists mainly of:
+  - text or styling changes;
+  - simple component changes;
+  - repetitive CRUD work;
+  - basic tests;
+  - documentation;
+  - renaming;
+  - formatting;
+  - simple bug fixes with a clearly identified cause.
+
+### Stop and recommend the standard model when
+
+- The task requires inspecting several related files.
+- It introduces a normal production feature.
+- It requires non-trivial frontend and backend changes.
+- It involves a limited refactor.
+- The cause of the bug is not immediately known.
+- It requires understanding existing business logic.
+- Multiple reasonable implementation approaches exist.
+
+### Stop and recommend the strongest model when
+
+- The task involves architecture or system design.
+- It affects authentication, authorization, permissions, secrets, or security.
+- It includes database schema changes or migrations.
+- It involves concurrency, transactions, caching, queues, or distributed state.
+- It changes infrastructure, deployment, CI/CD, networking, or production configuration.
+- It is a broad audit or repository-wide refactor.
+- It involves data-loss risk or difficult rollback.
+- Requirements are ambiguous or conflicting.
+- A wrong implementation could create serious technical debt.
+- The root cause remains unclear after initial inspection.
+
+### Mandatory behavior when escalation is needed
+
+When the current model is not appropriate:
+
+1. Do not modify files.
+2. Do not run destructive commands.
+3. You may perform only the minimum read-only inspection needed to classify the task.
+4. Stop immediately after classification.
+5. State exactly which model should be selected, using the real selector value for the
+   current tool (`GPT-5.6 Terra`/`GPT-5.6 Sol` in Codex or `sonnet`/`opus`/`fable` in
+   Claude Code).
+6. Produce a complete replacement prompt that I can paste into a new thread.
+7. Include all relevant context discovered during the read-only inspection.
+8. Do not merely suggest using another model and then continue the task.
+
+Use this exact response structure:
+
+MODEL ESCALATION REQUIRED
+
+Recommended model: <exact model name>
+
+Reason:
+<brief explanation of the complexity, risk, or ambiguity>
+
+Replacement prompt:
+
+```text
+<self-contained prompt ready to paste into a new thread>
+```
+
+The replacement prompt must include:
+
+- The exact objective.
+- Relevant repository and architecture context.
+- Files or directories likely involved.
+- Constraints from this AGENTS.md.
+- What has already been inspected.
+- Required implementation steps.
+- Validation commands and acceptance criteria.
+- Risks and edge cases.
+- An instruction to inspect before editing.
+- An instruction not to commit, push, deploy, or modify production resources unless
+  explicitly requested.
+
+### Escalation must be conservative
+
+Do not escalate merely because a task is long.
+
+Escalate based on reasoning difficulty, ambiguity, blast radius, reversibility, security
+impact, and the likelihood that a weaker model will make incorrect architectural
+assumptions.
+
+If uncertain between the current model and the standard model, choose the standard model.
+
+If uncertain between the standard model and the strongest model, choose the strongest model.
+
+## Do not split cohesive implementation work unnecessarily
+
+If the current task is already in progress and changing models would lose important
+context, stop and generate a handoff prompt containing:
+
+- The original request.
+- Current findings.
+- Files inspected.
+- Files modified.
+- Commands executed.
+- Test results.
+- Unresolved questions.
+- The exact next step.
+
+Never assume the next thread can see this thread's conversation history.
+
+
+
 ## STACK Y ESTRUCTURA
 
 **No usar `requests`** — usar `urllib.request` (HTTP sincrono) o `aiohttp` (async).
