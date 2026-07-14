@@ -56,6 +56,17 @@ class SwingAllocatorConfig:
     funding_overlay_ttl_days: int = 7
     funding_overlay_dedup_days: int = 7
 
+    # EXP-014/015 (EXPERIMENTS.md): overlay de riesgo por spike de reserva de exchange
+    # on-chain (CoinMetrics SplyExNtv). NO es direccional (esa mitad se rechazo en el
+    # screen) — solo reduce el target cuando un spike (percentil alto del ROC) precede
+    # historicamente volatilidad realizada elevada. Default False: v6-2 no cambia.
+    use_flow_vol_overlay: bool = False
+    flow_vol_delta:        float = -0.15
+    flow_vol_roc_window:   int   = 60
+    flow_vol_pctile:       float = 0.90
+    flow_vol_ttl_days:     int   = 14
+    flow_vol_dedup_days:   int   = 14
+
     # v2: en bear_onset suprime SOLO regime_bull; regime_bear se mantiene. False vuelve a v1.
     regime_off_on_bear_onset: bool = True
 
@@ -412,6 +423,19 @@ class SwingAllocatorBot:
                 # Warning, no debug: si el overlay esta activo y falla, v6 degrada a v5
                 # en silencio. En vivo esto debe verse (ej. cache de funding ausente/corrupto).
                 logger.warning("[{}] Funding overlay skipped: {}", self.name, exc)
+
+        # --- EXP-014/015: overlay de riesgo por spike de reserva on-chain ---
+        if cfg.use_flow_vol_overlay:
+            try:
+                from strategies.onchain_flow import flow_vol_adjustment_at
+                adj, reason = flow_vol_adjustment_at(
+                    self._client.current_time(), cfg.symbol, cfg.flow_vol_delta
+                )
+                if reason:
+                    target += adj
+                    active.append(reason)
+            except Exception as exc:
+                logger.warning("[{}] Flow vol overlay skipped: {}", self.name, exc)
 
         # --- DXY direction (experimental) ---
         if cfg.use_dxy and market:

@@ -57,11 +57,13 @@ def _run_backtest(
     from strategies.macro_context  import load_macro_context
     from strategies.market_context import load_market_context
     from strategies.funding_context import load_funding_history
+    from strategies.onchain_flow import load_flow_context
 
     # Carga unica de datos macro, mercado y funding antes de la simulacion
     load_macro_context(from_dt, to_dt, symbol)
     load_market_context(from_dt, to_dt)
     load_funding_history(symbol, from_dt, to_dt)
+    load_flow_context(from_dt, to_dt, symbol)   # EXP-014/015 — no-op si falla la red
 
     from strategies.registry import get as _get_strategy
     meta        = _get_strategy(strat_type)

@@ -370,11 +370,53 @@ paper:**
    compense. El backtest no puede ver ese riesgo. Cualquier paso a paper/live necesitaria
    modelar esto primero, no solo pasar el gate de CAGR/DD.
 
-**Siguiente paso, si se quiere seguir:** revisar la distribucion completa (no solo el
-resumen trimestral — esa tabla del motor SOLO ve la pata spot via ACB pairing, sigue
-sin reflejar el hedge; ver caveat de reporting arriba) para separar cuanto del resultado
-viene de 2021 vs el resto, antes de decidir si esto es un candidato real o un artefacto
-de un unico evento historico.
+### Analisis de concentracion y riesgo de margen (2026-07-14, completado)
+
+**Concentracion — MEJOR de lo que parecia.** No es un solo trimestre con suerte: son
+DOS holds largos los que explican casi todo el resultado, no uno:
+1. 2020-10-22 -> 2021-06-18 (~8 meses)
+2. 2022-11-10 -> 2026-01-01 (~3.1 anos, **sigue abierto** al final del backtest — el
+   gate nunca se volvio a cerrar; por eso el "Resumen trimestral" del motor solo
+   mostraba 9 cierres hasta 2022-11-10 y no cuadraba con el balance final $47,151:
+   el 10o hold nunca se "cierra" en el journal, pero su P&L SI esta en el balance real).
+
+**Riesgo de margen/liquidacion — PROBLEMA SERIO, no un matiz.** Se midio el peor
+movimiento de precio EN CONTRA de la pata corta durante cada hold (maximo alcanzado
+menos precio de entrada):
+
+| Hold | Entrada | Maximo alcanzado | Peor movimiento vs. la pata corta |
+|---|---:|---:|---:|
+| 2020-10-22 -> 2021-06-18 | ~$12,769 | $64,847 (14/04/2021) | **+407.8%** |
+| 2022-11-10 -> 2026-01-01 | ~$15,921 | $126,200 (06/10/2025) | **+692.7%** |
+| (resto de holds, 1-4 meses) | | | +1.7% a +51.4% |
+
+Los DOS holds que generan casi TODO el retorno son EXACTAMENTE los que habrian sufrido
+movimientos de +400-700% en contra de la pata corta. En una cuenta de margen AISLADO
+(isolated margin) por posicion — la configuracion default en la mayoria de exchanges —
+esto es liquidacion garantizada del short mucho antes de completar el hold, sin importar
+que la pata spot estuviera ganando lo mismo al mismo tiempo (el motor de riesgo del
+exchange no neta automaticamente ambas patas si viven en cuentas/margenes separados).
+La UNICA forma de que esta estrategia sobreviva en real es con **margen de cartera/cruzado
+(portfolio margin)**, donde el exchange neta el spot largo contra el perp corto como una
+sola posicion de riesgo — soportado por OKX/Binance/Bybit pero normalmente requiere
+elegibilidad de cuenta y no es la config por defecto. El backtest (via `adjust_balance`
+ilimitado) es estructuralmente CIEGO a este riesgo — no es que lo subestime, es que no
+puede verlo en absoluto.
+
+**Decision: sigue sin ser candidato a paper/live** — no por el resultado (el resultado es
+real y explicable, no un artefacto), sino porque:
+1. Requiere confirmar POR ESCRITO que la cuenta OKX destino soporta portfolio margin y que
+   neta spot+perp correctamente — sin esa confirmacion, no hay caso.
+2. Incluso con portfolio margin, quedan riesgos que ningun backtest puede cuantificar:
+   comportamiento del motor de margen en volatilidad extrema, riesgo de contraparte/exchange,
+   timing de liquidacion de funding.
+3. Las mismas ventanas que generan el edge (regimenes alcistas sostenidos) son las que
+   estresarian mas la pata corta — el edge y el riesgo de liquidacion NO son independientes,
+   estan correlacionados por diseño.
+
+Cerrado por ahora. Reabrir solo si: (a) se confirma portfolio margin en la cuenta real, y
+(b) se decide empezar con notional muy pequeno y monitoreo activo, no con el `notional_pct=0.90`
+de este backtest.
 
 ## Orden de ejecucion propuesto (estos dias)
 
