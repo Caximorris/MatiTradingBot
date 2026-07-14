@@ -113,6 +113,26 @@ def build_equity_series(rebalances: list[dict],
     return {"ts": ts_out, "bot": bot_out, "bnh": bnh_out, "events": events}
 
 
+def equity_summary(rebalances: list[dict], series: dict) -> dict[str, float] | None:
+    """Final values and INIT-anchored returns, matching Telegram /status semantics."""
+    if not rebalances or not series.get("bot") or not series.get("bnh"):
+        return None
+    init_port = float(rebalances[0].get("portfolio_usdt", 0))
+    if init_port <= 0:
+        return None
+    bot_final = float(series["bot"][-1])
+    bnh_final = float(series["bnh"][-1])
+    bot_growth = bot_final / init_port
+    bnh_growth = bnh_final / init_port
+    return {
+        "bot_final": bot_final,
+        "bnh_final": bnh_final,
+        "bot_return_pct": (bot_growth - 1) * 100,
+        "bnh_return_pct": (bnh_growth - 1) * 100,
+        "bot_bnh_ratio": bot_growth / bnh_growth if bnh_growth else 0.0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Render (matplotlib lazy — solo al pedir un grafico)
 # ---------------------------------------------------------------------------
@@ -172,8 +192,9 @@ def _event_markers(ax, events: list[tuple[int, float, str]], y_lookup):
                 markeredgecolor=_SURFACE, markeredgewidth=1.5, zorder=5)
 
 
-def render_equity_png(series: dict, days: int) -> bytes:
-    fig, ax = _fig_ax(f"Swing v5 paper — equity vs B&H BTC ({days}d)")
+def render_equity_png(series: dict, days: int, label: str = "") -> bytes:
+    tag = f" {label}" if label else ""
+    fig, ax = _fig_ax(f"Swing{tag} paper — equity vs B&H BTC ({days}d)")
     dates = _dates(series["ts"])
     ax.plot(dates, series["bot"], color=_BOT, linewidth=2, label="Bot", zorder=3)
     ax.plot(dates, series["bnh"], color=_BNH, linewidth=2, label="B&H BTC", zorder=2)

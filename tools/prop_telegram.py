@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tools.status_snapshot import format_iso_madrid
+
 ROOT = Path(__file__).resolve().parents[1]
 PROP_JOURNAL = ROOT / "data" / "runtime" / "prop_live_journal.jsonl"
 
@@ -49,7 +51,7 @@ def format_prop_status(rows, max_age_min: int = 10) -> str:
         lines.append("")
         lines.append("<b>Ultimos eventos</b>")
         for e in events:
-            bits = [e.get("ts", "?")[5:16], e.get("kind", "?")]
+            bits = [format_iso_madrid(e.get("ts")), e.get("kind", "?")]
             if e.get("decision"):
                 bits.append(e["decision"])
             if e.get("reason"):
@@ -69,7 +71,7 @@ def format_prop_report(n: int = 20) -> str:
     body = []
     for e in events:
         body.append(_esc(
-            f"{e.get('ts', '?')[5:16]} {e.get('kind', '?'):6} "
+            f"{format_iso_madrid(e.get('ts'))} {e.get('kind', '?'):6} "
             f"{e.get('decision', '') or e.get('side', ''):8} "
             f"{e.get('reason', '')} {e.get('rule_state', '')} "
             f"{e.get('pnl', '')}"

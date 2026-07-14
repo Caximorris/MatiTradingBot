@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 RUNTIME_DIR = Path("data") / "runtime"
@@ -245,11 +246,18 @@ def format_status(status: dict[str, Any]) -> str:
     total = float(status.get("total_cushion_pct", 0.0)) * 100
     target = status.get("profit_target_pct")
     target_s = "funded" if target is None else f"{float(target) * 100:.1f}%"
+    try:
+        updated = datetime.fromisoformat(str(status.get("updated_at", "?")))
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        updated_label = updated.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d/%m %H:%M %Z")
+    except (TypeError, ValueError):
+        updated_label = str(status.get("updated_at", "?"))
     return (
         f"CFT {status.get('phase', '?').upper()} {status.get('rule_state', '?')}\n"
         f"Equity: ${float(status.get('account_equity', 0.0)):,.0f} "
         f"({pnl:+.2f}%) / target {target_s}\n"
         f"Cushion daily {daily:.2f}pp | total {total:.2f}pp\n"
         f"Trading days: {status.get('trading_days', 0)}/{status.get('min_trading_days', 0)}\n"
-        f"Updated: {status.get('updated_at', '?')}"
+        f"Updated: {updated_label}"
     )

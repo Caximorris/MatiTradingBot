@@ -146,8 +146,24 @@ def check_anomalies(snaps: list[dict], *, price: Decimal | None,
                 bot=label,
             ))
 
-        # Recolecta para el chequeo de divergencia v5/v6
+        # El journal debe explicar la cartera actual salvo drift de precio menor. Detecta
+        # ajustes manuales/out-of-band que vuelven engañosos /report y /equity.
         last = s.get("last_rebalance") or {}
+        journal_pct = last.get("btc_pct_after")
+        if s.get("execution") == "okx_demo" and pct is not None and journal_pct is not None:
+            gap_pp = abs(float(pct) - float(journal_pct) * 100)
+            if gap_pp > 15.0:
+                alerts.append(Alert(
+                    "HIGH", "journal-allocation-gap",
+                    f"Bot '{label}' tiene {float(pct):.1f}% BTC pero el ultimo evento "
+                    f"del journal termina en {float(journal_pct) * 100:.1f}% "
+                    f"(gap {gap_pp:.1f}pp).",
+                    "Registrar/reconciliar el ajuste fuera del journal antes de usar reports "
+                    "o graficos de rendimiento.",
+                    bot=label,
+                ))
+
+        # Recolecta para el chequeo de divergencia v5/v6
         v_last_target[label] = last.get("btc_pct_after")
         v_n_reb[label] = s.get("n_rebalances", 0)
 

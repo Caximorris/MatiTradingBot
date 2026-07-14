@@ -115,6 +115,17 @@ evitar pulsaciones accidentales y siguen disponibles en el menu de comandos de T
 | Parada total (kill switch) | SSH: `python main.py stop` (deshabilita bots; re-enable para retomar) |
 | Apagar/encender el servicio | SSH: `sudo systemctl stop|start matibot` |
 
+`python main.py status` no usa ya el `paper_state.json` legacy como balance global: muestra una
+fila por cartera operable, separa señal de ejecucion, convierte el ultimo tick a Europe/Madrid y
+etiqueta Demo como `BTC-USDC`/USDC. Las filas internas de persistencia quedan ocultas.
+
+En Telegram, Demo muestra `valoracion hibrida` en vez de bot/B&H: los fills del motor Demo divergen
+del spot real usado para valorar, asi que ese salto no es PnL. `/equity demo` queda bloqueado si la
+serie no es comparable. `/audit` alerta `journal-allocation-gap` cuando la cartera actual difiere
+mas de 15pp del ultimo evento, por ejemplo tras una correccion manual fuera del journal. Las horas
+de datos, rebalanceos, checks y proximas evaluaciones se muestran en Europe/Madrid; la programacion
+interna y la DB permanecen en UTC.
+
 ## Prop/CFT paper en la misma VM
 
 El PropSwing CFT queda separado del Swing:

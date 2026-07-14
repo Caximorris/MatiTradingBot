@@ -46,6 +46,17 @@ def test_impossible_allocation_is_critical():
     assert any(a.code == "impossible-allocation" for a in alerts)
 
 
+def test_large_journal_vs_wallet_allocation_gap_is_high():
+    alerts = ac.check_anomalies([
+        _snap(label="demo", execution="okx_demo", btc_pct=19.2,
+              last_rebalance={"btc_pct_after": 0.58}),
+    ], price=Decimal("40000"), now=NOW)
+
+    alert = next(a for a in alerts if a.code == "journal-allocation-gap")
+    assert alert.severity == "HIGH"
+    assert "38.8pp" in alert.message
+
+
 def test_v6_early_divergence_flagged_before_date():
     v5 = _snap(label="v5", n_rebalances=1, last_rebalance={"btc_pct_after": 0.6})
     v6 = _snap(label="v6", n_rebalances=2, last_rebalance={"btc_pct_after": 0.8})

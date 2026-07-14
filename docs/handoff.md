@@ -106,6 +106,8 @@ No comprar challenge sin:
 - `deploy/daily_checks.sh`: incluye estado Prop/CFT en check diario.
 - `tools/telegram_remote.py`: comandos `/prop`, `/prop_report`, `/prop_pause`, `/prop_resume`.
 - `tools/tg_menu.py`: panel persistente de botones, con atajos sin argumentos para v6/demo/Prop.
+- `tools/status_snapshot.py`: vista pura multi-cartera para `main.py status`; separa señal,
+  ejecucion y quote visible, filtra filas internas y convierte ticks a Europe/Madrid.
 
 ### Swing v6 default: simulado + OKX Demo
 

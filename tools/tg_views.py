@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from tools.paper_bots import bot_label
+from tools.status_snapshot import MADRID, format_iso_madrid
 
 LIVENESS_MAX_AGE_MIN = 10   # last_run mas viejo que esto con bot activo = proceso caido
 PARITY_TARGET_DAYS = 30     # criterio de cierre F15
@@ -78,16 +79,22 @@ def format_status_summary(snaps: list[dict], price: Decimal | None, now: datetim
         total, ratio = _perf_ratio(s["balances"], s["rebalances"], price)
         btc = s["balances"].get("BTC", Decimal("0"))
         usdt = s["balances"].get("USDT", Decimal("0"))
+        is_demo = s.get("execution") == "okx_demo"
+        quote = s.get("execution_quote") or "USDT"
         parts = [f"{icon} <b>{_esc(s['label'])}</b>"]
         if total is not None and price is not None:
             pct = (btc * price / total * 100) if total > 0 else Decimal("0")
             parts.append(f"${total:,.0f} ({pct:.0f}% BTC)")
-            if ratio is not None:
+            if is_demo:
+                parts.append("valoracion hibrida")
+            elif ratio is not None:
                 parts.append(f"bot/B&amp;H {ratio:.3f}")
         else:
-            parts.append(f"{btc:.4f} BTC + {usdt:,.0f} USDT")
+            parts.append(f"{btc:.4f} BTC + {usdt:,.0f} {_esc(quote)}")
         parts.append(f"{len(s['rebalances'])} reb")
         lines.append(" · ".join(parts))
+    if any(s.get("execution") == "okx_demo" for s in snaps):
+        lines.append("<i>Demo: USDC real; valoracion con spot real, no usar como PnL.</i>")
     lines.append("")
     lines.append("Detalle: /status &lt;bot&gt; · /report &lt;bot&gt; · /equity &lt;bot&gt;")
     return "\n".join(lines)
@@ -95,7 +102,9 @@ def format_status_summary(snaps: list[dict], price: Decimal | None, now: datetim
 
 def format_status(rows, balances: dict, price: Decimal | None,
                   rebalances: list[dict], now: datetime,
-                  title: str = "SWING ALLOCATOR — PAPER") -> str:
+                  title: str = "SWING ALLOCATOR — PAPER",
+                  quote_currency: str = "USDT",
+                  performance_comparable: bool = True) -> str:
     lines = [f"\U0001F4CA <b>{_esc(title)}</b>", ""]
     if not rows:
         lines.append("Sin bots swing configurados (usa: python main.py bot enable ...)")
@@ -112,14 +121,20 @@ def format_status(rows, balances: dict, price: Decimal | None,
         total = btc * price + usdt
         pct = (btc * price / total * 100) if total > 0 else Decimal("0")
         lines.append(f"\U0001F4B0 <b>Portfolio: ${total:,.2f}</b> ({pct:.1f}% en BTC)")
-        lines.append(f"{btc:.6f} BTC (${btc * price:,.0f}) + {usdt:,.2f} USDT")
+        lines.append(
+            f"{btc:.6f} BTC (${btc * price:,.0f}) + "
+            f"{usdt:,.2f} {_esc(quote_currency)}"
+        )
         lines.append(f"BTC = ${price:,.0f}")
     else:
-        lines.append(f"\U0001F4B0 Balance: {btc:.6f} BTC + {usdt:.2f} USDT")
+        lines.append(
+            f"\U0001F4B0 Balance: {btc:.6f} BTC + "
+            f"{usdt:.2f} {_esc(quote_currency)}"
+        )
         lines.append("(precio BTC no disponible ahora mismo)")
 
     # Rendimiento desde el INIT: retorno del bot vs B&H BTC (la metrica ancla del Swing)
-    if rebalances and price is not None:
+    if rebalances and price is not None and performance_comparable:
         init = rebalances[0]
         init_port = Decimal(str(init.get("portfolio_usdt", 0)))
         init_price = Decimal(str(init.get("price", 0)))
@@ -132,6 +147,24 @@ def format_status(rows, balances: dict, price: Decimal | None,
             lines.append("")
             lines.append(f"\U0001F4C8 <b>Rendimiento</b> ({days} dias, {len(rebalances)} rebalanceos)")
             lines.append(f"Bot {bot_ret:+.2f}% | B&amp;H BTC {bnh_ret:+.2f}% | bot/B&amp;H {ratio:.3f}")
+    elif rebalances and not performance_comparable:
+        lines.append("")
+        lines.append("⚠️ <b>Rendimiento Demo no comparable</b>")
+        lines.append(
+            "Los fills Demo divergen del spot usado para valorar. El total es una "
+            "valoracion hibrida, no PnL real."
+        )
+
+    if rebalances and price is not None and total > 0:
+        actual_pct = float(btc * price / total)
+        journal_pct = float(rebalances[-1].get("btc_pct_after", actual_pct))
+        if abs(actual_pct - journal_pct) > 0.15:
+            lines.append("")
+            lines.append("⚠️ <b>Journal y cartera no coinciden</b>")
+            lines.append(
+                f"Ultimo evento: {journal_pct:.0%} BTC · cartera actual: {actual_pct:.0%}. "
+                "Hay un ajuste fuera del journal."
+            )
 
     if rebalances:
         rb = rebalances[-1]
@@ -139,7 +172,7 @@ def format_status(rows, balances: dict, price: Decimal | None,
         lines.append("")
         lines.append("\U0001F501 <b>Ultimo rebalanceo</b>")
         lines.append(
-            f"{icon} {rb.get('timestamp', '?')[:16]} {rb.get('direction', '?')} "
+            f"{icon} {format_iso_madrid(rb.get('timestamp'))} {rb.get('direction', '?')} "
             f"{rb.get('btc_pct_before', 0):.0%} → {rb.get('btc_pct_after', 0):.0%} "
             f"@ ${rb.get('price', 0):,.0f}"
         )
@@ -151,7 +184,11 @@ def format_status(rows, balances: dict, price: Decimal | None,
 
     nxt, mins = _next_4h_eval(now)
     lines.append("")
-    lines.append(f"⏱ Proxima evaluacion 4H: {nxt:%H:%M} UTC (en {mins // 60}h {mins % 60:02d}m)")
+    local_nxt = nxt.astimezone(MADRID)
+    lines.append(
+        f"⏱ Proxima evaluacion 4H: {local_nxt:%H:%M} Europe/Madrid "
+        f"(en {mins // 60}h {mins % 60:02d}m)"
+    )
     return "\n".join(lines)
 
 
@@ -165,7 +202,7 @@ def format_report(rebalances: list[dict], n: int = 10, label: str | None = None)
     for rb in rebalances[-n:]:
         icon = _DIR_ICON.get(rb.get("direction", ""), "\U0001F501")
         body.append(_esc(
-            f"{icon} {rb.get('timestamp', '?')[5:16]} {rb.get('direction', '?'):4} "
+            f"{icon} {format_iso_madrid(rb.get('timestamp'))} {rb.get('direction', '?'):4} "
             f"{rb.get('btc_pct_before', 0):.0%}→{rb.get('btc_pct_after', 0):.0%} "
             f"@ ${rb.get('price', 0):,.0f} | ${rb.get('portfolio_usdt', 0):,.0f} "
             f"| {','.join(rb.get('signals', []))}"
@@ -260,7 +297,7 @@ def format_parity(blocks: list[dict], now: datetime | None = None) -> str:
         icon, verdict = "\U0001F7E1", "sin resultado (revisar log)"
     lines = [
         "\U0001F50D <b>PARIDAD F15</b>",
-        f"{icon} Ultimo check {_esc(last['ts'])}: {verdict}",
+        f"{icon} Ultimo check {_esc(format_iso_madrid(last['ts']))}: {verdict}",
     ]
     # Bug real 2026-07-11: el cron perdio +x 5 dias y esto seguia mostrando "OK" en verde
     # porque antes solo miraba el ULTIMO resultado, nunca su antiguedad.
@@ -296,7 +333,9 @@ def format_heartbeat_multi(snaps: list[dict], price: Decimal | None,
         seg = f"{icon}{_esc(s['label'])}"
         if total is not None:
             seg += f" ${total:,.0f}"
-            if ratio is not None:
+            if s.get("execution") == "okx_demo":
+                seg += " (hibrido)"
+            elif ratio is not None:
                 seg += f" ({ratio:.3f})"
         segs.append(seg)
     return ("\U0001F493 " + " · ".join(segs)

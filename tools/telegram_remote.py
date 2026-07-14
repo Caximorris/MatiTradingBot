@@ -121,6 +121,8 @@ def discover_bots(session) -> list[dict]:
             "is_active": r.is_active,
             "last_run": r.last_run,
             "portfolio_id": cfg.get("paper_portfolio_id"),
+            "execution": cfg.get("execution"),
+            "execution_quote": cfg.get("execution_quote"),
         })
     return out
 
@@ -249,11 +251,12 @@ def cmd_signals() -> str:
         return f"⚠️ swing_parity_check fallo (rc={rc}):\n<pre>{_esc(out[-1000:])}</pre>"
     icon = "\U0001F7E2" if rc == 0 else "\U0001F534"
     signals = kv.get("live_signals", "").replace(";", ", ") or "ninguna"
+    from tools.status_snapshot import format_iso_madrid
     lines = [
         "\U0001F9ED <b>SENALES ACTUALES</b>",
         f"Target BTC: <b>{_esc(kv['live_target'])}</b>",
         f"Senales: {_esc(signals)}",
-        f"Dato: {_esc(kv.get('timestamp', '?')[:16])} UTC",
+        f"Dato: {_esc(format_iso_madrid(kv.get('timestamp')))}",
         f"{icon} Paridad live/backtest: {'OK' if rc == 0 else 'FAIL'}",
     ]
     price = fetch_price()
@@ -281,8 +284,18 @@ def cmd_audit(get_session) -> str:
 # Graficos y backup
 # ---------------------------------------------------------------------------
 
-def cmd_equity(days: int, rebalances: list[dict], label: str = "") -> str | None:
-    from tools.tg_charts import build_equity_series, fetch_candles, render_equity_png
+def cmd_equity(days: int, rebalances: list[dict], label: str = "",
+               comparable: bool = True) -> str | None:
+    from tools.tg_charts import (
+        build_equity_series,
+        equity_summary,
+        fetch_candles,
+        render_equity_png,
+    )
+    if not comparable:
+        return ("⚠️ Equity Demo no comparable: el journal no contiene el ajuste manual y "
+                "los fills Demo divergen del spot real. Usa el balance actual; no interpretes "
+                "el salto como PnL.")
     if not rebalances:
         return "Sin rebalanceos aun — no hay equity que dibujar."
     tg_send("⏳ Generando grafico de equity...")
@@ -290,14 +303,16 @@ def cmd_equity(days: int, rebalances: list[dict], label: str = "") -> str | None
     series = build_equity_series(rebalances, candles)
     if not series["ts"]:
         return "Datos insuficientes para el grafico (velas o INIT no cubiertos)."
-    png = render_equity_png(series, days)
-    bot0, bot1 = series["bot"][0], series["bot"][-1]
-    bnh0, bnh1 = series["bnh"][0], series["bnh"][-1]
-    ratio = (bot1 / bot0) / (bnh1 / bnh0) if bot0 and bnh0 and bnh1 else 0
+    png = render_equity_png(series, days, label=label)
+    summary = equity_summary(rebalances, series)
+    if summary is None:
+        return "Datos insuficientes para resumir el grafico."
     tag = f"[{label}] " if label else ""
-    caption = (f"{tag}Bot ${bot1:,.0f} ({(bot1 / bot0 - 1) * 100:+.2f}%) | "
-               f"B&H ${bnh1:,.0f} ({(bnh1 / bnh0 - 1) * 100:+.2f}%) | "
-               f"bot/B&H {ratio:.3f}")
+    caption = (
+        f"{tag}Bot ${summary['bot_final']:,.0f} ({summary['bot_return_pct']:+.2f}%) | "
+        f"B&H ${summary['bnh_final']:,.0f} ({summary['bnh_return_pct']:+.2f}%) | "
+        f"bot/B&H {summary['bot_bnh_ratio']:.3f} · desde INIT"
+    )
     return None if tg_send_photo(png, caption) else "Fallo enviando el grafico."
 
 
@@ -382,7 +397,7 @@ HELP_TEXT = (
     "/prop — estado Prop/CFT y ultimos eventos\n"
     "/prop_report [n] — ultimos eventos PropSwing\n"
     "/report [bot] [n] — ultimos n rebalanceos de un bot\n"
-    "/signals — target y senales actuales (v5 canonico, calculo live)\n"
+    "/signals — target y senales actuales (v6 default, calculo live)\n"
     "/parity — paridad F15: ultimo check y racha /30\n"
     "/audit — red-flags de infra/datos/estado (incluye cron stale)\n"
     "\n<b>Graficos</b>\n"
@@ -517,7 +532,9 @@ def handle_command(text: str, get_session) -> str | None:
         if bot is None:
             return f"Bot '{_esc(token)}' no encontrado. /bots para la lista."
         return format_status([_bot_row(bot)], bot["balances"], price, bot["rebalances"],
-                             now, title=f"SWING {bot['label']} — PAPER")
+                             now, title=f"SWING {bot['label']} — PAPER",
+                             quote_currency=(bot.get("execution_quote") or "USDT"),
+                             performance_comparable=bot.get("execution") != "okx_demo")
     if cmd == "/bots":
         return format_bots(_load_snapshots(get_session))
     if cmd == "/prop":
@@ -535,7 +552,12 @@ def handle_command(text: str, get_session) -> str | None:
         bot = _pick_single(_load_snapshots(get_session), token, "/report &lt;bot&gt; [n]")
         if isinstance(bot, str):
             return bot
-        return format_report(bot["rebalances"], n, label=bot["label"])
+        report = format_report(bot["rebalances"], n, label=bot["label"])
+        if bot.get("execution") == "okx_demo":
+            return ("⚠️ Demo: el journal no incluye ajustes fuera del bot. Confirma la "
+                    "cartera actual con /status demo y no uses este report como PnL.\n\n"
+                    + report)
+        return report
     if cmd == "/signals":
         return cmd_signals()
     if cmd == "/parity":
@@ -548,7 +570,10 @@ def handle_command(text: str, get_session) -> str | None:
         bot = _pick_single(_load_snapshots(get_session), token, "/equity &lt;bot&gt; [dias]")
         if isinstance(bot, str):
             return bot
-        return cmd_equity(days, bot["rebalances"], label=bot["label"])
+        return cmd_equity(
+            days, bot["rebalances"], label=bot["label"],
+            comparable=bot.get("execution") != "okx_demo",
+        )
     if cmd == "/chart":
         token, days = _split_bot_num(parts, 30, 2, 60)
         if token is None:

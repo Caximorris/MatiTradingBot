@@ -164,6 +164,42 @@ def test_status_and_bots_route_to_summary_detail_and_error(monkeypatch, db_sessi
     assert "paper_state_swing_v6.json" in bots and "legacy" not in bots
 
 
+def test_demo_status_labels_usdc_suppresses_fake_performance_and_flags_journal_gap(
+    monkeypatch, db_session,
+):
+    from decimal import Decimal
+    import tools.telegram_remote as tr
+
+    demo = _snap_full("demo")
+    demo.update({
+        "execution": "okx_demo",
+        "execution_quote": "USDC",
+        "balances": {"BTC": Decimal("0.032895"), "USDT": Decimal("8691.55")},
+        "rebalances": [{
+            "strategy": "swing_allocator_demo_btc_usdt", "direction": "SELL",
+            "timestamp": "2026-07-13T14:38:00+00:00", "btc_pct_after": 0.58,
+            "btc_pct_before": 0.58, "price": 62502.0, "portfolio_usdt": 10277.0,
+        }],
+    })
+    monkeypatch.setattr(tr, "_load_snapshots", lambda gs: [demo])
+    monkeypatch.setattr(tr, "fetch_price", lambda *a, **k: Decimal("62786"))
+
+    @contextmanager
+    def get_session():
+        yield db_session
+
+    summary = tr.handle_command("/status", get_session)
+    detail = tr.handle_command("/status demo", get_session)
+    report = tr.handle_command("/report demo", get_session)
+    equity = tr.handle_command("/equity demo", get_session)
+
+    assert "valoracion hibrida" in summary and "bot/B&amp;H" not in summary
+    assert "USDC" in detail and "Rendimiento Demo no comparable" in detail
+    assert "Journal y cartera no coinciden" in detail
+    assert "journal no incluye ajustes fuera del bot" in report
+    assert "Equity Demo no comparable" in equity
+
+
 def test_report_requires_bot_when_multiple(monkeypatch, db_session):
     import tools.telegram_remote as tr
     monkeypatch.setattr(tr, "_load_snapshots", lambda gs: [_snap_full("v5"), _snap_full("v6")])
@@ -272,7 +308,7 @@ def test_format_anomalies_empty_and_populated():
 
 
 def test_build_equity_series_reconstructs_holdings():
-    from tools.tg_charts import build_equity_series
+    from tools.tg_charts import build_equity_series, equity_summary
     h = 3_600_000
     t0 = 1_751_600_000_000
     rebalances = [
@@ -295,6 +331,12 @@ def test_build_equity_series_reconstructs_holdings():
     assert s["bnh"] == [1000.0, 1100.0, 1200.0, 1300.0]
     assert [e[2] for e in s["events"]] == ["INIT", "SELL"]
     assert build_equity_series([], candles)["ts"] == []
+    summary = equity_summary(rebalances, s)
+    assert summary is not None
+    assert summary["bot_final"] == 1060.0
+    assert summary["bot_return_pct"] == pytest.approx(6.0)
+    assert summary["bnh_return_pct"] == pytest.approx(30.0)
+    assert abs(summary["bot_bnh_ratio"] - (1.06 / 1.30)) < 1e-12
 
 
 def _snap(label="v5", active=True, last_run=None, balances=None, rebalances=None):
@@ -323,3 +365,22 @@ def test_format_heartbeat_multi_summarizes_each_bot():
     assert "v5" in hb and "$9,252" in hb and "(0.925)" in hb
     assert "v6" in hb and "parity 0/30" in hb
     assert format_heartbeat_multi([], Decimal("62578"), [], now).startswith("\U0001F493")
+
+
+def test_heartbeat_marks_demo_as_hybrid_instead_of_ratio():
+    from decimal import Decimal
+    from datetime import datetime, timezone
+    from tools.telegram_remote import format_heartbeat_multi
+
+    demo = _snap("demo", rebalances=[{
+        "timestamp": "2026-07-04T08:59:00+00:00",
+        "portfolio_usdt": 10000.0,
+        "price": 62578.0,
+    }])
+    demo["execution"] = "okx_demo"
+    out = format_heartbeat_multi(
+        [demo], Decimal("62578"), [], datetime(2026, 7, 5, 8, tzinfo=timezone.utc),
+    )
+
+    assert "hibrido" in out
+    assert "(0." not in out

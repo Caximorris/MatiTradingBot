@@ -191,6 +191,10 @@ panel for routine status, reports, charts, audits, and health checks; slash comm
 advanced or state-changing operations. The bot also pushes rebalance alerts and daily heartbeats.
 systemd (`Restart=always`) keeps the processes alive;
 a daily cron runs parity + degradation checks, and `/audit` runs the anomaly engine on demand.
+`python main.py status` lists each operable bot and isolated wallet separately; for Demo it shows
+the real `BTC-USDC` execution pair and labels cash as USDC while retaining BTC-USDT as the signal
+space. Demo performance ratios are intentionally suppressed because simulated fills and real-spot
+valuation are not a comparable PnL series.
 
 The only credentials on the server are the Telegram token and (for the demo bot) an OKX
 **demo-trading** API key — fake funds only, created inside OKX's demo mode. The `demo` bot runs
@@ -235,7 +239,7 @@ EEA accounts), and the EEA-specific API domain. Runbook:
 
 Python 3.12 · typer + rich (CLI) · pandas + pandas-ta · python-okx · aiohttp / urllib
 (*deliberately not* `requests`) · SQLAlchemy + SQLite · python-telegram-bot · APScheduler ·
-`Decimal` for all money · 241 passing tests.
+`Decimal` for all money · 247 passing tests.
 
 > **The honest summary:** someone spent months building rigorous machinery to answer *"does this BTC
 > allocation strategy actually work, or am I fooling myself?"* — got to "+85% CAGR that survives the

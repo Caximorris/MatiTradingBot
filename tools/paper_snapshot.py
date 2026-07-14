@@ -110,6 +110,8 @@ def discover_bots(session) -> list[dict]:
             "is_active": r.is_active,
             "last_run": r.last_run,
             "portfolio_id": cfg.get("paper_portfolio_id"),
+            "execution": cfg.get("execution"),
+            "execution_quote": cfg.get("execution_quote"),
         })
     return out
 

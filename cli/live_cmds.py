@@ -138,41 +138,82 @@ def status(verbose: bool = typer.Option(False, "--verbose", "-v")):
     """Muestra el estado actual: bots, balance y posiciones abiertas."""
     _setup_logging(verbose)
     settings = _load_settings()
-    client   = _make_client(settings)
 
     from core.database import BotState, Position, Trade, get_session, init_db
     from sqlalchemy import func
+    from tools.status_snapshot import (
+        build_bot_records,
+        build_paper_portfolios,
+        format_madrid,
+    )
 
     init_db()
     mode = "PAPER" if settings.is_paper else "LIVE"
     console.rule(f"[bold cyan]OKX Trading Bot — modo {mode}[/bold cyan]")
 
-    try:
-        balance = client.get_balance()
-        console.print("\n[bold]Balance[/bold]")
-        for token, amount in balance.items():
-            if amount > Decimal("0"):
-                console.print(f"  {token}: [green]{amount:,.6f}[/green]")
-    except Exception as exc:
-        console.print(f"  [red]Exchange no disponible: {exc}[/red]")
-
-    console.print("\n[bold]Bots configurados[/bold]")
     with get_session() as s:
         bots = s.query(BotState).order_by(BotState.created_at).all()
-        bot_rows = [(b.strategy_name, b.symbol, b.is_active, b.last_run, float(b.total_pnl))
-                    for b in bots]
+        bot_rows = build_bot_records(bots)
+
+    if settings.is_paper:
+        from tools.paper_snapshot import RUNTIME
+        portfolios = build_paper_portfolios(bot_rows, RUNTIME)
+        console.print("\n[bold]Carteras paper aisladas[/bold]")
+        if not portfolios:
+            console.print("  [dim]Sin bots operables configurados.[/dim]")
+        else:
+            bt = Table(show_header=True, header_style="bold blue")
+            bt.add_column("Bot")
+            bt.add_column("Ejecucion")
+            bt.add_column("BTC", justify="right")
+            bt.add_column("Efectivo", justify="right")
+            bt.add_column("Fuente")
+            for p in portfolios:
+                cash = f"{p['quote_balance']:,.2f} {p['quote_currency']}"
+                if not p["wallet_exists"]:
+                    cash = "[red]wallet ausente[/red]"
+                bt.add_row(
+                    p["label"],
+                    f"{p['execution_symbol']} · {p['execution_venue']}",
+                    f"{p['base_balance']:,.6f}",
+                    cash,
+                    p["wallet_path"].name,
+                )
+            console.print(bt)
+            if any(p["quote_is_alias"] for p in portfolios):
+                console.print(
+                    "[dim]Demo: el efectivo es USDC real; la estrategia lo recibe como "
+                    "alias USDT para mantener paridad con el backtest.[/dim]"
+                )
+    else:
+        client = _make_client(settings)
+        try:
+            balance = client.get_balance()
+            console.print("\n[bold]Balance exchange[/bold]")
+            for token, amount in balance.items():
+                if amount > Decimal("0"):
+                    console.print(f"  {token}: [green]{amount:,.6f}[/green]")
+        except Exception as exc:
+            console.print(f"  [red]Exchange no disponible: {exc}[/red]")
+
+    console.print("\n[bold]Bots configurados[/bold]")
 
     if not bot_rows:
-        console.print("  [dim]Sin bots configurados.[/dim]")
+        console.print("  [dim]Sin bots operables configurados.[/dim]")
     else:
         t = Table(show_header=True, header_style="bold blue")
-        t.add_column("Nombre"); t.add_column("Par"); t.add_column("Estado")
-        t.add_column("Último tick"); t.add_column("P&L total", justify="right")
-        for name, symbol, active, last_run, pnl in bot_rows:
-            sl = "[green]ACTIVO[/green]" if active else "[red]PARADO[/red]"
-            last = last_run.strftime("%d/%m %H:%M") if last_run else "—"
+        t.add_column("Nombre"); t.add_column("Señal"); t.add_column("Ejecución")
+        t.add_column("Estado"); t.add_column("Último tick Madrid")
+        t.add_column("P&L total", justify="right")
+        for row in bot_rows:
+            sl = "[green]ACTIVO[/green]" if row["is_active"] else "[red]PARADO[/red]"
+            pnl = row["total_pnl"]
             pc = "green" if pnl >= 0 else "red"
-            t.add_row(name, symbol, sl, last, f"[{pc}]{pnl:+.2f}[/{pc}]")
+            execution = f"{row['execution_symbol']} · {row['execution_venue']}"
+            t.add_row(
+                row["name"], row["signal_symbol"], execution, sl,
+                format_madrid(row["last_run"]), f"[{pc}]{pnl:+.2f}[/{pc}]",
+            )
         console.print(t)
 
     console.print("\n[bold]Posiciones abiertas[/bold]")
@@ -203,7 +244,10 @@ def status(verbose: bool = typer.Option(False, "--verbose", "-v")):
     daily_pnl    = float(res[0] or 0)
     daily_trades = res[1] or 0
     c = "green" if daily_pnl >= 0 else "red"
-    console.print(f"\n[bold]Hoy:[/bold] {daily_trades} trades | P&L: [{c}]{daily_pnl:+.2f} USDT[/{c}]")
+    console.print(
+        f"\n[bold]Hoy:[/bold] {daily_trades} trades | "
+        f"P&L registrado: [{c}]{daily_pnl:+.2f} USD-equivalente[/{c}]"
+    )
 
 
 def dashboard(
