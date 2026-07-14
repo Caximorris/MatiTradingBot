@@ -20,55 +20,49 @@ low-risk, repetitive work; Terra is the default for normal development; Sol is f
 complex reasoning and high-risk work. If a selector no longer offers one of these
 values, inspect the current selector and update this section before relying on it.
 
-## Model escalation protocol
+## Model routing and escalation protocol
 
-Before making any changes, evaluate whether the current model is appropriate for the
-requested task.
+This gate applies to every request: questions, analysis, reviews, planning, diagnostics,
+backtests, and implementation. Before substantive work, classify the task and announce the
+recommended model. The user changes the selector manually.
 
-The current model should only execute tasks that are low-risk, well-scoped, mechanical,
-and straightforward.
+Use this routing:
 
-### Continue with the current model when
+- **Luna** (`GPT-5.6 Luna`, `gpt-5.6-luna`; Claude Code: `haiku`): explanations, documentation,
+  extraction, classification, structured summaries, formatting, renaming, and isolated
+  mechanical edits.
+- **Terra** (`GPT-5.6 Terra`, `gpt-5.6-terra`; Claude Code: `sonnet`): multi-file changes,
+  normal production features, tests, business-logic debugging, limited refactors, and tasks
+  with several related files.
+- **Sol** (`GPT-5.6 Sol`, `gpt-5.6-sol`; Claude Code: `fable`, or `opus` if unavailable):
+  architecture, security, authentication or permissions,
+  database migrations, concurrency, transactions, caching, queues, distributed state,
+  infrastructure, deployment, CI/CD, networking, broad audits, data-loss risk, ambiguous
+  requirements, or an unclear root cause.
 
-- The change is localized and its cause is already known.
-- The task affects only a small number of files.
-- The implementation follows an existing project pattern.
-- The task consists mainly of:
-  - text or styling changes;
-  - simple component changes;
-  - repetitive CRUD work;
-  - basic tests;
-  - documentation;
-  - renaming;
-  - formatting;
-  - simple bug fixes with a clearly identified cause.
+Use the selector syntax for the active tool: Codex display names/IDs for Codex, and the Claude
+Code aliases above for Claude Code. If an alias is unavailable, use the closest exact model name
+shown by that tool's selector.
 
-### Stop and recommend the standard model when
+At the beginning of every response, before doing the work, state:
 
-- The task requires inspecting several related files.
-- It introduces a normal production feature.
-- It requires non-trivial frontend and backend changes.
-- It involves a limited refactor.
-- The cause of the bug is not immediately known.
-- It requires understanding existing business logic.
-- Multiple reasonable implementation approaches exist.
+```text
+MODEL ROUTING: <recommended selector value>
+Reason: <one concise reason>
+```
 
-### Stop and recommend the strongest model when
+If the current model is below the recommended tier, stop immediately after classification and
+use the exact escalation format below. Do not inspect project files, run tests or backtests,
+edit files, commit, push, deploy, or continue the task. If the current model is not visible,
+still recommend the required selector value without pretending to know the current selection.
 
-- The task involves architecture or system design.
-- It affects authentication, authorization, permissions, secrets, or security.
-- It includes database schema changes or migrations.
-- It involves concurrency, transactions, caching, queues, or distributed state.
-- It changes infrastructure, deployment, CI/CD, networking, or production configuration.
-- It is a broad audit or repository-wide refactor.
-- It involves data-loss risk or difficult rollback.
-- Requirements are ambiguous or conflicting.
-- A wrong implementation could create serious technical debt.
-- The root cause remains unclear after initial inspection.
+When uncertain between tiers, choose the higher tier. Do not escalate merely because a task is
+long; escalate based on reasoning difficulty, ambiguity, blast radius, reversibility, security
+impact, and the likelihood of incorrect architectural assumptions.
 
 ### Mandatory behavior when escalation is needed
 
-When the current model is not appropriate:
+When the current model is below the recommended tier:
 
 1. Do not modify files.
 2. Do not run destructive commands.
@@ -109,18 +103,6 @@ The replacement prompt must include:
 - An instruction to inspect before editing.
 - An instruction not to commit, push, deploy, or modify production resources unless
   explicitly requested.
-
-### Escalation must be conservative
-
-Do not escalate merely because a task is long.
-
-Escalate based on reasoning difficulty, ambiguity, blast radius, reversibility, security
-impact, and the likelihood that a weaker model will make incorrect architectural
-assumptions.
-
-If uncertain between the current model and the standard model, choose the standard model.
-
-If uncertain between the standard model and the strongest model, choose the strongest model.
 
 ## Do not split cohesive implementation work unnecessarily
 
