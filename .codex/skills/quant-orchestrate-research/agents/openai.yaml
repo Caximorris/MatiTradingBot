@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Research Orchestrator"
+  short_description: "Route systematic research through the right validation gates."
+  default_prompt: "Use $quant-orchestrate-research to route this quantitative research request."

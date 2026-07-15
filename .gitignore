@@ -37,8 +37,7 @@ build/
 
 # Configuracion local de agentes en esta maquina (permisos/rutas absolutas, no portable)
 .claude/settings.local.json
-.codex/hooks.json
-.codex/hooks/
+.codex/hook-state/
 
 # Informes generados
 reports/
@@ -58,6 +57,7 @@ data/cache/funding_bybit_*.json
 # ~10MB). Por defecto NO se versionan para no inflar el repo. Los journals canonicos
 # citados en la doc se trackean explicitamente con `git add -f`.
 backtests/journal_*.json
+backtests/manifests/
 
 # Estado runtime paper/live (VM y local) — nunca versionar
 data/runtime/

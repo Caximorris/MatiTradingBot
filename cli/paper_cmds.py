@@ -117,10 +117,18 @@ def anomaly_check(
     """Detecta red-flags de infra/datos/estado. Solo avisa; NUNCA cambia la estrategia."""
     from tools.anomaly_check import (check_anomalies, filter_new_alerts, format_alert_line,
                                      load_state, save_state)
+    from strategies.swing_funding_overlay import last_settlement_ms
     now = datetime.now(timezone.utc)
     snaps, price = _build(now)
+    funding_last_ms = last_settlement_ms("BTCUSDT")
+    funding_age_hours = (
+        (now.timestamp() * 1000 - funding_last_ms) / 3_600_000
+        if funding_last_ms is not None else None
+    )
     alerts = check_anomalies(snaps, price=price, now=now,
-                             daily_check_age_min=_daily_check_age_min(now))
+                             daily_check_age_min=_daily_check_age_min(now),
+                             funding_cache_checked=True,
+                             funding_age_hours=funding_age_hours)
 
     if not alerts:
         console.print("[green]Sin anomalias.[/green]")

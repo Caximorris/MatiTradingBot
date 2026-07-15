@@ -272,13 +272,26 @@ def cmd_audit(get_session) -> str:
     (tools.anomaly_check.check_anomalies), incluye el chequeo de cron/daily_checks.log."""
     from tools.anomaly_check import check_anomalies, daily_check_age_minutes
     from tools.paper_snapshot import build_snapshots
+    from strategies.swing_funding_overlay import last_settlement_ms
     now = datetime.now(timezone.utc)
     price = fetch_price()
     with get_session() as s:
         snaps = build_snapshots(s, price=price, now=now)
     text_log = DAILY_CHECKS_LOG.read_text(encoding="utf-8") if DAILY_CHECKS_LOG.exists() else ""
     age = daily_check_age_minutes(parse_daily_checks(text_log), now)
-    alerts = check_anomalies(snaps, price=price, now=now, daily_check_age_min=age)
+    funding_last_ms = last_settlement_ms("BTCUSDT")
+    funding_age_hours = (
+        (now.timestamp() * 1000 - funding_last_ms) / 3_600_000
+        if funding_last_ms is not None else None
+    )
+    alerts = check_anomalies(
+        snaps,
+        price=price,
+        now=now,
+        daily_check_age_min=age,
+        funding_cache_checked=True,
+        funding_age_hours=funding_age_hours,
+    )
     return format_anomalies(alerts)
 
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Mati Swing Validator"
-  short_description: "Validate Swing Allocator experiments for MatiTradingBot."
-  default_prompt: "Validate the current Swing Allocator experiment against the project protocol."
+  short_description: "Validate Swing Allocator experiments and promotions."
+  default_prompt: "Use $mati-swing-validator to validate this Swing Allocator experiment against the project protocol."

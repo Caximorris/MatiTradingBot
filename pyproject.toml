@@ -1,12 +1,13 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "okx-trader"
 version = "0.1.0"
 description = "Automated trading system for OKX exchange"
-requires-python = ">=3.12"
+# pandas-ta currently pins numba to a release that rejects Python 3.14.
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "python-okx>=0.3.9",
     "websockets>=12.0",
@@ -22,20 +23,29 @@ dependencies = [
     "openpyxl>=3.1.0",
     "tenacity>=8.2.0",
     "loguru>=0.7.0",
+    "matplotlib>=3.8.0",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "build>=1.2.0",
+    "ruff==0.15.18",
 ]
 
 [project.scripts]
-okx-trader = "okx_trader.main:app"
+okx-trader = "main:app"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.setuptools]
+py-modules = ["main"]
+
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["cli*", "config*", "core*", "data*", "execution*", "reporting*", "strategies*", "tools*"]
+exclude = ["tests*", "backtests*", "docs*"]

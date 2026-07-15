@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install project and development gates
+        run: python -m pip install -e ".[dev]"
+      - name: Verify dependency graph
+        run: python -m pip check
+      - name: Verify installed CLI entrypoint
+        run: okx-trader --help
+      - name: Compile
+        run: python -m compileall -q .
+      - name: Test
+        run: python -m pytest -q
+      - name: Build distributions
+        run: python -m build
+      - name: Ruff debt ratchet
+        run: python tools/ruff_ratchet.py

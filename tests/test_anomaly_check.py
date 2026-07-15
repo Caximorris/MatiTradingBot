@@ -128,6 +128,30 @@ def test_daily_check_none_not_flagged():
     assert not any(a.code == "daily-check-stale" for a in alerts)
 
 
+def test_missing_or_stale_funding_cache_is_high() -> None:
+    missing = ac.check_anomalies(
+        [_snap()], price=Decimal("40000"), now=NOW, funding_cache_checked=True
+    )
+    stale = ac.check_anomalies(
+        [_snap()], price=Decimal("40000"), now=NOW,
+        funding_cache_checked=True,
+        funding_age_hours=ac.FUNDING_CACHE_STALE_HOURS + 1,
+    )
+
+    assert any(a.code == "funding-cache-stale" and a.severity == "HIGH" for a in missing)
+    assert any(a.code == "funding-cache-stale" and a.severity == "HIGH" for a in stale)
+
+
+def test_fresh_funding_cache_is_not_flagged() -> None:
+    alerts = ac.check_anomalies(
+        [_snap()], price=Decimal("40000"), now=NOW,
+        funding_cache_checked=True,
+        funding_age_hours=1.0,
+    )
+
+    assert not any(a.code == "funding-cache-stale" for a in alerts)
+
+
 def test_daily_check_age_minutes_from_blocks():
     blocks = [
         {"ts": "2026-07-06T12:10:01+00:00", "parity": True, "target": "0.2000"},

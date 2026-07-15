@@ -6,6 +6,8 @@ so a new client method cannot drift silently between execution modes.
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from core.backtest import BacktestClient
@@ -59,3 +61,20 @@ def test_all_clients_implement_strategy_contract(client_type: type) -> None:
 @pytest.mark.parametrize("client_type, expected", EXPECTED_PUBLIC_SURFACE.items())
 def test_client_specific_surface_is_explicit(client_type: type, expected: set[str]) -> None:
     assert _public_surface(client_type) == expected
+
+
+SIGNATURE_PARITY_METHODS = STRATEGY_CLIENT_CONTRACT - {
+    "is_paper",
+    # Backtest-only compatibility shims are explicit and trailing.
+    "get_ohlcv",
+    "place_order",
+}
+
+
+@pytest.mark.parametrize("method_name", sorted(SIGNATURE_PARITY_METHODS))
+def test_shared_methods_keep_parameter_order(method_name: str) -> None:
+    signatures = {
+        client_type.__name__: tuple(inspect.signature(getattr(client_type, method_name)).parameters)
+        for client_type in (OKXClient, OKXDemoClient, BacktestClient)
+    }
+    assert len(set(signatures.values())) == 1, f"Signature drift for {method_name}: {signatures}"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Evidence Curator"
+  short_description: "Curate reproducible research evidence and reports."
+  default_prompt: "Use $quant-curate-evidence to assemble an evidence-linked research report."

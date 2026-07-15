@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Signal Research"
+  short_description: "Research indicators, regimes, and market structure."
+  default_prompt: "Use $quant-research-signals to evaluate this signal or regime idea."

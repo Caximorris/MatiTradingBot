@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Experiment Runner"
+  short_description: "Run reproducible experiments and compare results."
+  default_prompt: "Use $quant-run-experiment to execute and document this experiment."

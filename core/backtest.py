@@ -12,7 +12,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from typing import Any, Callable
 
 from loguru import logger
@@ -224,8 +224,12 @@ class BacktestClient:
         return self._ohlcv_df.iloc[start : self._idx + 1]
 
     def get_balance(self) -> dict[str, Decimal]:
-        result = dict(self._balance)
-        # Incluir también el saldo en órdenes pendientes
+        """Return funds available for new orders, matching the execution clients."""
+        return dict(self._balance)
+
+    def _get_total_balance(self) -> dict[str, Decimal]:
+        """Return available plus reserved funds for mark-to-market accounting."""
+        result = self.get_balance()
         reserved_usdt = sum(self._reserved_usdt.values(), Decimal("0"))
         if reserved_usdt:
             result["USDT"] = result.get("USDT", Decimal("0")) + reserved_usdt
@@ -251,7 +255,7 @@ class BacktestClient:
     def get_funding_rate(self, symbol: str) -> float:
         """Devuelve el funding rate historico del dia actual de la simulacion."""
         from strategies.funding_context import get_funding_rate_at
-        return get_funding_rate_at(self.current_time())
+        return get_funding_rate_at(self.current_time(), symbol)
 
     def place_order(
         self,
@@ -273,16 +277,24 @@ class BacktestClient:
 
         # Reservar saldo para órdenes límite (igual que hace OKXClient paper)
         if side == "buy":
-            cost = size * lp
+            estimated_fee = (size * lp * self._fee_rate).quantize(Decimal("0.00000001"))
+            cost = size * lp + estimated_fee
             available = self._balance.get("USDT", Decimal("0"))
             if available < cost:
-                return self._rejected(order_id, symbol, side, size, strategy, self.current_bar_ts())
+                return self._rejected(
+                    order_id, symbol, side, size, strategy, self.current_bar_ts(),
+                    order_type=order_type, limit_price=lp,
+                )
             self._balance["USDT"] = available - cost
             self._reserved_usdt[order_id] = cost
         else:  # sell
+            estimated_fee = (size * lp * self._fee_rate).quantize(Decimal("0.00000001"))
             available_base = self._balance.get(base, Decimal("0"))
             if available_base < size:
-                return self._rejected(order_id, symbol, side, size, strategy, self.current_bar_ts())
+                return self._rejected(
+                    order_id, symbol, side, size, strategy, self.current_bar_ts(),
+                    order_type=order_type, limit_price=lp,
+                )
             self._balance[base] = available_base - size
             self._reserved_base[order_id] = size
 
@@ -298,12 +310,12 @@ class BacktestClient:
             order_id=order_id, symbol=symbol, side=side,
             order_type=order_type, size=size,
             limit_price=lp, filled_price=None, filled_qty=Decimal("0"),
-            fee=Decimal("0"), fee_currency="USDT",
+            fee=estimated_fee, fee_currency="USDT",
             status="open", is_paper=True,
             strategy=strategy, timestamp=self.current_bar_ts(),
         )
 
-    def cancel_order(self, symbol: str, order_id: str) -> bool:
+    def cancel_order(self, order_id: str, symbol: str) -> bool:
         order = self._paper_orders.pop(order_id, None)
         if order is None:
             return False
@@ -433,11 +445,14 @@ class BacktestClient:
         return filled_results
 
     @staticmethod
-    def _rejected(order_id, symbol, side, size, strategy, ts) -> OrderResult:
+    def _rejected(
+        order_id, symbol, side, size, strategy, ts,
+        order_type: str = "market", limit_price: Decimal | None = None,
+    ) -> OrderResult:
         return OrderResult(
             order_id=order_id, symbol=symbol, side=side,
-            order_type="market", size=size,
-            limit_price=None, filled_price=None, filled_qty=Decimal("0"),
+            order_type=order_type, size=size,
+            limit_price=limit_price, filled_price=None, filled_qty=Decimal("0"),
             fee=Decimal("0"), fee_currency="USDT",
             status="rejected", is_paper=True,
             strategy=strategy, timestamp=ts,
@@ -518,34 +533,42 @@ class BacktestEngine:
             "si no hay datos cargados para la fecha retorna 0.0 como fallback"
         )
 
-        strategy = self._factory(self._client, session)
-        self.last_strategy = strategy   # expuesto para acceso al journal tras run()
         total_ticks = n - self._warmup
-
         base_token = symbol.split("-")[0]
         bars_in_market = 0
 
-        for i in range(self._warmup, n):
-            self._client.advance(i)
+        try:
+            strategy = self._factory(self._client, session)
+            self.last_strategy = strategy   # expuesto para acceso al journal tras run()
 
-            try:
-                strategy.run()
-            except Exception as exc:
-                logger.warning("Backtest tick {}/{}: {}", i, n, exc)
+            for i in range(self._warmup, n):
+                self._client.advance(i)
 
-            balance = self._client.get_balance()
-            usdt = balance.get("USDT", Decimal("0"))
-            base_qty = balance.get(base_token, Decimal("0"))
-            total = usdt + base_qty * self._client.current_bar.close
-            equity_curve.append((self._client.current_bar_ts(), total))
-            if base_qty > Decimal("0"):
-                bars_in_market += 1
+                try:
+                    strategy.run()
+                except Exception:
+                    logger.exception(
+                        "Backtest abortado: strategy={} tick={}/{} timestamp_utc={}",
+                        getattr(strategy, "name", type(strategy).__name__),
+                        i,
+                        n,
+                        self._client.current_bar_ts().isoformat(),
+                    )
+                    raise
 
-            done = i - self._warmup + 1
-            if on_tick and (done % tick_interval == 0 or done == total_ticks):
-                on_tick(done, total_ticks)
+                balance = self._client._get_total_balance()
+                usdt = balance.get("USDT", Decimal("0"))
+                base_qty = balance.get(base_token, Decimal("0"))
+                total = usdt + base_qty * self._client.current_bar.close
+                equity_curve.append((self._client.current_bar_ts(), total))
+                if base_qty > Decimal("0"):
+                    bars_in_market += 1
 
-        session.close()
+                done = i - self._warmup + 1
+                if on_tick and (done % tick_interval == 0 or done == total_ticks):
+                    on_tick(done, total_ticks)
+        finally:
+            session.close()
 
         equity_values = [v for _, v in equity_curve]
         final_balance = equity_values[-1] if equity_values else self._client.initial_balance

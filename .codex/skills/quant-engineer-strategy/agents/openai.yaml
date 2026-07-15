@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Strategy Engineering"
+  short_description: "Implement and review strategy components safely."
+  default_prompt: "Use $quant-engineer-strategy to design or review this strategy change."

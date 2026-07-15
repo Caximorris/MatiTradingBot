@@ -58,15 +58,17 @@ def _run_backtest(
     from strategies.market_context import load_market_context
     from strategies.funding_context import load_funding_history
     from strategies.onchain_flow import load_flow_context
+    from strategies.registry import get as _get_strategy
 
-    # Carga unica de datos macro, mercado y funding antes de la simulacion
+    meta = _get_strategy(strat_type)
+
+    # Carga unica de contextos consumidos por la estrategia antes de la simulacion.
     load_macro_context(from_dt, to_dt, symbol)
     load_market_context(from_dt, to_dt)
-    load_funding_history(symbol, from_dt, to_dt)
+    if meta.name == "pro_trend":
+        load_funding_history(symbol, from_dt, to_dt)
     load_flow_context(from_dt, to_dt, symbol)   # EXP-014/015 — no-op si falla la red
 
-    from strategies.registry import get as _get_strategy
-    meta        = _get_strategy(strat_type)
     WARMUP_DAYS = meta.warmup_days
     warmup_start = from_dt - timedelta(days=WARMUP_DAYS)
     label       = meta.display_name
@@ -114,7 +116,6 @@ def _run_backtest(
         )
 
         def on_tick(done: int, total: int) -> None:
-            pct = done / total if total else 0
             # Estima equity actual sin acceder al motor
             progress.update(sim_task, completed=done,
                             detail=f"{done:,}/{total:,} barras")
@@ -131,6 +132,7 @@ def _run_backtest(
             engine = BacktestEngine(bt_client=bt_client, strategy_factory=factory,
                                     warmup_bars=engine_warmup, timeframe=timeframe)
             result = engine.run(on_tick=on_tick)
+            artifact_paths: list[str] = []
 
             # Escribir journal de trades con todos los indicadores y contexto
             strat = engine.last_strategy
@@ -186,12 +188,13 @@ def _run_backtest(
                     journal_out.append(journal_path)
                 else:
                     console.print(f"[dim]Journal guardado -> {journal_path}[/dim]")
+                artifact_paths.append(journal_path)
 
             # Journal de rebalanceos para Swing Allocator
             if strat is not None and hasattr(strat, "_rebalance_log") and strat._rebalance_log:
                 from reporting.swing_journal import write_swing_journal
                 _base_ccy     = symbol.split("-")[0]
-                _final_balance_raw = bt_client.get_balance()
+                _final_balance_raw = bt_client._get_total_balance()
                 _final_btc    = float(_final_balance_raw.get(_base_ccy, 0))
                 swing_path = write_swing_journal(
                     rebalance_log=strat._rebalance_log,
@@ -223,7 +226,45 @@ def _run_backtest(
                         f"(final {_final_btc:.4f} BTC vs B&H {_bnh_btc:.4f})"
                     )
 
+                artifact_paths.append(swing_path)
+
+            from reporting.experiment_manifest import write_experiment_manifest
+            external_inputs: list[str] = []
+            uses_bybit_funding = meta.name in {
+                "basis_carry", "funding_extreme", "prop_swing"
+            } or (
+                meta.name == "swing_allocator"
+                and bool(resolved_config.get("use_funding_overlay"))
+            )
+            if uses_bybit_funding:
+                from strategies.swing_funding_overlay import funding_cache_path
+
+                external_inputs.append(str(funding_cache_path(symbol)))
+            manifest_path = write_experiment_manifest(
+                result=result,
+                requested_strategy=strat_type,
+                resolved_strategy=meta.name,
+                config_overrides=config if config else {},
+                resolved_config=resolved_config,
+                symbol=symbol,
+                timeframe=timeframe,
+                requested_from=from_dt,
+                requested_to=to_dt,
+                warmup_bars=engine_warmup,
+                initial_balance=bt_client.initial_balance,
+                cost_mode=cost_mode,
+                fee_rate=bt_client._fee_rate,
+                slippage_bps=bt_client._slippage_bps,
+                fill_next_open=bt_client.fill_next_open,
+                bars=all_bars,
+                artifacts=artifact_paths,
+                external_inputs=external_inputs,
+                seed=None,
+            )
+            if journal_out is None:
+                console.print(f"[dim]Experiment manifest -> {manifest_path}[/dim]")
+
             return result
-        except Exception as exc:
-            logger.debug("Error en backtest {}: {}", strat_type, exc)
-            return None
+        except Exception:
+            logger.exception("Backtest {} no produjo evidencia completa", strat_type)
+            raise

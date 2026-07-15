@@ -211,6 +211,42 @@ un backtest puntual.
 
 ---
 
+## LABORATORIO DE INVESTIGACION Y HARDENING (2026-07-15)
+
+- Se incorporo el ecosistema Codex de 14 especialistas y 15 skills cuantitativas; el mapa de
+  autoridad, gates y workflows esta en `docs/research/subagent-ecosystem.md`. No cambia ninguna
+  hipotesis, parametro ni default de estrategia.
+- El backtest ahora falla cerrado en la primera excepcion de estrategia, cierra la sesion SQL,
+  alinea `cancel_order(order_id, symbol)` entre clientes y reserva principal+fee en BUY limits.
+  `get_balance()` expone saldo disponible; la valoracion interna conserva reservas como activo.
+- `funding_context.py` conserva snapshots OKX inmutables por simbolo/ventana, rechaza conflictos,
+  evita contaminacion entre activos/runs y solo se carga para Pro Trend. Es distinto del cache
+  Bybit usado por Swing v6.
+- Cada backtest exitoso escribe un manifest determinista en `backtests/manifests/`: revision/diff
+  git, entorno, config resuelta, costes/fills, OHLCV ordenado (incluidos duplicados/warmup),
+  metricas, equity/trades, artefactos y inputs externos. El cache Bybit ignorado por git queda
+  identificado por ruta, presencia, tamano y SHA-256; un fallo de manifest invalida el run.
+- CI cubre Python 3.12/3.13, dependencias, entrypoint, compile, 321 tests, build y un ratchet Ruff.
+  El backend/entrypoint de packaging quedaron corregidos. Ruff conserva visibles 207 hallazgos
+  frente al baseline versionado de 209; deuda nueva o mayor falla CI.
+- Paridad Swing ejecutada con el cache local sin modificar: 102,930 barras de entrada / 96,930
+  de test, realistic, $9,532,749.59, CAGR 86.56%, Max DD -52.73%, 70 rebalanceos y ratio BTC
+  0.8499. Coincide con el control documentado **sin overlay** ($9.53M), no con el ancla v6
+  $9.505M: el input Bybit local (SHA-256
+  `23cc1952a9eed3806fb6f91e9cfdd788d0ae1dcfcc244524ea3f904b4497685f`) no reproduce el overlay
+  canonico. No atribuir esta diferencia al motor ni promover resultados hasta restaurar el input
+  exacto. `anomaly-check` y `/audit` ahora elevan cache ausente/stale como HIGH en vez de degradar
+  sin visibilidad.
+- Validacion local: `python -m pytest -q` = 321 passed; `compileall` = OK; `python -m build` = OK;
+  `python tools/ruff_ratchet.py` = OK (207/209). El host actual usa Python 3.14.6 y no puede hacer
+  `pip install -e ".[dev]"` porque el numba fijado por pandas-ta soporta `<3.14`; el contrato real
+  del paquete y CI se limitaron honestamente a `>=3.12,<3.14`.
+- Rollback: revertir los archivos de infraestructura/tests de este bloque y eliminar el hook de
+  manifest/CI. No borrar manifests ni journals generados, no regenerar caches y no tocar los
+  defaults congelados como parte del rollback.
+
+---
+
 ## SIGUIENTE PASO (sesion 2026-07-14+)
 
 El despliegue, la limpieza de fleet y la reconciliacion Demo ya estan completados. Prop se
@@ -244,7 +280,8 @@ v5-vs-v6 empieza a dar señal desde ~2026-10-07.
   `tgtCcy=base_ccy`, igual que el cliente demo; tests en `test_exchange.py`). Ya no bloquea live.
 - **Funding Bybit 403 en la VM:** `funding_refresh.py` falla con HTTP 403 (IP de GCP bloqueada?).
   Sin urgencia hasta fase `accumulation` (~2026-10-07): sin ese cache, v6 degrada a v5 en silencio
-  y PropSwing modela funding=0. Resolver antes de octubre.
+  y PropSwing modela funding=0. Resolver antes de octubre. Desde 2026-07-15 `anomaly-check` y
+  `/audit` lo reportan HIGH si falta o supera 26h, pero el 403 remoto sigue sin resolver.
 - **Limpieza/refactor de codigo:** backlog en `docs/archive/refactor-backlog.md`. Difiere al cierre del paper
   (no romper determinismo/paridad). (El codigo muerto `execution/order_manager.py` +
   `position_tracker.py` ya se borro en `5ec7a97`, 2026-07-06.)

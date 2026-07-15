@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Portfolio Risk"
+  short_description: "Design independent portfolio risk controls."
+  default_prompt: "Use $quant-design-risk to review portfolio exposure, sizing, and drawdown constraints."
