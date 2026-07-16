@@ -12,7 +12,9 @@ def _hourly(start: str, periods: int) -> pd.DataFrame:
     values = list(range(100, 100 + periods))
     return pd.DataFrame(
         {
-            "timestamp": (index.astype("int64") // 1_000_000).astype("int64"),
+            # ``DatetimeIndex.astype("int64")`` follows its backing resolution
+            # (ns locally, us on the CI images). Timestamp.value is always ns.
+            "timestamp": [int(point.value // 1_000_000) for point in index],
             "open": values,
             "high": [value + 2 for value in values],
             "low": [value - 1 for value in values],
