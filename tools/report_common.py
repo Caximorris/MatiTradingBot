@@ -84,11 +84,12 @@ def run_strategy(
         logger.remove()
     from strategies.macro_context import load_macro_context
     from strategies.market_context import load_market_context
-    from strategies.funding_context import load_funding_history
+    from strategies.funding_context import load_funding_history, requires_okx_funding
 
     load_macro_context(from_dt, to_dt, symbol)
     load_market_context(from_dt, to_dt)
-    load_funding_history(symbol, from_dt, to_dt)
+    if requires_okx_funding(meta.name, config):
+        load_funding_history(symbol, from_dt, to_dt)
 
     if bars is None:
         bars = fetch_historical_bars(symbol=symbol, bar=timeframe,

@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "state": {
+    "namespace": "matitradingbot-codex-hooks-v1",
+    "storage": "os_temp_only",
+    "store_raw_prompts": false,
+    "store_raw_transcripts": false,
+    "store_failed_receipts": false,
+    "preserve_failed_audit_records": true
+  },
+  "controls": [
+    {
+      "id": "integrity-classify",
+      "trigger": "SessionStart and every supported PreToolUse/PostToolUse",
+      "purpose": "Capture a session baseline and classify only paths touched after that baseline.",
+      "order": 10,
+      "conditions": "Always; path work is bounded to Git metadata and tool-input paths.",
+      "tier": 1,
+      "max_runtime_seconds": 1.5,
+      "frequency": "Every supported lifecycle event",
+      "changed_file_scope": "Current tool call for edit feedback; staged diff for commit; merge-base/worktree for PR.",
+      "behavior": "warning except protected mutations, which block",
+      "validation": ["Git HEAD identity", "staged/unstaged/untracked/deleted/renamed classification", "safe path normalization"],
+      "outputs": ["OS-temp session baseline", "changed-category set", "worktree fingerprint"],
+      "cache_strategy": "Session baseline keyed by repository and session id",
+      "success_reusable": true,
+      "reuse_conditions": "Until HEAD changes; touched-path state remains session-local"
+    },
+    {
+      "id": "integrity-static-diff",
+      "trigger": "PreToolUse/PostToolUse for apply_patch/Edit/Write and classified shell commands",
+      "purpose": "Reject protected paths and catch deterministic static integrity regressions without running tests.",
+      "order": 20,
+      "conditions": "Only files present in the current patch or a fully classified shell mutation; ambiguous shell commands fail closed.",
+      "tier": 1,
+      "max_runtime_seconds": 1.8,
+      "frequency": "After each relevant edit; never launches builds or tests",
+      "changed_file_scope": "Current patch paths and changed Python text only",
+      "behavior": "blocking for protected paths, syntax, requests imports, secrets and new line-limit regressions; warning for research-risk heuristics",
+      "validation": ["protected paths", "secret redaction", "Python AST", "requests prohibition", "800-line ratchet", "parameter/default diff markers"],
+      "outputs": ["Model-visible denial or warning", "OS-temp touched-category record"],
+      "cache_strategy": "No cache; bounded per-patch inspection",
+      "success_reusable": false,
+      "reuse_conditions": "Not reusable because every patch differs"
+    },
+    {
+      "id": "integrity-targeted",
+      "trigger": "Stop and before git commit",
+      "purpose": "Run the minimal allowlisted focal tests and synthetic smoke required by changed categories.",
+      "order": 30,
+      "conditions": "Non-doc categories touched after session baseline and no exact success receipt.",
+      "tier": 2,
+      "max_runtime_seconds": 30,
+      "frequency": "Once per exact fingerprint, not after every edit",
+      "changed_file_scope": "Union of touched categories; staged paths for commit",
+      "behavior": "blocking on test failure, timeout, network/artifact attempt or missing interpreter; unsupported host interpreter warns but cannot satisfy Tier3",
+      "validation": ["changed-path Ruff checks", "allowlisted pytest union", "no-network/no-artifact synthetic BacktestEngine smoke for backtest-related scope"],
+      "outputs": ["Atomic OS-temp success receipt", "bounded command summary"],
+      "cache_strategy": "Content-addressed by HEAD, relevant safe-file hashes, category set, policy hash, interpreter and command plan",
+      "success_reusable": true,
+      "reuse_conditions": "Exact fingerprint and compatible interpreter only; failures are never cached"
+    },
+    {
+      "id": "evidence-contract",
+      "trigger": "PostToolUse after recognized experiment or report command",
+      "purpose": "Validate provenance artifacts without rerunning research or reading raw journals.",
+      "order": 40,
+      "conditions": "Recognized successful command and newly referenced manifest/report path.",
+      "tier": 2,
+      "max_runtime_seconds": 10,
+      "frequency": "Once per completed experiment/report artifact",
+      "changed_file_scope": "Generated manifest/report metadata only; raw journals are forbidden",
+      "behavior": "blocking feedback when provenance is absent, malformed, unhashed or inconsistent",
+      "validation": ["manifest schema", "run_id/result hash presence", "repository/dataset/external-input identity", "artifact paths remain in repository"],
+      "outputs": ["Evidence receipt referencing immutable manifest ids", "missing-evidence instructions"],
+      "cache_strategy": "Manifest content hash",
+      "success_reusable": true,
+      "reuse_conditions": "Exact immutable manifest hash; mutable external inputs require a fresh identity"
+    },
+    {
+      "id": "completion-engineering",
+      "trigger": "Explicit CLI validate --tier 3 and research-completion continuation",
+      "purpose": "Run the repository engineering completion suite only at a Tier 3 boundary.",
+      "order": 50,
+      "conditions": "Compatible Python 3.12/3.13 and no exact Tier3 receipt.",
+      "tier": 3,
+      "max_runtime_seconds": 900,
+      "frequency": "Before PR/release readiness or explicit completion; never after each edit",
+      "changed_file_scope": "Complete publish fingerprint",
+      "behavior": "blocking",
+      "validation": ["full pytest", "compileall", "build", "pip check", "Ruff debt ratchet"],
+      "outputs": ["Atomic Tier3 engineering receipt", "command/runtime/result ledger"],
+      "cache_strategy": "Exact publish fingerprint plus Python and dependency environment",
+      "success_reusable": true,
+      "reuse_conditions": "Exact fingerprint and environment only; PR creation checks this receipt"
+    },
+    {
+      "id": "research-verdict",
+      "trigger": "Stop for material research categories and before PR",
+      "purpose": "Require the minimum independent specialist verdict chain without launching nested Codex agents from hooks.",
+      "order": 60,
+      "conditions": "Material strategy, indicator, data, optimization, risk, execution, backtest, dependency or evidence scope.",
+      "tier": 3,
+      "max_runtime_seconds": 7200,
+      "frequency": "Once per exact material fingerprint at completion/publish boundaries",
+      "changed_file_scope": "Material publish fingerprint and referenced experiment manifests",
+      "behavior": "blocking continuation until mapped structured verdict receipts exist",
+      "validation": ["specialist identity", "allowed verdict token", "exact fingerprint", "required evidence headings", "known research blockers remain visible"],
+      "outputs": ["Specialist receipts", "exact next-agent/Skill continuation", "research verdict matrix"],
+      "cache_strategy": "Per-agent receipt keyed by source and evidence fingerprint",
+      "success_reusable": true,
+      "reuse_conditions": "Exact fingerprint and immutable evidence set; freshness-sensitive inputs invalidate reuse"
+    }
+  ],
+  "categories": {
+    "docs": ["*.md", "docs/**"],
+    "hooks": [".codex/hooks.json", ".codex/hooks/**", "tests/test_research_hooks.py", "docs/research/codex-hooks.md"],
+    "swing": ["strategies/swing_allocator.py", "strategies/swing_phase_policy.py", "strategies/swing_funding_overlay.py", "tools/swing_*.py", "docs/swing/**"],
+    "strategy": ["strategies/*.py", "strategies/registry.py"],
+    "indicator": ["strategies/indicators.py"],
+    "data": ["data/*.py", "strategies/macro_context.py", "strategies/market_context.py", "strategies/funding_context.py", "strategies/onchain_flow.py"],
+    "optimization": ["cli/backtest_cmds.py", "cli/compare_cmds.py", "tools/*sensitivity*.py", "tools/*ablation*.py", "tools/*matrix*.py", "tools/*frontier*.py", "tools/*bootstrap*.py", "tools/*rolling*.py", "tools/*stress*.py", "tools/*replay*.py"],
+    "risk": ["core/risk_manager.py", "core/prop_rules.py", "core/cft_monitor.py"],
+    "execution": ["core/exchange.py", "core/okx_demo_client.py", "strategies/funding_extreme.py"],
+    "backtest": ["core/backtest.py", "cli/runner.py", "reporting/experiment_manifest.py"],
+    "reporting": ["reporting/*.py", "tools/*report*.py", "tools/journal_summary.py"],
+    "dependency": ["pyproject.toml", "requirements.txt", ".github/workflows/**"]
+  },
+  "protected_patterns": [
+    ".env", "*.db", "*.sqlite", "*.sqlite3", "data/cache/**", "data/datasets/**",
+    "backtests/journal_*.json", "backtests/report_*.*", "backtests/manifests/**", "backtests/evidence/**",
+    "reports/**", "evidence/**", "logs/**", "graphify-out/**", "deploy/**", "strategies/pro_trend.py"
+  ],
+  "frozen_swing_markers": [
+    "regime_off_on_bear_onset", "bull_peak_ema50_cap_enabled", "bull_peak_ema50_cap",
+    "daily_on_closed_only", "delta_post_halving", "delta_bear_onset", "base_btc_pct",
+    "min_btc_pct", "max_btc_pct", "use_phase_policy_router", "phase_policy_profile",
+    "use_funding_overlay"
+  ],
+  "tier2_tests": {
+    "hooks": ["tests/test_research_hooks.py"],
+    "swing": ["tests/test_swing_allocator_controls.py", "tests/test_swing_funding_overlay.py", "tests/test_swing_v6_tools.py"],
+    "indicator": ["tests/test_indicator_time_contracts.py"],
+    "strategy": ["tests/test_registry.py"],
+    "data": ["tests/test_data_audit.py", "tests/test_funding_context.py", "tests/test_onchain_flow.py"],
+    "optimization": ["tests/test_runner_manifest.py"],
+    "risk": ["tests/test_risk_manager.py", "tests/test_prop_rules.py", "tests/test_cft_monitor.py"],
+    "execution": ["tests/test_backtest_execution.py", "tests/test_client_contract.py"],
+    "backtest": ["tests/test_backtest_execution.py", "tests/test_backtest_pnl.py", "tests/test_client_contract.py", "tests/test_runner_manifest.py", "tests/test_experiment_manifest.py"],
+    "reporting": ["tests/test_experiment_manifest.py", "tests/test_runner_manifest.py"],
+    "dependency": ["tests/test_settings.py", "tests/test_ruff_ratchet.py"]
+  },
+  "specialists": {
+    "hooks": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}],
+    "swing": [{"agent": "swing-domain-validator", "skill": "mati-swing-validator", "verdicts": ["ADOPT", "REJECT", "NEEDS_MORE_VALIDATION"]}],
+    "strategy": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "backtest-integrity-auditor", "skill": "quant-audit-backtest", "verdicts": ["VALID", "VALID_WITH_LIMITATIONS", "INVALID"]}],
+    "indicator": [{"agent": "data-integrity-auditor", "skill": "quant-validate-data", "verdicts": ["FIT", "FIT_WITH_LIMITATIONS", "NOT_FIT"]}, {"agent": "backtest-integrity-auditor", "skill": "quant-audit-backtest", "verdicts": ["VALID", "VALID_WITH_LIMITATIONS", "INVALID"]}],
+    "data": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "data-integrity-auditor", "skill": "quant-validate-data", "verdicts": ["FIT", "FIT_WITH_LIMITATIONS", "NOT_FIT"]}],
+    "optimization": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "robustness-statistician", "skill": "quant-test-robustness", "verdicts": ["ROBUST", "FRAGILE", "INCONCLUSIVE", "INVALID_INPUT"]}],
+    "risk": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "portfolio-risk-specialist", "skill": "quant-design-risk", "verdicts": ["ACCEPTABLE", "OVEREXPOSED", "UNDERDEFINED", "BLOCKED"]}],
+    "execution": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "execution-model-specialist", "skill": "quant-model-execution", "verdicts": ["CALIBRATED", "CONSERVATIVE_PROXY", "UNDERMODELLED", "INVALID"]}, {"agent": "backtest-integrity-auditor", "skill": "quant-audit-backtest", "verdicts": ["VALID", "VALID_WITH_LIMITATIONS", "INVALID"]}],
+    "backtest": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "backtest-integrity-auditor", "skill": "quant-audit-backtest", "verdicts": ["VALID", "VALID_WITH_LIMITATIONS", "INVALID"]}],
+    "reporting": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}, {"agent": "evidence-curator", "skill": "quant-curate-evidence", "verdicts": ["COMPLETE", "COMPLETE_WITH_LIMITATIONS", "INCOMPLETE"]}],
+    "dependency": [{"agent": "independent-code-reviewer", "skill": "quant-review-code", "verdicts": []}]
+  },
+  "specialist_registry": {
+    "hypothesis-researcher": {"skill": "quant-form-hypothesis", "verdicts": [], "passing": []},
+    "signal-researcher": {"skill": "quant-research-signals", "verdicts": ["SUPPORTED", "REJECTED", "INCONCLUSIVE"], "passing": ["SUPPORTED"]},
+    "strategy-engineer": {"skill": "quant-engineer-strategy", "verdicts": [], "passing": []},
+    "portfolio-risk-specialist": {"skill": "quant-design-risk", "verdicts": ["ACCEPTABLE", "OVEREXPOSED", "UNDERDEFINED", "BLOCKED"], "passing": ["ACCEPTABLE"]},
+    "data-integrity-auditor": {"skill": "quant-validate-data", "verdicts": ["FIT", "FIT_WITH_LIMITATIONS", "NOT_FIT"], "passing": ["FIT", "FIT_WITH_LIMITATIONS"]},
+    "execution-model-specialist": {"skill": "quant-model-execution", "verdicts": ["CALIBRATED", "CONSERVATIVE_PROXY", "UNDERMODELLED", "INVALID"], "passing": ["CALIBRATED", "CONSERVATIVE_PROXY"]},
+    "backtest-integrity-auditor": {"skill": "quant-audit-backtest", "verdicts": ["VALID", "VALID_WITH_LIMITATIONS", "INVALID"], "passing": ["VALID", "VALID_WITH_LIMITATIONS"]},
+    "research-systems-engineer": {"skill": "quant-engineer-research-systems", "verdicts": [], "passing": []},
+    "experiment-operator": {"skill": "quant-run-experiment", "verdicts": [], "passing": []},
+    "performance-analyst": {"skill": "quant-analyze-performance", "verdicts": ["HEALTHY", "CONCENTRATED", "ASYMMETRIC_RISK", "INSUFFICIENT_SAMPLE"], "passing": ["HEALTHY"]},
+    "robustness-statistician": {"skill": "quant-test-robustness", "verdicts": ["ROBUST", "FRAGILE", "INCONCLUSIVE", "INVALID_INPUT"], "passing": ["ROBUST"]},
+    "evidence-curator": {"skill": "quant-curate-evidence", "verdicts": ["COMPLETE", "COMPLETE_WITH_LIMITATIONS", "INCOMPLETE"], "passing": ["COMPLETE", "COMPLETE_WITH_LIMITATIONS"]},
+    "independent-code-reviewer": {"skill": "quant-review-code", "verdicts": [], "passing": []},
+    "swing-domain-validator": {"skill": "mati-swing-validator", "verdicts": ["ADOPT", "REJECT", "NEEDS_MORE_VALIDATION"], "passing": ["ADOPT"]}
+  },
+  "skill_registry": [
+    "mati-swing-validator", "quant-analyze-performance", "quant-audit-backtest",
+    "quant-curate-evidence", "quant-design-risk", "quant-engineer-research-systems",
+    "quant-engineer-strategy", "quant-form-hypothesis", "quant-model-execution",
+    "quant-orchestrate-research", "quant-research-signals", "quant-review-code",
+    "quant-run-experiment", "quant-test-robustness", "quant-validate-data"
+  ],
+  "specialist_receipt_schema": {
+    "required": [
+      "completed", "gate_passed", "agent", "skill", "fingerprint", "verdict",
+      "commands", "artifacts", "manifests", "hashes", "dataset_identity",
+      "revision_tree_state", "limitations", "negative_evidence", "permissible_downstream_claims"
+    ],
+    "rule": "completed and gate_passed are distinct; invalid, negative, blocked, fragile or incomplete verdicts are completed evidence but never passing gates"
+  },
+  "known_blockers": [
+    "fill_next_open causality is unresolved and blocks trustworthy research conclusions",
+    "Scalp multi-timeframe alignment requires an independent closed-period audit",
+    "mutable or revised external inputs require content identities; unhashed inputs invalidate evidence",
+    "legacy manifests without current repository/dataset/external-input identities are not confirmatory evidence",
+    "the canonical BTC cache contains 474 known identical duplicates; drift must be checked against the contract rather than raw data-audit exit status"
+  ],
+  "forbidden_commands": [
+    "python main.py start", "python main.py stop", "tools/paper_fleet_setup.py", "tools/okx_demo_smoke.py",
+    "tools/audit_costs.py", "tools/audit_equity_recon.py", "tools/monthly_dist.py"
+  ],
+  "tier3_commands": [
+    ["-m", "pytest", "-q"],
+    ["-m", "compileall", "-q", "."],
+    ["-m", "build"],
+    ["-m", "pip", "check"],
+    ["tools/ruff_ratchet.py"]
+  ]
+}

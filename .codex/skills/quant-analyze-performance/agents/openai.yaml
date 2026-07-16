@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Performance Analysis"
+  short_description: "Diagnose equity, drawdowns, trades, and risk metrics."
+  default_prompt: "Use $quant-analyze-performance to diagnose these strategy results."

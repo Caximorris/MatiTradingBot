@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Research Systems"
+  short_description: "Implement reproducible offline research infrastructure."
+  default_prompt: "Use $quant-engineer-research-systems to implement this approved research-infrastructure change."

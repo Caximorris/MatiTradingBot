@@ -34,6 +34,7 @@ def _v6_config() -> dict:
         "use_phase_policy_router": True,
         "phase_policy_profile": "v5_equiv",
         "use_funding_overlay": True,
+        "funding_overlay_source": "okx",
         "funding_overlay_phases": "accumulation",
         "funding_overlay_delta": 0.05,
         "funding_low_pctile": 0.10,

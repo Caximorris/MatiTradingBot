@@ -43,6 +43,19 @@ if TYPE_CHECKING:
     from core.risk_manager import RiskManager
 
 _ROOT = Path(__file__).resolve().parents[1]
+_MANIFEST_LOADS: dict[str, list[tuple[int, float]]] = {}
+_MANIFEST_CONSUMED: dict[str, list[int]] = {}
+
+
+def reset_manifest_load(symbol: str) -> None:
+    _MANIFEST_LOADS.pop(symbol.upper(), None)
+    _MANIFEST_CONSUMED.pop(symbol.upper(), None)
+
+
+def mark_manifest_funding_consumed(symbol: str, timestamp_ms: int | None = None) -> None:
+    """Record an actual rate-dependent decision or accounting use for provenance."""
+    key = symbol.upper()
+    _MANIFEST_CONSUMED.setdefault(key, []).append(-1 if timestamp_ms is None else timestamp_ms)
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +107,12 @@ def load_funding(symbol: str) -> list[tuple[int, float]]:
     sym = symbol.replace("-", "").upper()
     path = _ROOT / "data" / "cache" / f"funding_bybit_{sym}.json"
     if not path.exists():
+        _MANIFEST_LOADS[symbol.upper()] = []
         return []
     rows = [(int(ts), float(rate)) for ts, rate in json.load(open(path))]
-    return sorted(rows)
+    ordered = sorted(rows)
+    _MANIFEST_LOADS[symbol.upper()] = ordered
+    return ordered
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +197,8 @@ class FundingExtremeBot(BaseStrategy):
         self._signals = build_funding_signals(
             self._settlements, config.pctile_window, config.p_hi, config.p_lo,
             config.use_hi, config.use_lo, config.dedup_hours)
+        if self._settlements:
+            mark_manifest_funding_consumed(config.symbol)
         self._sig_idx = 0
         self._settle_idx = 0
         if not self._settlements:

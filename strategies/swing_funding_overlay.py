@@ -1,7 +1,8 @@
-"""Funding-extreme overlay for Swing Allocator v6 research."""
+"""Point-in-time funding overlay for Swing Allocator v6 research and paper runs."""
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -9,31 +10,108 @@ from typing import Any
 
 import pandas as pd
 
+from strategies.funding_coverage import (
+    CoverageEvidenceError,
+    coverage_evidence_for,
+    coverage_manifest_record,
+)
+
+
 _ROOT = Path(__file__).resolve().parents[1]
+_MAX_SNAPSHOT_AGE_MS = 26 * 60 * 60 * 1000
+_SOURCES = {"bybit": "Bybit", "okx": "OKX"}
+_MANIFEST_ACCESSES: dict[str, list[datetime]] = {}
+_MANIFEST_COVERAGE: dict[str, dict[str, str]] = {}
 
 
-def funding_cache_path(symbol: str) -> Path:
-    sym = symbol.replace("-", "").upper()
-    return _ROOT / "data" / "cache" / f"funding_bybit_{sym}.json"
+class FundingOverlayError(RuntimeError):
+    """The enabled funding overlay lacks a usable point-in-time snapshot."""
 
 
-def _cache_mtime(symbol: str) -> float:
-    path = funding_cache_path(symbol)
+def funding_source(value: Any = "bybit") -> str:
+    """Return a supported source from a config object or an explicit source name."""
+    raw = value if isinstance(value, str) else getattr(value, "funding_overlay_source", "bybit")
+    source = str(raw or "bybit").strip().lower()
+    if source not in _SOURCES:
+        raise FundingOverlayError(f"unsupported funding overlay source: {raw!r}")
+    return source
+
+
+def funding_market(symbol: str, source: str = "bybit") -> str:
+    """Map the strategy spot symbol to the venue's perpetual funding instrument."""
+    source = funding_source(source)
+    compact = symbol.upper().replace("_", "-").replace("/", "-")
+    base = compact.split("-", maxsplit=1)[0]
+    if "-" not in compact and compact.endswith("USDT"):
+        base = compact[:-4]
+    if not base:
+        raise FundingOverlayError(f"cannot derive funding market from {symbol!r}")
+    return f"{base}-USDT" if source == "bybit" else f"{base}-USDT-SWAP"
+
+
+def funding_cache_path(symbol: str, source: str = "bybit") -> Path:
+    source = funding_source(source)
+    market = funding_market(symbol, source)
+    cache_market = market.replace("-", "") if source == "bybit" else market
+    return _ROOT / "data" / "cache" / f"funding_{source}_{cache_market}.json"
+
+
+def _manifest_key(symbol: str, source: str) -> str:
+    return f"{funding_source(source)}:{funding_market(symbol, source)}"
+
+
+def reset_manifest_accesses(symbol: str, source: str = "bybit") -> None:
+    key = _manifest_key(symbol, source)
+    _MANIFEST_ACCESSES[key] = []
+    _MANIFEST_COVERAGE.pop(key, None)
+
+
+def manifest_accesses(symbol: str, source: str = "bybit") -> list[datetime]:
+    return _MANIFEST_ACCESSES.get(_manifest_key(symbol, source), [])
+
+
+def manifest_coverage(symbol: str, source: str = "bybit") -> dict[str, str] | None:
+    return _MANIFEST_COVERAGE.get(_manifest_key(symbol, source))
+
+
+def _cache_mtime(symbol: str, source: str) -> float:
+    path = funding_cache_path(symbol, source)
     return path.stat().st_mtime if path.exists() else 0.0
 
 
-def load_funding_rows(symbol: str) -> list[tuple[int, float]]:
-    path = funding_cache_path(symbol)
+def load_funding_rows(symbol: str, source: str = "bybit") -> list[tuple[int, float]]:
+    source = funding_source(source)
+    path = funding_cache_path(symbol, source)
     if not path.exists():
-        return []
-    return [(int(ts), float(rate)) for ts, rate in json.load(open(path, encoding="utf-8"))]
+        raise FundingOverlayError(f"{source} funding overlay cache is missing: {path}")
+    try:
+        with path.open(encoding="utf-8") as handle:
+            raw_rows = json.load(handle)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise FundingOverlayError(f"{source} funding overlay cache is unreadable: {path}") from exc
+    if not isinstance(raw_rows, list) or not raw_rows:
+        raise FundingOverlayError(f"{source} funding overlay cache is empty: {path}")
+
+    rows: list[tuple[int, float]] = []
+    for row in raw_rows:
+        try:
+            ts_ms, rate = int(row[0]), float(row[1])
+        except (IndexError, TypeError, ValueError) as exc:
+            raise FundingOverlayError(
+                f"{source} funding overlay cache has an invalid row: {path}"
+            ) from exc
+        if ts_ms <= 0 or not math.isfinite(rate):
+            raise FundingOverlayError(f"{source} funding overlay cache has an invalid value: {path}")
+        rows.append((ts_ms, rate))
+    return sorted(rows)
 
 
-def last_settlement_ms(symbol: str) -> int | None:
-    """Timestamp (ms) del ultimo settlement cacheado, o None si no hay datos.
-    Sirve para vigilar frescura del cache: en vivo el overlay solo puede disparar
-    si el pipeline (tools/funding_refresh.py) mantiene este archivo al dia."""
-    rows = load_funding_rows(symbol)
+def last_settlement_ms(symbol: str, source: str = "bybit") -> int | None:
+    """Timestamp of the latest cached final settlement, or ``None`` when unavailable."""
+    try:
+        rows = load_funding_rows(symbol, source)
+    except FundingOverlayError:
+        return None
     return max((ts for ts, _ in rows), default=None)
 
 
@@ -87,17 +165,20 @@ def active_overlay_at(
 
 
 def funding_overlay_adjustment(symbol: str, now: datetime, phase: str, cfg: Any) -> tuple[float, str | None]:
-    # El mtime del cache entra en la clave del lru_cache: un proceso live que corre
-    # semanas debe recomputar cuando el pipeline refresca el archivo de funding.
-    # Sin esto, _cached_events congelaria los eventos calculados en el primer tick.
+    source = funding_source(cfg)
+    key = _manifest_key(symbol, source)
+    _MANIFEST_ACCESSES.setdefault(key, []).append(now)
+    rows = load_funding_rows(symbol, source)
+    _require_fresh_snapshot(rows, now, symbol, source)
     events = _cached_events(
+        source,
         symbol,
         int(getattr(cfg, "funding_overlay_lookback_settlements", 90)),
         float(getattr(cfg, "funding_low_pctile", 0.10)),
         float(getattr(cfg, "funding_high_pctile", 0.90)),
         int(getattr(cfg, "funding_overlay_dedup_days", 7)),
         int(getattr(cfg, "funding_overlay_ttl_days", 7)),
-        _cache_mtime(symbol),
+        _cache_mtime(symbol, source),
     )
     return active_overlay_at(
         events,
@@ -108,18 +189,67 @@ def funding_overlay_adjustment(symbol: str, now: datetime, phase: str, cfg: Any)
     )
 
 
+def _require_fresh_snapshot(
+    rows: list[tuple[int, float]], now: datetime, symbol: str, source: str = "bybit"
+) -> None:
+    source = funding_source(source)
+    key = _manifest_key(symbol, source)
+    market, venue = funding_market(symbol, source), _SOURCES[source]
+    now_ms = int(_utc_timestamp(now).timestamp() * 1000)
+    settled = [ts_ms for ts_ms, _ in rows if ts_ms <= now_ms]
+    if not settled:
+        evidence = coverage_evidence_for(market, venue)
+        if evidence is None:
+            _MANIFEST_COVERAGE[key] = coverage_manifest_record(
+                None, "truncated_snapshot", "unavailable_evidence"
+            )
+            raise FundingOverlayError(
+                f"{source} funding overlay snapshot for {market} is truncated_snapshot: "
+                "unavailable_evidence"
+            )
+        try:
+            evidence.validate(market, venue)
+        except CoverageEvidenceError as exc:
+            raise FundingOverlayError(
+                f"{source} funding overlay snapshot for {market} is malformed_snapshot: {exc}"
+            ) from exc
+        if now < evidence.series_start:
+            _MANIFEST_COVERAGE[key] = coverage_manifest_record(
+                evidence, "proven_pre_listing", evidence.validity_rule
+            )
+            return
+        _MANIFEST_COVERAGE[key] = coverage_manifest_record(
+            evidence, "incomplete_historical_coverage", "evidence does not establish pre-listing"
+        )
+        raise FundingOverlayError(
+            f"{source} funding overlay snapshot for {market} is incomplete_historical_coverage"
+        )
+    latest = max(settled)
+    if now_ms - latest > _MAX_SNAPSHOT_AGE_MS:
+        raise FundingOverlayError(
+            f"{source} funding overlay snapshot for {market} is stale at "
+            f"{now.isoformat()}: latest settlement is "
+            f"{datetime.fromtimestamp(latest / 1000, tz=timezone.utc).isoformat()}"
+        )
+    _MANIFEST_COVERAGE[key] = coverage_manifest_record(
+        coverage_evidence_for(market, venue), "complete_covered_period",
+        "settlement coverage reaches the simulated timestamp",
+    )
+
+
 @lru_cache(maxsize=64)
 def _cached_events(
+    source: str,
     symbol: str,
     lookback: int,
     low_pctile: float,
     high_pctile: float,
     dedup_days: int,
     ttl_days: int,
-    mtime: float,  # solo para invalidar la cache cuando cambia el archivo
+    mtime: float,
 ) -> pd.DataFrame:
     return build_overlay_events(
-        load_funding_rows(symbol), lookback, low_pctile, high_pctile, dedup_days, ttl_days
+        load_funding_rows(symbol, source), lookback, low_pctile, high_pctile, dedup_days, ttl_days
     )
 
 

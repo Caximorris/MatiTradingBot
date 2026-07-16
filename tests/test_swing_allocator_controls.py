@@ -368,6 +368,33 @@ def test_funding_overlay_adds_to_phase_router_target(monkeypatch):
     assert bot._compute_target(0.6) == (pytest.approx(0.65), ["funding_overlay_low_test"])
 
 
+def test_enabled_funding_overlay_failure_aborts_target_calculation(monkeypatch):
+    import strategies.swing_funding_overlay as overlay
+
+    monkeypatch.setattr(
+        overlay,
+        "funding_overlay_adjustment",
+        lambda *_args: (_ for _ in ()).throw(overlay.FundingOverlayError("stale cache")),
+    )
+    bot = SwingAllocatorBot(
+        client=BacktestClient(),
+        config=SwingAllocatorConfig(
+            use_phase_policy_router=True,
+            phase_policy_profile="v5_equiv",
+            use_funding_overlay=True,
+        ),
+    )
+    bot._get_daily_indicators = lambda: {
+        "ema50d": 100.0, "ema200d": 90.0, "adx": 10.0, "ema50d_closed": 100.0,
+    }
+    bot._get_4h_context = lambda: None
+    bot._get_macro_context = lambda: {"halving_phase": "accumulation"}
+    bot._get_market_context = lambda: None
+
+    with pytest.raises(overlay.FundingOverlayError, match="stale cache"):
+        bot._compute_target(0.6)
+
+
 def _target_for_phase_policy_case(phase: str, regime: str, price: Decimal, use_router: bool):
     cfg = SwingAllocatorConfig(
         use_phase_policy_router=use_router,

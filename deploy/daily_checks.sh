@@ -11,14 +11,14 @@ mkdir -p "$APP_DIR/data/runtime"
 
 echo "===== daily_checks $(date -u +%Y-%m-%dT%H:%M:%SZ) =====" >> "$LOG"
 
-# Pipeline de funding vivo (v6): mantiene data/cache/funding_bybit_BTCUSDT.json al dia.
-# Sin esto el overlay del Swing v6 nunca dispara en accumulation. Umbral 26h > cadencia
-# diaria + margen; si Bybit no responde varios dias, el STALE avisa por Telegram.
-funding_out=$("$PY" "$APP_DIR/tools/funding_refresh.py" --stale-hours 26 2>&1)
+# Pipeline forward de funding (v6): mantiene el snapshot OKX versionado por fuente.
+# Sin un snapshot fresco el overlay habilitado falla cerrado; el umbral 26h deja margen
+# sobre la cadencia diaria sin sustituir la configuracion por v5.
+funding_out=$("$PY" "$APP_DIR/tools/funding_refresh.py" --source okx --stale-hours 26 2>&1)
 funding_rc=$?
 echo "$funding_out" >> "$LOG"
 if [ $funding_rc -ne 0 ]; then
-    "$PY" "$APP_DIR/tools/tg_send.py" "ALERTA FUNDING (v6): cache de funding sin actualizar. El overlay del Swing v6 degrada a v5 en silencio. Detalle: ${funding_out}"
+    "$PY" "$APP_DIR/tools/tg_send.py" "ALERTA FUNDING (v6): snapshot OKX sin actualizar. El overlay Swing habilitado falla cerrado; no degrada a v5. Detalle: ${funding_out}"
 fi
 
 parity_out=$("$PY" "$APP_DIR/tools/swing_parity_check.py" 2>&1)

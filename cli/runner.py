@@ -54,19 +54,46 @@ def _run_backtest(
     """
     from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn, SpinnerColumn
     from core.backtest import BacktestClient, BacktestEngine, fetch_historical_bars
-    from strategies.macro_context  import load_macro_context
+    from strategies.macro_context import load_macro_context
     from strategies.market_context import load_market_context
     from strategies.funding_context import load_funding_history
     from strategies.onchain_flow import load_flow_context
-
-    # Carga unica de datos macro, mercado y funding antes de la simulacion
-    load_macro_context(from_dt, to_dt, symbol)
-    load_market_context(from_dt, to_dt)
-    load_funding_history(symbol, from_dt, to_dt)
-    load_flow_context(from_dt, to_dt, symbol)   # EXP-014/015 — no-op si falla la red
-
     from strategies.registry import get as _get_strategy
-    meta        = _get_strategy(strat_type)
+
+    meta = _get_strategy(strat_type)
+
+    from reporting.experiment_manifest import external_context_requirements
+
+    preflight_config = meta.make_config(symbol.upper(), config)
+    effective_config = (
+        preflight_config.to_dict() if hasattr(preflight_config, "to_dict") else dict(config)
+    )
+    context_requirements = external_context_requirements(meta.name, effective_config)
+    # Only load declared data dependencies. This prevents a manifest from implying
+    # consumption of an eager, irrelevant network context.
+    if context_requirements["macro"]:
+        load_macro_context(from_dt, to_dt, symbol)
+    if context_requirements["market"]:
+        load_market_context(from_dt, to_dt)
+    # Pro Trend uses its own immutable OKX context snapshots. Swing's OKX
+    # overlay is a prebuilt local settlement cache and must never fetch mutable
+    # network data as a side effect of a backtest.
+    if context_requirements["okx_funding"] and meta.name == "pro_trend":
+        load_funding_history(symbol, from_dt, to_dt)
+    if context_requirements["flow"]:
+        load_flow_context(from_dt, to_dt, symbol)
+    if meta.name in {"basis_carry", "funding_extreme", "prop_swing"}:
+        from strategies.funding_extreme import reset_manifest_load
+
+        reset_manifest_load(symbol)
+    elif (
+        meta.name == "swing_allocator"
+        and (context_requirements["bybit_funding"] or context_requirements["okx_funding"])
+    ):
+        from strategies.swing_funding_overlay import reset_manifest_accesses
+
+        reset_manifest_accesses(symbol, effective_config.get("funding_overlay_source", "bybit"))
+
     WARMUP_DAYS = meta.warmup_days
     warmup_start = from_dt - timedelta(days=WARMUP_DAYS)
     label       = meta.display_name
@@ -114,7 +141,6 @@ def _run_backtest(
         )
 
         def on_tick(done: int, total: int) -> None:
-            pct = done / total if total else 0
             # Estima equity actual sin acceder al motor
             progress.update(sim_task, completed=done,
                             detail=f"{done:,}/{total:,} barras")
@@ -131,6 +157,7 @@ def _run_backtest(
             engine = BacktestEngine(bt_client=bt_client, strategy_factory=factory,
                                     warmup_bars=engine_warmup, timeframe=timeframe)
             result = engine.run(on_tick=on_tick)
+            artifact_paths: list[str] = []
 
             # Escribir journal de trades con todos los indicadores y contexto
             strat = engine.last_strategy
@@ -167,6 +194,7 @@ def _run_backtest(
                 "start_date":           result.start_date,
                 "end_date":             result.end_date,
             }
+            evidence_messages: list[str] = []
 
             if strat is not None and hasattr(strat, "_journal") and strat._journal:
                 from reporting.trade_journal import write_journal
@@ -182,16 +210,14 @@ def _run_backtest(
                     resolved_config=resolved_config,
                     backtest_summary=backtest_summary,
                 )
-                if journal_out is not None:
-                    journal_out.append(journal_path)
-                else:
-                    console.print(f"[dim]Journal guardado -> {journal_path}[/dim]")
+                evidence_messages.append(f"[dim]Journal guardado -> {journal_path}[/dim]")
+                artifact_paths.append(journal_path)
 
             # Journal de rebalanceos para Swing Allocator
             if strat is not None and hasattr(strat, "_rebalance_log") and strat._rebalance_log:
                 from reporting.swing_journal import write_swing_journal
                 _base_ccy     = symbol.split("-")[0]
-                _final_balance_raw = bt_client.get_balance()
+                _final_balance_raw = bt_client._get_total_balance()
                 _final_btc    = float(_final_balance_raw.get(_base_ccy, 0))
                 swing_path = write_swing_journal(
                     rebalance_log=strat._rebalance_log,
@@ -213,17 +239,58 @@ def _run_backtest(
                 _init_px = _init_ev["price"] if _init_ev else 0.0
                 _bnh_btc = (float(bt_client.initial_balance) / _init_px) if _init_px > 0 else 0.0
                 _ratio   = (_final_btc / _bnh_btc) if _bnh_btc > 0 else 0.0
-                if journal_out is not None:
-                    journal_out.append(swing_path)
-                else:
-                    console.print(f"[dim]Swing journal -> {swing_path}[/dim]")
-                    _rc = "green" if _ratio >= 1.0 else "red"
-                    console.print(
-                        f"[bold]BTC vs B&H:[/bold] [{_rc}]{_ratio:.4f}[/{_rc}]  "
-                        f"(final {_final_btc:.4f} BTC vs B&H {_bnh_btc:.4f})"
-                    )
+                _rc = "green" if _ratio >= 1.0 else "red"
+                evidence_messages.extend((
+                    f"[dim]Swing journal -> {swing_path}[/dim]",
+                    f"[bold]BTC vs B&H:[/bold] [{_rc}]{_ratio:.4f}[/{_rc}]  "
+                    f"(final {_final_btc:.4f} BTC vs B&H {_bnh_btc:.4f})",
+                ))
+
+                artifact_paths.append(swing_path)
+
+            from reporting.experiment_manifest import (
+                capture_external_contexts,
+                write_experiment_evidence,
+            )
+            manifest_path = write_experiment_evidence(
+                created_artifacts=artifact_paths,
+                external_context_builder=lambda: capture_external_contexts(
+                    requirements=context_requirements,
+                    resolved_strategy=meta.name,
+                    symbol=symbol,
+                    effective_from=result.start_date,
+                    effective_to=result.end_date,
+                    config=resolved_config,
+                ),
+                result=result,
+                requested_strategy=strat_type,
+                resolved_strategy=meta.name,
+                config_overrides=config if config else {},
+                resolved_config=resolved_config,
+                symbol=symbol,
+                timeframe=timeframe,
+                requested_from=from_dt,
+                requested_to=to_dt,
+                warmup_bars=engine_warmup,
+                initial_balance=bt_client.initial_balance,
+                cost_mode=cost_mode,
+                fee_rate=bt_client._fee_rate,
+                slippage_bps=bt_client._slippage_bps,
+                fill_next_open=bt_client.fill_next_open,
+                bars=all_bars,
+                artifacts=artifact_paths,
+                context_requirements=context_requirements,
+                seed=None,
+            )
+            if journal_out is not None:
+                journal_out.extend(artifact_paths)
+            else:
+                for message in evidence_messages:
+                    console.print(message)
+            if journal_out is None:
+                console.print(f"[dim]Experiment manifest -> {manifest_path}[/dim]")
 
             return result
-        except Exception as exc:
-            logger.debug("Error en backtest {}: {}", strat_type, exc)
-            return None
+        except Exception:
+            logger.exception("Backtest {} no produjo evidencia completa", strat_type)
+            raise

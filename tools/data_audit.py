@@ -16,6 +16,7 @@ La comparacion cross-exchange (OKX vs Binance/Kraken) es research/audit-only y v
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import urllib.request
 from datetime import datetime, timezone
@@ -27,6 +28,7 @@ from data.market_data import OHLCVBar
 # SwingAllocatorConfig.max_price_jump_pct = 0.25, algo mas laxo para no marcar crashes reales).
 _JUMP_WARN = 0.30
 _JUMP_HARD = 0.60
+_DATASET_IDENTITY_SCHEMA = 1
 
 
 def _rows_to_bars(meta: dict) -> list[OHLCVBar]:
@@ -38,14 +40,47 @@ def _rows_to_bars(meta: dict) -> list[OHLCVBar]:
     ]
 
 
-def _find_duplicates(bars: list[OHLCVBar]) -> list[int]:
-    seen: set[int] = set()
-    dups: list[int] = []
-    for b in bars:
-        if b.timestamp in seen:
-            dups.append(b.timestamp)
-        seen.add(b.timestamp)
-    return dups
+def _bar_record(bar: OHLCVBar) -> tuple[int, str, str, str, str, str]:
+    return (
+        int(bar.timestamp), str(bar.open), str(bar.high), str(bar.low),
+        str(bar.close), str(bar.volume),
+    )
+
+
+def _duplicate_summary(bars: list[OHLCVBar]) -> dict:
+    by_timestamp: dict[int, list[tuple[int, str, str, str, str, str]]] = {}
+    seen_rows: set[tuple[int, str, str, str, str, str]] = set()
+    exact_rows = 0
+    for bar in bars:
+        record = _bar_record(bar)
+        if record in seen_rows:
+            exact_rows += 1
+        seen_rows.add(record)
+        by_timestamp.setdefault(record[0], []).append(record)
+
+    collisions = {
+        timestamp: records for timestamp, records in by_timestamp.items()
+        if len(records) > 1
+    }
+    conflicting = {
+        timestamp: records for timestamp, records in collisions.items()
+        if len(set(records)) > 1
+    }
+    samples = [
+        {
+            "timestamp_utc": datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc).isoformat(),
+            "rows": len(records),
+            "classification": "conflicting_timestamp_collision"
+            if timestamp in conflicting else "identical_ohlcv_duplicate",
+        }
+        for timestamp, records in sorted(collisions.items())[:10]
+    ]
+    return {
+        "timestamp_collisions": sum(len(records) - 1 for records in collisions.values()),
+        "identical_ohlcv_rows": exact_rows,
+        "conflicting_timestamp_rows": sum(len(records) - 1 for records in conflicting.values()),
+        "samples": samples,
+    }
 
 
 def _find_outliers(bars: list[OHLCVBar]) -> list[dict]:
@@ -70,9 +105,98 @@ def _find_outliers(bars: list[OHLCVBar]) -> list[dict]:
     return out
 
 
-def _monotonic(bars: list[OHLCVBar]) -> int:
-    """Numero de pares fuera de orden temporal (deberia ser 0: UTC ascendente)."""
-    return sum(1 for a, b in zip(bars, bars[1:]) if b.timestamp <= a.timestamp)
+def _ordering_summary(bars: list[OHLCVBar]) -> dict:
+    """Return non-increasing and strictly descending timestamp defects."""
+    non_increasing = 0
+    descending = 0
+    samples: list[dict] = []
+    for index, (previous, current) in enumerate(zip(bars, bars[1:]), start=1):
+        if current.timestamp > previous.timestamp:
+            continue
+        non_increasing += 1
+        if current.timestamp < previous.timestamp:
+            descending += 1
+            kind = "descending_timestamp"
+        else:
+            kind = "repeated_timestamp"
+        if len(samples) < 10:
+            samples.append({
+                "row_index": index,
+                "previous_utc": datetime.fromtimestamp(
+                    previous.timestamp / 1000, tz=timezone.utc
+                ).isoformat(),
+                "current_utc": datetime.fromtimestamp(
+                    current.timestamp / 1000, tz=timezone.utc
+                ).isoformat(),
+                "kind": kind,
+            })
+    return {
+        "non_increasing_pairs": non_increasing,
+        "descending_pairs": descending,
+        "samples": samples,
+    }
+
+
+def dataset_identity(meta: dict, bars: list[OHLCVBar]) -> dict:
+    """Return a deterministic, content-addressed identity without writing data."""
+    rows = [_bar_record(bar) for bar in bars]
+    content = json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    timestamps = json.dumps([row[0] for row in rows], separators=(",", ":")).encode("utf-8")
+    first_timestamp = min((row[0] for row in rows), default=None)
+    last_timestamp = max((row[0] for row in rows), default=None)
+    fingerprint = hashlib.sha256(content).hexdigest()
+    return {
+        "schema_version": _DATASET_IDENTITY_SCHEMA,
+        "dataset_version": f"ohlcv-v{_DATASET_IDENTITY_SCHEMA}-{fingerprint[:12]}",
+        "content_sha256": fingerprint,
+        "timestamps_sha256": hashlib.sha256(timestamps).hexdigest(),
+        "symbol": str(meta.get("symbol", "")),
+        "bar": str(meta.get("bar", "")),
+        "complete": bool(meta.get("complete")),
+        "row_count": len(rows),
+        "distinct_timestamp_count": len({row[0] for row in rows}),
+        "coverage": {
+            "first_timestamp_ms": first_timestamp,
+            "last_timestamp_ms": last_timestamp,
+            "first_utc": _timestamp_iso(first_timestamp),
+            "last_utc": _timestamp_iso(last_timestamp),
+        },
+    }
+
+
+def _timestamp_iso(timestamp_ms: int | None) -> str | None:
+    if timestamp_ms is None:
+        return None
+    return datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
+
+
+def _comparability(identity: dict, duplicates: dict, ordering: dict, hard_outliers: int) -> dict:
+    warnings = [
+        "Compare runs only when symbol, bar, and dataset_version are identical."
+    ]
+    if not identity["complete"]:
+        warnings.append("Cache coverage is incomplete; results are not comparable to complete-cache runs.")
+    if duplicates["identical_ohlcv_rows"]:
+        warnings.append(
+            "Identical OHLCV duplicates are retained; duplicate count and dataset_version must match."
+        )
+    if duplicates["conflicting_timestamp_rows"]:
+        warnings.append("Conflicting timestamp collisions invalidate result comparability.")
+    if ordering["descending_pairs"]:
+        warnings.append("Descending timestamps invalidate result comparability.")
+    if hard_outliers:
+        warnings.append("Hard OHLCV anomalies invalidate result comparability pending investigation.")
+
+    blocking = (
+        not identity["complete"]
+        or duplicates["conflicting_timestamp_rows"] > 0
+        or ordering["descending_pairs"] > 0
+        or hard_outliers > 0
+    )
+    return {
+        "status": "NOT_COMPARABLE" if blocking else "MATCH_DATASET_VERSION_REQUIRED",
+        "warnings": warnings,
+    }
 
 
 def audit_cache(symbol: str = "BTC-USDT", bar: str = "1H") -> dict:
@@ -84,24 +208,35 @@ def audit_cache(symbol: str = "BTC-USDT", bar: str = "1H") -> dict:
 
     bars = _rows_to_bars(meta)
     n_gaps, max_gap = ohlcv_cache.contiguity_report(bars, bar)
-    dups = _find_duplicates(bars)
+    duplicates = _duplicate_summary(bars)
+    ordering = _ordering_summary(bars)
     outliers = _find_outliers(bars)
     hard = [o for o in outliers if o["kind"] in ("high<low", "non-positive-price", "hard-jump")]
-    lo = datetime.fromtimestamp(bars[0].timestamp / 1000, tz=timezone.utc) if bars else None
-    hi = datetime.fromtimestamp(bars[-1].timestamp / 1000, tz=timezone.utc) if bars else None
+    identity = dataset_identity(meta, bars)
+    comparability = _comparability(identity, duplicates, ordering, len(hard))
 
     return {
         "symbol": symbol, "bar": bar, "exists": True,
         "complete": bool(meta.get("complete")),
         "n_bars": len(bars),
-        "range": [lo.isoformat() if lo else None, hi.isoformat() if hi else None],
+        "range": [identity["coverage"]["first_utc"], identity["coverage"]["last_utc"]],
         "n_gaps": n_gaps, "max_gap_bars": max_gap,
-        "n_duplicates": len(dups),
+        "n_duplicates": duplicates["timestamp_collisions"],
+        "duplicate_summary": duplicates,
         "n_outliers": len(outliers),
         "n_hard_outliers": len(hard),
-        "out_of_order_pairs": _monotonic(bars),
+        "out_of_order_pairs": ordering["non_increasing_pairs"],
+        "ordering_summary": ordering,
         "outlier_samples": outliers[:10],
-        "clean": (n_gaps == 0 and not dups and not hard and _monotonic(bars) == 0),
+        "dataset_identity": identity,
+        "comparability": comparability,
+        "read_only": True,
+        "clean": (
+            n_gaps == 0
+            and duplicates["timestamp_collisions"] == 0
+            and not hard
+            and ordering["non_increasing_pairs"] == 0
+        ),
     }
 
 
@@ -140,7 +275,7 @@ def audit_recent_okx(symbol: str = "BTC-USDT", bar: str = "1H",
         "age_min": round(age_min, 1),
         "stale": age_min > step_min * 2,   # >2 barras sin actualizar = sospechoso
         "n_gaps": n_gaps, "max_gap_bars": max_gap,
-        "n_duplicates": len(_find_duplicates(bars)),
+        "n_duplicates": _duplicate_summary(bars)["timestamp_collisions"],
     }
 
 
@@ -156,9 +291,18 @@ def format_report(cache: dict, live: dict | None = None) -> str:
             f"- Rango: {(cache['range'][0] or '?')[:10]} -> {(cache['range'][1] or '?')[:10]}",
             f"- Huecos (>3 velas): {cache['n_gaps']} (max {cache['max_gap_bars']} velas)",
             f"- Duplicados: {cache['n_duplicates']}",
+            "  "
+            f"(filas identicas: {cache['duplicate_summary']['identical_ohlcv_rows']}; "
+            f"colisiones conflictivas: {cache['duplicate_summary']['conflicting_timestamp_rows']})",
             f"- Outliers: {cache['n_outliers']} (duros: {cache['n_hard_outliers']})",
             f"- Pares fuera de orden: {cache['out_of_order_pairs']}",
+            f"  (descendentes: {cache['ordering_summary']['descending_pairs']})",
+            f"- Dataset: {cache['dataset_identity']['dataset_version']}",
+            f"- Fingerprint SHA-256: {cache['dataset_identity']['content_sha256']}",
+            f"- Comparabilidad: **{cache['comparability']['status']}**",
         ]
+        for warning in cache["comparability"]["warnings"]:
+            lines.append(f"    - AVISO: {warning}")
         for o in cache.get("outlier_samples", []):
             lines.append(f"    - {o['ts'][:16]} {o['kind']}: {o['detail']}")
     if live is not None:

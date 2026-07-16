@@ -276,6 +276,7 @@ class MacroContext:
 
 _INSTANCES:    dict[str, MacroContext] = {}
 _ACTIVE_ASSET: str = "BTC"
+_MANIFEST_ACCESSES: list[datetime | date] = []
 
 
 def load_macro_context(
@@ -287,7 +288,8 @@ def load_macro_context(
     Carga el contexto macro para el activo indicado.
     symbol: e.g. "BTC-USDT", "ETH-USDT", "SOL-USDT", "BNB-USDT"
     """
-    global _INSTANCES, _ACTIVE_ASSET
+    global _INSTANCES, _ACTIVE_ASSET, _MANIFEST_ACCESSES
+    _MANIFEST_ACCESSES = []
 
     asset = symbol.split("-")[0].upper()
     _ACTIVE_ASSET = asset
@@ -304,4 +306,5 @@ def get_macro_signal(dt: datetime | date) -> dict:
     if ctx is None:
         ctx = MacroContext(_ACTIVE_ASSET)
         _INSTANCES[_ACTIVE_ASSET] = ctx
+    _MANIFEST_ACCESSES.append(dt)
     return ctx.macro_signal(dt)

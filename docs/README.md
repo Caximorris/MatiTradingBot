@@ -9,6 +9,11 @@ forward-test rules, history — lives here.
 > Most of these are internal working notes (Spanish, session-driven). They're kept for
 > reproducibility and future iterations, not as polished prose.
 
+## Research system
+
+- [`research/subagent-ecosystem.md`](research/subagent-ecosystem.md) — Codex quantitative-research
+  specialist roster, authority boundaries, collaboration map, and standard workflows.
+
 ## Swing Allocator (the flagship)
 
 - [`swing/plan.md`](swing/plan.md) — design and go/no-go validation plan.

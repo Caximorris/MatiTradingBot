@@ -663,12 +663,18 @@ y `test_swing_allocator_controls.py` (F14).
 - **RESUELTO (2026-07-02, fixes ruta live post-freeze):** `_market_data_ok` es no-op con
   `BacktestClient`. Ancla 2015-26 realistic re-verificada identica tras el cambio.
 
-### B1n. [BAJO] `fill_next_open=True`: compra con gap alcista puede rechazarse en silencio
+### B1n. [BAJO, SUPERSEDED] riesgo historico de `fill_next_open=True`
 
-- **Donde:** `core/backtest.py` (`_fill_market` + branch buy "Saldo insuficiente").
-- **Que pasa:** el sizing se calcula contra el close de la barra de decision con buffer 0.35%;
-  si el open siguiente gapea por encima del buffer, la orden se rechaza sin log visible y la
-  medicion pierde ese rebalanceo. Ademas, en la ultima barra cae de vuelta al fill al close.
+**Estado actual (superseded):** la causalidad `fill_next_open` se corrigio y esta cubierta por
+pruebas focalizadas de ejecucion. Esta nota conserva el riesgo historico de medicion; no es un
+bloqueador de certificacion abierto ni justifica cambiar el modo no predeterminado.
+
+- **Donde (antes de la correccion):** `core/backtest.py` (`_fill_market` + branch buy "Saldo
+  insuficiente").
+- **Que pasaba (antes de la correccion):** el sizing se calculaba contra el close de la barra de
+  decision con buffer 0.35%; si el open siguiente gapeaba por encima del buffer, la orden podia
+  rechazarse sin log visible y la medicion perdia ese rebalanceo. El fallback de ultima barra que
+  acompañaba esa ruta ya no describe el comportamiento certificado.
 - **Por que BAJO:** `fill_next_open` es solo modo de MEDICION (default False, F10 no adoptado).
 - **Accion:** si se vuelve a usar para medir, contar rechazos y reportarlos.
 
@@ -779,7 +785,7 @@ y `test_swing_allocator_controls.py` (F14).
 
 ---
 
-## ANCLAS v5 (re-verificadas en el freeze, `tools/swing_v5_freeze_report.py`)
+## ANCLAS funding-off/v5-compatible exactas (re-verificadas en el freeze, `tools/swing_v5_freeze_report.py`)
 
 | Ventana | Costes | Final | CAGR | Max DD | Rebalances | btc_vs_bnh |
 |---|---|---:|---:|---:|---:|---:|

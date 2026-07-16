@@ -139,6 +139,8 @@ def _empty_events() -> pd.DataFrame:
 
 _EVENTS: dict[str, pd.DataFrame] = {}
 _LOADED_RANGE: dict[str, tuple] = {}
+_ROWS: dict[str, list[tuple[int, float]]] = {}
+_MANIFEST_ACCESSES: dict[str, list[datetime]] = {}
 
 
 def load_flow_context(
@@ -149,6 +151,7 @@ def load_flow_context(
     """Descarga la reserva de exchange UNA VEZ y precomputa los eventos de spike.
     Llamar una vez antes del backtest, igual que load_macro_context."""
     key = symbol.upper()
+    _MANIFEST_ACCESSES[key] = []
     req_range = (from_dt.date(), to_dt.date(), roc_window, pctile_window,
                  high_pctile, dedup_days, ttl_days)
     if _LOADED_RANGE.get(key) == req_range:
@@ -161,6 +164,7 @@ def load_flow_context(
         dedup_days=dedup_days, ttl_days=ttl_days,
     )
     _EVENTS[key] = events[events["signal"] == "reserve_rising"].reset_index(drop=True)
+    _ROWS[key] = rows
     _LOADED_RANGE[key] = req_range
     logger.info("onchain_flow[{}]: {} eventos de spike de reserva cargados", key,
                 len(_EVENTS[key]))
@@ -169,7 +173,9 @@ def load_flow_context(
 def flow_vol_adjustment_at(dt: datetime, symbol: str, delta: float) -> tuple[float, str | None]:
     """delta (negativo, reduce riesgo) si hay un spike de reserva ACTIVO (dentro de su
     TTL) en `dt`. 0.0/None si no hay evento cargado o ninguno activo."""
-    events = _EVENTS.get(symbol.upper())
+    key = symbol.upper()
+    _MANIFEST_ACCESSES.setdefault(key, []).append(dt)
+    events = _EVENTS.get(key)
     if events is None or events.empty:
         return 0.0, None
     ts = pd.Timestamp(dt) if dt.tzinfo else pd.Timestamp(dt, tz="UTC")

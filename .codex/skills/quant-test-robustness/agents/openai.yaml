@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Robustness Testing"
+  short_description: "Test overfitting, sensitivity, stress, and OOS."
+  default_prompt: "Use $quant-test-robustness to challenge this candidate for overfitting."

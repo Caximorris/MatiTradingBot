@@ -31,6 +31,7 @@ _NDX_PRICES: dict[str, float] = {}
 _VIX_PRICES: dict[str, float] = {}
 _LOADED_FROM: datetime | None = None
 _LOADED_TO:   datetime | None = None
+_MANIFEST_ACCESSES: list[datetime] = []
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +129,8 @@ def load_market_context(from_dt: datetime, to_dt: datetime) -> None:
     Llamar una vez antes de iniciar el backtest (como load_macro_context).
     Tiene guard anti-redundancia: no re-descarga si el rango ya está cubierto.
     """
-    global _DXY_PRICES, _NDX_PRICES, _VIX_PRICES, _LOADED_FROM, _LOADED_TO
+    global _DXY_PRICES, _NDX_PRICES, _VIX_PRICES, _LOADED_FROM, _LOADED_TO, _MANIFEST_ACCESSES
+    _MANIFEST_ACCESSES = []
 
     fetch_from = from_dt - timedelta(days=30)  # margen para el lookback
 
@@ -189,6 +191,7 @@ def get_market_context(
         vix_extreme   bool         VIX > 35 → pánico real, bloquear entradas
         vix_elevated  bool         VIX > 22 → miedo elevado, exigir más confirmación
     """
+    _MANIFEST_ACCESSES.append(dt)
     date_str = dt.date().isoformat()
 
     def _spot(prices: dict[str, float]) -> float | None:

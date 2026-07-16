@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Backtest Audit"
+  short_description: "Detect bias and verify execution modelling."
+  default_prompt: "Use $quant-audit-backtest to verify this backtest for hidden bias."

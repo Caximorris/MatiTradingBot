@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Execution Modelling"
+  short_description: "Specify and calibrate execution and cost models."
+  default_prompt: "Use $quant-model-execution to review fill, fee, slippage, spread, impact, and funding assumptions."

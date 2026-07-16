@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Hypothesis Design"
+  short_description: "Turn trading ideas into falsifiable research hypotheses."
+  default_prompt: "Use $quant-form-hypothesis to preregister this trading research idea."

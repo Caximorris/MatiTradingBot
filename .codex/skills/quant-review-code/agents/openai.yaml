@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Code Review"
+  short_description: "Review architecture, performance, tests, and CI."
+  default_prompt: "Use $quant-review-code to review this research code and tooling."

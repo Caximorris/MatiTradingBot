@@ -1,0 +1,4 @@
+interface:
+  display_name: "Quant Data Validation"
+  short_description: "Audit datasets, alignment, gaps, and consistency."
+  default_prompt: "Use $quant-validate-data to audit this research dataset."

@@ -37,8 +37,7 @@ build/
 
 # Configuracion local de agentes en esta maquina (permisos/rutas absolutas, no portable)
 .claude/settings.local.json
-.codex/hooks.json
-.codex/hooks/
+.codex/hook-state/
 
 # Informes generados
 reports/
@@ -53,11 +52,13 @@ reports/
 # con /update (git pull). El funding history de Bybit es inmutable y re-descargable, asi
 # que el determinismo sobrevive a un re-fetch (a diferencia del OHLCV con gap-fill).
 data/cache/funding_bybit_*.json
+data/cache/funding_okx_*.json
 
 # Journals de backtest: reproducibles desde el cache determinista y pesados (hasta
 # ~10MB). Por defecto NO se versionan para no inflar el repo. Los journals canonicos
 # citados en la doc se trackean explicitamente con `git add -f`.
 backtests/journal_*.json
+backtests/manifests/
 
 # Estado runtime paper/live (VM y local) — nunca versionar
 data/runtime/

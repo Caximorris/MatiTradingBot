@@ -28,6 +28,7 @@ DEFAULT_DEDUP_TTL_MIN = 360   # 6h: misma alerta no se reenvia antes de esto (sa
 # El cron corre 1x/dia (12:10 UTC). 26h da margen sin ser tan laxo como para tardar un dia
 # entero en avisar. Mismo umbral que funding_refresh.py --stale-hours (misma cadencia).
 DAILY_CHECK_STALE_MIN = 26 * 60
+FUNDING_CACHE_STALE_HOURS = 26.0
 
 _SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
@@ -56,7 +57,9 @@ def _sev_rank(a: Alert) -> int:
 def check_anomalies(snaps: list[dict], *, price: Decimal | None,
                     now: datetime | None = None,
                     data_gaps: int | None = None,
-                    daily_check_age_min: float | None = None) -> list[Alert]:
+                    daily_check_age_min: float | None = None,
+                    funding_cache_checked: bool = False,
+                    funding_age_hours: float | None = None) -> list[Alert]:
     """Evalua todas las reglas y devuelve alertas ordenadas por severidad (mas grave primero).
 
     `data_gaps`: huecos de vela detectados por el data-audit (plan T7.1); None = no evaluado.
@@ -86,6 +89,17 @@ def check_anomalies(snaps: list[dict], *, price: Decimal | None,
             f"(>{DAILY_CHECK_STALE_MIN / 60:.0f}h esperadas). El cron probablemente no corrio.",
             "Revisar 'crontab -l' y permisos (+x) de deploy/daily_checks.sh en la VM. "
             "La racha de paridad F15 no avanza mientras tanto.",
+        ))
+
+    if funding_cache_checked and (
+        funding_age_hours is None or funding_age_hours > FUNDING_CACHE_STALE_HOURS
+    ):
+        age = "ausente" if funding_age_hours is None else f"{funding_age_hours:.1f}h"
+        alerts.append(Alert(
+            "HIGH", "funding-cache-stale",
+            f"Cache de funding del overlay stale ({age}; max {FUNDING_CACHE_STALE_HOURS:.0f}h). ",
+            "Reparar tools/funding_refresh.py/cron antes de accumulation; "
+            "el overlay v6 habilitado falla cerrado mientras el snapshot no sea fresco.",
         ))
 
     # --- Huecos de datos (si el data-audit los paso) ---

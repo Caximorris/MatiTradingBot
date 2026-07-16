@@ -48,6 +48,9 @@ class SwingAllocatorConfig:
     use_phase_policy_router: bool = True
     phase_policy_profile: str = "v5_equiv"
     use_funding_overlay: bool = True
+    # Historical v6-2 evidence uses Bybit. The paper fleet can opt into the
+    # venue-native OKX feed without rewriting that protected research input.
+    funding_overlay_source: str = "bybit"
     funding_overlay_phases: str = "accumulation"
     funding_overlay_delta: float = 0.05
     funding_low_pctile: float = 0.10
@@ -411,18 +414,13 @@ class SwingAllocatorBot:
                 active.append(f"funding_neg_{funding:.4f}")
 
         if cfg.use_funding_overlay:
-            try:
-                from strategies.swing_funding_overlay import funding_overlay_adjustment
-                adj, reason = funding_overlay_adjustment(
-                    cfg.symbol, self._client.current_time(), phase, cfg
-                )
-                if reason:
-                    target += adj
-                    active.append(reason)
-            except Exception as exc:
-                # Warning, no debug: si el overlay esta activo y falla, v6 degrada a v5
-                # en silencio. En vivo esto debe verse (ej. cache de funding ausente/corrupto).
-                logger.warning("[{}] Funding overlay skipped: {}", self.name, exc)
+            from strategies.swing_funding_overlay import funding_overlay_adjustment
+            adj, reason = funding_overlay_adjustment(
+                cfg.symbol, self._client.current_time(), phase, cfg
+            )
+            if reason:
+                target += adj
+                active.append(reason)
 
         # --- EXP-014/015: overlay de riesgo por spike de reserva on-chain ---
         if cfg.use_flow_vol_overlay:
