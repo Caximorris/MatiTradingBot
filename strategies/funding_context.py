@@ -15,9 +15,15 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
 
 from loguru import logger
+from strategies.funding_coverage import (
+    CoverageEvidenceError,
+    FundingCoverageEvidence,
+    coverage_evidence_for,
+    coverage_manifest_record,
+)
 
 
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible)"}
@@ -35,7 +41,11 @@ class _FundingSnapshot:
     inst_id: str
     coverage_from: datetime
     coverage_to: datetime
+    first_available: datetime
+    latest_available: datetime
+    history_exhausted: bool
     rates: Mapping[str, float]
+    coverage_evidence: FundingCoverageEvidence | None
 
     def contains(self, start: datetime, end: datetime) -> bool:
         return self.coverage_from <= start and end <= self.coverage_to
@@ -43,6 +53,19 @@ class _FundingSnapshot:
 
 _SNAPSHOTS: dict[str, tuple[_FundingSnapshot, ...]] = {}
 _CACHE_LOCK = threading.RLock()
+_MANIFEST_ACCESSES: dict[str, list[datetime]] = {}
+
+
+def requires_okx_funding(strategy_name: str, config: Mapping[str, Any] | None = None) -> bool:
+    """Whether this strategy configuration consumes the OKX funding context.
+
+    Keep this explicit so callers do not load a data dependency for strategies
+    that cannot consume it.  ``disable_external_filters`` disables Pro Trend's
+    funding gate alongside its other external inputs.
+    """
+    return strategy_name == "pro_trend" and not bool(
+        (config or {}).get("disable_external_filters", False)
+    )
 
 
 def _fetch_page(inst_id: str, after_ms: int | None) -> list[dict]:
@@ -75,6 +98,7 @@ def load_funding_history(symbol: str, from_dt: datetime, to_dt: datetime) -> Non
         raise ValueError("funding window must have from_dt < to_dt")
 
     inst_id = _instrument_id(symbol)
+    _MANIFEST_ACCESSES[inst_id] = []
     coverage_from = from_dt - timedelta(days=_LOOKBACK_DAYS)
 
     with _CACHE_LOCK:
@@ -95,7 +119,7 @@ def load_funding_history(symbol: str, from_dt: datetime, to_dt: datetime) -> Non
             to_dt.date(),
         )
         try:
-            rates_by_timestamp, pages = _paginate(inst_id, coverage_from)
+            rates_by_timestamp, pages, history_exhausted = _paginate(inst_id, coverage_from)
         except FundingFetchError:
             logger.exception(
                 "funding_context: snapshot {} no actualizado; se conserva el anterior",
@@ -109,16 +133,51 @@ def load_funding_history(symbol: str, from_dt: datetime, to_dt: datetime) -> Non
             if coverage_from <= dt_utc <= to_dt:
                 daily.setdefault(dt_utc.date().isoformat(), []).append(rate)
 
+        if not daily:
+            raise FundingFetchError(
+                f"funding snapshot for {inst_id} is empty in requested coverage "
+                f"{coverage_from.isoformat()} -> {to_dt.isoformat()}"
+            )
+
+        in_coverage = [
+            ts_ms
+            for ts_ms in rates_by_timestamp
+            if coverage_from <= datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc) <= to_dt
+        ]
+        latest_available = datetime.fromtimestamp(
+            max(in_coverage) / 1000, tz=timezone.utc
+        )
+        freshness_cutoff = to_dt - timedelta(days=1)
+        if latest_available < freshness_cutoff:
+            raise FundingFetchError(
+                f"funding snapshot for {inst_id} is stale: latest settlement "
+                f"{latest_available.isoformat()} is before {freshness_cutoff.isoformat()}"
+            )
+
         immutable_rates = MappingProxyType(
             {day: sum(values) / len(values) for day, values in sorted(daily.items())}
         )
+        try:
+            evidence = coverage_evidence_for(inst_id, "OKX")
+            if evidence is not None:
+                evidence.validate(inst_id, "OKX")
+        except CoverageEvidenceError as exc:
+            raise FundingFetchError(f"malformed coverage evidence for {inst_id}") from exc
         snapshot = _FundingSnapshot(
             inst_id=inst_id,
             coverage_from=coverage_from,
             coverage_to=to_dt,
+            first_available=datetime.fromtimestamp(
+                min(rates_by_timestamp) / 1000, tz=timezone.utc
+            ),
+            latest_available=latest_available,
+            history_exhausted=history_exhausted,
             rates=immutable_rates,
+            coverage_evidence=evidence,
         )
         for existing in existing_snapshots:
+            if existing.coverage_evidence != snapshot.coverage_evidence:
+                raise FundingFetchError(f"funding coverage evidence conflicts for {inst_id}")
             for day in existing.rates.keys() & snapshot.rates.keys():
                 if existing.rates[day] != snapshot.rates[day]:
                     raise FundingFetchError(
@@ -138,15 +197,17 @@ def load_funding_history(symbol: str, from_dt: datetime, to_dt: datetime) -> Non
         )
 
 
-def _paginate(inst_id: str, coverage_from: datetime) -> tuple[dict[int, float], int]:
+def _paginate(inst_id: str, coverage_from: datetime) -> tuple[dict[int, float], int, bool]:
     from_ms = int(coverage_from.timestamp() * 1000)
     by_timestamp: dict[int, float] = {}
     after_ms: int | None = None
     pages = 0
+    history_exhausted = False
 
     while True:
         records = _fetch_page(inst_id, after_ms)
         if not records:
+            history_exhausted = True
             break
         pages += 1
 
@@ -178,16 +239,20 @@ def _paginate(inst_id: str, coverage_from: datetime) -> tuple[dict[int, float], 
         if _PAGINATION_DELAY_S:
             time.sleep(_PAGINATION_DELAY_S)
 
-    return by_timestamp, pages
+    return by_timestamp, pages, history_exhausted
 
 
 def get_funding_rate_at(dt: datetime, symbol: str) -> float:
     """Return the latest complete prior UTC day's average, up to five days back."""
     _require_utc(dt, "dt")
+    inst_id = _instrument_id(symbol)
+    _MANIFEST_ACCESSES.setdefault(inst_id, []).append(dt)
     with _CACHE_LOCK:
-        snapshots = _SNAPSHOTS.get(_instrument_id(symbol), ())
+        snapshots = _SNAPSHOTS.get(inst_id, ())
     if not snapshots:
-        return 0.0
+        raise FundingFetchError(
+            f"funding has not been loaded for {_instrument_id(symbol)}"
+        )
 
     day = dt.astimezone(timezone.utc).date()
     prior_day = day - timedelta(days=1)
@@ -198,16 +263,52 @@ def get_funding_rate_at(dt: datetime, symbol: str) -> float:
         and snapshot.coverage_to.date() >= day
     ]
     if not candidates:
-        return 0.0
+        raise FundingFetchError(
+            f"no funding snapshot covers {symbol} on {day.isoformat()}"
+        )
     snapshot = min(
         candidates,
         key=lambda item: (item.coverage_to - item.coverage_from, item.coverage_from),
     )
+    status, detail = funding_coverage_status(snapshot, dt)
+    if status == "proven_pre_listing":
+        return 0.0
+    if status != "complete_covered_period":
+        raise FundingFetchError(
+            f"funding snapshot for {snapshot.inst_id} is {status}: {detail}"
+        )
     for delta in range(1, _LOOKBACK_DAYS + 1):
         candidate = (day - timedelta(days=delta)).isoformat()
         if candidate in snapshot.rates:
             return snapshot.rates[candidate]
-    return 0.0
+    raise FundingFetchError(
+        f"funding snapshot for {snapshot.inst_id} is incomplete_historical_coverage: "
+        f"no complete rate within {_LOOKBACK_DAYS} days before {day.isoformat()}"
+    )
+
+
+def funding_coverage_status(snapshot: _FundingSnapshot, dt: datetime) -> tuple[str, str]:
+    """Classify coverage for a simulated timestamp without inferring a listing date."""
+    _require_utc(dt, "dt")
+    prior_day = dt.date() - timedelta(days=1)
+    if prior_day >= snapshot.first_available.date():
+        return "complete_covered_period", "first available funding precedes the required day"
+    evidence = snapshot.coverage_evidence
+    if evidence is None:
+        return "truncated_snapshot", "unavailable_evidence"
+    try:
+        evidence.validate(snapshot.inst_id, "OKX")
+    except CoverageEvidenceError as exc:
+        return "malformed_snapshot", str(exc)
+    if dt < evidence.series_start:
+        return "proven_pre_listing", evidence.validity_rule
+    return "incomplete_historical_coverage", "evidence does not establish pre-listing"
+
+
+def funding_coverage_manifest(snapshot: _FundingSnapshot, start: datetime) -> dict[str, str]:
+    """Return immutable coverage identity for a manifest without querying the network."""
+    status, detail = funding_coverage_status(snapshot, start)
+    return coverage_manifest_record(snapshot.coverage_evidence, status, detail)
 
 
 def _instrument_id(symbol: str) -> str:

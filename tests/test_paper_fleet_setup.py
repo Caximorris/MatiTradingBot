@@ -99,6 +99,8 @@ def test_reconcile_is_idempotent_and_configs_are_v6_explicit(db_session):
     assert len(rows) == 2
     by_name = {row.strategy_name: row for row in rows}
     assert by_name["swing_allocator_v6_btc_usdt"].get_config()["use_funding_overlay"] is True
+    assert by_name["swing_allocator_v6_btc_usdt"].get_config()["funding_overlay_source"] == "okx"
     demo = by_name["swing_allocator_demo_btc_usdt"].get_config()
     assert demo["execution"] == "okx_demo"
     assert demo["use_phase_policy_router"] is True
+    assert demo["funding_overlay_source"] == "okx"

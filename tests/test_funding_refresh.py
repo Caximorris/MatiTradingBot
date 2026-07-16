@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+
+import pytest
 
 import tools.funding_refresh as fr
 from strategies import swing_funding_overlay as ov
@@ -14,11 +17,11 @@ def _write_cache(path, rows):
 def test_refresh_merges_new_settlements_and_dedups(tmp_path, monkeypatch):
     cache = tmp_path / "funding_bybit_BTCUSDT.json"
     _write_cache(cache, [(1000, 0.01), (2000, 0.02)])
-    monkeypatch.setattr(fr, "_cache_path", lambda sym: cache)
+    monkeypatch.setattr(fr, "_cache_path", lambda sym, source="bybit": cache)
 
     # Bybit devuelve descendente; una sola pagina que solapa lo conocido (3000 nuevo, 2000 ya esta).
     pages = iter([[(3000, 0.03), (2000, 0.02)]])
-    monkeypatch.setattr(fr, "_fetch_page", lambda sym, end: next(pages, []))
+    monkeypatch.setattr(fr, "_fetch_page", lambda sym, end, source="bybit": next(pages, []))
 
     r = fr.refresh("BTCUSDT")
 
@@ -30,9 +33,9 @@ def test_refresh_merges_new_settlements_and_dedups(tmp_path, monkeypatch):
 
 def test_refresh_backfills_when_cache_missing(tmp_path, monkeypatch):
     cache = tmp_path / "funding_bybit_BTCUSDT.json"
-    monkeypatch.setattr(fr, "_cache_path", lambda sym: cache)
+    monkeypatch.setattr(fr, "_cache_path", lambda sym, source="bybit": cache)
     pages = iter([[(2000, 0.02), (1000, 0.01)], []])  # segunda pagina vacia -> fin
-    monkeypatch.setattr(fr, "_fetch_page", lambda sym, end: next(pages, []))
+    monkeypatch.setattr(fr, "_fetch_page", lambda sym, end, source="bybit": next(pages, []))
 
     r = fr.refresh("BTCUSDT")
 
@@ -40,9 +43,29 @@ def test_refresh_backfills_when_cache_missing(tmp_path, monkeypatch):
     assert r["total"] == 2
 
 
+def test_okx_refresh_uses_final_settlement_feed_and_venue_cache(tmp_path, monkeypatch):
+    cache = tmp_path / "funding_okx_BTC-USDT-SWAP.json"
+    monkeypatch.setattr(fr, "_cache_path", lambda sym, source="bybit": cache)
+    calls = []
+    pages = iter([[(3000, 0.03), (2000, 0.02)], []])
+
+    def fetch(sym, cursor, source="bybit"):
+        calls.append((sym, cursor, source))
+        return next(pages, [])
+
+    monkeypatch.setattr(fr, "_fetch_page", fetch)
+
+    result = fr.refresh("BTC-USDT", source="okx")
+
+    assert result["source"] == "okx"
+    assert result["market"] == "BTC-USDT-SWAP"
+    assert calls[0] == ("BTC-USDT", None, "okx")
+    assert json.loads(cache.read_text(encoding="utf-8")) == [[2000, 0.02], [3000, 0.03]]
+
+
 def test_overlay_cache_invalidates_when_file_changes(tmp_path, monkeypatch):
     cache = tmp_path / "funding_bybit_BTCUSDT.json"
-    monkeypatch.setattr(ov, "funding_cache_path", lambda sym: cache)
+    monkeypatch.setattr(ov, "funding_cache_path", lambda sym, source="bybit": cache)
     ov._cached_events.cache_clear()
 
     # 100 settlements planos + un pico alto al final -> hay evento en accumulation.
@@ -68,3 +91,30 @@ def test_overlay_cache_invalidates_when_file_changes(tmp_path, monkeypatch):
     misses_after = ov._cached_events.cache_info().misses
 
     assert misses_after == misses_before + 1
+
+
+def test_enabled_overlay_rejects_missing_or_empty_snapshot(tmp_path, monkeypatch):
+    cache = tmp_path / "funding_bybit_BTCUSDT.json"
+    monkeypatch.setattr(ov, "funding_cache_path", lambda _sym, source="bybit": cache)
+    cfg = SimpleNamespace()
+    now = datetime(2024, 1, 2, tzinfo=timezone.utc)
+
+    with pytest.raises(ov.FundingOverlayError, match="missing"):
+        ov.funding_overlay_adjustment("BTCUSDT", now, "accumulation", cfg)
+
+    _write_cache(cache, [])
+    with pytest.raises(ov.FundingOverlayError, match="empty"):
+        ov.funding_overlay_adjustment("BTCUSDT", now, "accumulation", cfg)
+
+
+def test_enabled_overlay_rejects_stale_snapshot(tmp_path, monkeypatch):
+    cache = tmp_path / "funding_bybit_BTCUSDT.json"
+    monkeypatch.setattr(ov, "funding_cache_path", lambda _sym, source="bybit": cache)
+    now = datetime(2024, 1, 3, tzinfo=timezone.utc)
+    _write_cache(
+        cache,
+        [(int((now - timedelta(hours=27)).timestamp() * 1000), 0.01)],
+    )
+
+    with pytest.raises(ov.FundingOverlayError, match="stale"):
+        ov.funding_overlay_adjustment("BTCUSDT", now, "accumulation", SimpleNamespace())

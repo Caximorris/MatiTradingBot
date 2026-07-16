@@ -65,10 +65,11 @@ Every task uses this block:
   `tools/forward_report.py`, `tools/data_audit.py`, `cli/paper_cmds.py` (+ `main.py` reg).
   - **DATA FINDING (T7.1, unactioned by design):** `data-audit` found **474 exact-duplicate
     rows** in the canonical `BTC-USDT_1H` cache, clustered at the 2017 Bitstamp->OKX gap-fill
-    seam. All duplicates are identical OHLCV (0 conflicting values), so no backtest value is
-    wrong, but the "102931 velas" count is inflated — true distinct = **102457**. NOT fixed:
-    dedup would be a forbidden cache mutation mid-forward-test (contract §4/§6c) and would shift
-    parity. Logged here; revisit only after the forward test, and via git-tracked change.
+    seam. All duplicates are identical OHLCV (0 conflicting values), but this remains a material
+    dataset-identity and comparability defect: the "102931 velas" count is inflated — true
+    distinct = **102457**. NOT fixed: dedup would be a forbidden cache mutation mid-forward-test
+    (contract §4/§6c) and would shift parity. The canonical cache has not been rewritten;
+    revisit only after the forward test, and via git-tracked change.
 
 **Forward-test-safe legend:**
 - `YES` — pure read / new isolated file / docs. Cannot touch a decision.

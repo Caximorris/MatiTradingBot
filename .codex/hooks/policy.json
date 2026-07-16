@@ -28,10 +28,10 @@
     },
     {
       "id": "integrity-static-diff",
-      "trigger": "PreToolUse/PostToolUse for apply_patch/Edit/Write and mutation-like Bash",
+      "trigger": "PreToolUse/PostToolUse for apply_patch/Edit/Write and classified shell commands",
       "purpose": "Reject protected paths and catch deterministic static integrity regressions without running tests.",
       "order": 20,
-      "conditions": "Only files present in the current patch or recognized command.",
+      "conditions": "Only files present in the current patch or a fully classified shell mutation; ambiguous shell commands fail closed.",
       "tier": 1,
       "max_runtime_seconds": 1.8,
       "frequency": "After each relevant edit; never launches builds or tests",
@@ -127,8 +127,9 @@
     "dependency": ["pyproject.toml", "requirements.txt", ".github/workflows/**"]
   },
   "protected_patterns": [
-    ".env", "*.db", "*.sqlite", "*.sqlite3", "data/cache/**", "backtests/journal_*.json",
-    "logs/**", "graphify-out/**", "deploy/**", "strategies/pro_trend.py"
+    ".env", "*.db", "*.sqlite", "*.sqlite3", "data/cache/**", "data/datasets/**",
+    "backtests/journal_*.json", "backtests/report_*.*", "backtests/manifests/**", "backtests/evidence/**",
+    "reports/**", "evidence/**", "logs/**", "graphify-out/**", "deploy/**", "strategies/pro_trend.py"
   ],
   "frozen_swing_markers": [
     "regime_off_on_bear_onset", "bull_peak_ema50_cap_enabled", "bull_peak_ema50_cap",

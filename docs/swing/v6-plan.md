@@ -113,7 +113,7 @@ Parametros iniciales:
 | Parametro | Grid |
 |---|---|
 | `use_funding_overlay` | false/true |
-| `funding_source` | bybit_perp, okx_swap si disponible |
+| `funding_overlay_source` | `bybit` (investigacion historica) o `okx` (paper forward) |
 | `funding_low_pctile` | 0.05, 0.10 |
 | `funding_high_pctile` | 0.90, 0.95 |
 | `funding_overlay_delta` | 0.03, 0.05, 0.10 |
@@ -395,6 +395,52 @@ en 2018). V6-2 mejora las tres anclas y 7/8 rolling starts sin empeorar DD, chur
 El usuario aprobo reemplazar v5 porque ambos iniciaron paper al mismo tiempo y no existe ventaja
 forward previa de v5 que proteger. Veredicto: `ADOPT`; v6-2 queda congelado como default y v5 se
 mantiene como control/rollback. Durante `bear_onset` siguen siendo equivalentes.
+
+### Correccion de comparabilidad (2026-07-16)
+
+La revalidacion anterior es un ancla historica protegida, no una licencia para reconstruir o
+sobrescribir sus inputs. Una corrida solo puede declararse comparable con el ancla v6-2 si conserva
+el contenido, orden y duplicados OHLCV; ventana y warmup; harness, rellenos y costes; configuracion
+resuelta; y snapshot Bybit de funding identificado por hash, cobertura y slice consumido. Compartir
+un rango de fechas no prueba paridad.
+
+El cache local Bybit SHA-256
+`23cc1952a9eed3806fb6f91e9cfdd788d0ae1dcfcc244524ea3f904b4497685f` no reproduce el input de
+overlay protegido. La corrida local de $9,532,749.59 usa semantica de fin distinta: esta
+**supersedida como control exacto** y no puede llamarse control funding-off/v5-compatible protegido
+sin manifest valido. El control funding-off/v5-compatible exacto es $9,137,545.81; el ancla
+funding-on v6-2 de corte midnight protegida es $9,505,067.92. No debe atribuirse la diferencia al
+motor ni usarla para promocionar, rechazar o recalibrar v6-2.
+
+La compatibilidad exacta con v5 tiene dos significados distintos:
+
+- El rollback de v5 es `use_phase_policy_router=false` y `use_funding_overlay=false`.
+- V6-1 con `phase_policy_profile=v5_equiv` y overlay desactivado debe reproducir v5 con inputs y
+  ejecucion identicos. V6-2 no tiene por que reproducir v5 en `accumulation`, porque su overlay
+  puede actuar alli; durante `bear_onset` permanece equivalente.
+
+Las 474 filas OHLCV identicas del empalme de 2017 son un defecto material conocido, no una correccion
+aplicada: el validador las reporta, pero nunca reescribe el cache canonico. Permanecen dentro de la
+identidad del dataset y deben coincidir, junto con el fingerprint/version, antes de comparar P&L,
+CAGR, drawdown o rebalanceos. Ningun resultado que use una copia deduplicada, reordenada o con otra
+cobertura es comparable con estas anclas.
+
+Con el overlay habilitado, un snapshot de funding ausente, vacio, malformado o stale aborta la
+corrida con un error accionable; no se degrada silenciosamente a funding neutral ni a v5. La falta
+previa a cotizacion solo es neutral con evidencia inmutable de listing/inicio; el primer settlement
+no prueba cobertura. El ancla v6-2 no puede re-certificarse hoy sin el input Bybit protegido exacto.
+
+### Fuente forward OKX (2026-07-16)
+
+El fleet paper y el bot OKX Demo fijan `funding_overlay_source="okx"` y consumen el snapshot local
+`funding_okx_BTC-USDT-SWAP.json`, actualizado atómicamente desde el endpoint público de settlements
+finales de OKX. Esto elimina la dependencia operativa de Bybit en la VM de EE. UU.; el refresco no
+se ejecuta dentro de un backtest ni reescribe el input Bybit protegido. La API pública de OKX sólo
+expone una ventana histórica corta, por lo que esta es una variante **forward-only**: no sustituye
+el snapshot Bybit ni certifica paridad histórica con el ancla v6-2. Si falta o queda stale el
+snapshot OKX, una configuración con overlay habilitado falla cerrada; el rollback explícito v5
+sigue siendo desactivar el overlay por configuración.
+Las estrategias que no consumen funding no lo cargan.
 
 ---
 

@@ -4,7 +4,7 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-14** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
+**Ultima actualizacion: 2026-07-16** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
 Demo (**Prop Firm RETIRADO** ese mismo dia, ver bloque abajo); registros legacy/v5 retirados.
 Fix de retry tras rebalanceo incompleto incluido. Telegram con panel persistente sin argumentos;
 status CLI multi-cartera corregido. 272 tests pasan. Mas tarde el mismo dia: via "capital
@@ -17,11 +17,28 @@ parked (ver bloque CAPITAL OCIOSO abajo).)
 
 **DEFAULT VIGENTE: Swing Allocator v6-2 — CONGELADO** (decision explicita 2026-07-13).
 v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d, solo
-`accumulation`. Rollback exacto a v5: `--config '{"use_phase_policy_router": false,
+`accumulation`. El unico rollback v5 deliberado es `--config '{"use_phase_policy_router": false,
 "use_funding_overlay": false}'`. Anclas emparejadas (dataset canonico 102931 velas):
-- 2015-26 realistic: **$9.505M | CAGR +86.51% | Max DD -52.73% | 70 reb | btc_vs_bnh 0.8499**
+- 2015-26 realistic funding-on, corte midnight protegido: **$9,505,067.92** | CAGR +86.51% |
+  Max DD -52.73% | 70 reb | btc_vs_bnh 0.8499
 - 2018-26 realistic: $229.0k | +47.90% | -53.72% | 53 | 0.8785
 - 2015-26 conservative: $9.255M | +86.06% | -52.88% | 70 | 0.8281
+
+**PARIDAD Y COMPARABILIDAD SWING (aclaracion 2026-07-16).** El ancla v6-2 protegida solo es
+comparable con una corrida que conserve exactamente: contenido, orden y duplicados del OHLCV;
+ventana, warmup, harness y supuestos de ejecucion/costes; configuracion resuelta; y el snapshot
+Bybit de funding (hash, cobertura y slice consumido). La fecha de la ventana por si sola no basta.
+El cache local Bybit SHA-256 `23cc1952a9eed3806fb6f91e9cfdd788d0ae1dcfcc244524ea3f904b4497685f`
+no es el input protegido de overlay: su resultado $9,532,749.59 usa semantica de fin distinta y
+no es el control funding-off protegido ni paridad de v6-2 sin un manifest valido que lo pruebe. No regenerar ni
+sobrescribir los datos o resultados protegidos para forzar coincidencia. V6-1 (`v5_equiv` con
+overlay desactivado) debe reproducir v5 bajo inputs identicos; v6-2 puede divergir de v5 solo en
+`accumulation` por el overlay y permanece equivalente durante `bear_onset`.
+
+Cuando el overlay de funding esta habilitado, un snapshot ausente, vacio, malformado o stale hace
+fallar la corrida de forma explicita; no se sustituye silenciosamente por funding neutral ni por
+v5. Funding neutral pre-listing solo se permite con evidencia inmutable de inicio/listing; el
+primer settlement no basta. Las estrategias que no consumen funding no lo cargan.
 
 Validacion local 2026-07-14: **257/257 tests**. `RiskManager.check_daily_loss` calcula ahora el
 inicio del dia desde el reloj UTC real; antes usaba la fecha local y la etiquetaba como UTC.
@@ -77,8 +94,9 @@ Comandos: `paper-status` (control center v6/demo/prop), `anomaly-check` (red-fla
 dedup), `forward-report` (solo datos post-inicio, filtro duro), `data-audit` (integridad OHLCV,
 nunca re-descarga). Capa pura: `tools/{paper_snapshot,anomaly_check,forward_report,data_audit}.py`
 + `cli/paper_cmds.py`. **Hallazgo de `data-audit`:** cache canonico tiene 474 filas duplicadas
-benignas (identico OHLCV) en el empalme 2017 → 102457 distintas de 102931; NO deduplicar en
-forward-test (mutacion de cache prohibida, ver CLAUDE.md). La suite completa pasa en dev
+materiales (OHLCV identico) en el empalme 2017 → 102457 distintas de 102931. Es un defecto
+conocido de identidad/comparabilidad de datos; el cache canonico no se ha reescrito ni deduplicado
+porque esa mutacion esta prohibida en forward-test (ver CLAUDE.md). La suite completa pasa en dev
 (257 tests); en la VM se verifican los artefactos y heartbeats, porque sus datos runtime no se
 versionan.
 
@@ -95,7 +113,8 @@ no invalidan la estrategia) encontrados via Telegram+SSH y arreglados:
    largo + tests). Re-arrancado como PropSwing real el 2026-07-11.
 Ademas: `/audit` en Telegram (mismo motor que `anomaly-check`), `main.py explain` (T5.1),
 `EXPERIMENTS.md` (T11.1) — todo en `7107631` (SIN PUSH). Suite observabilidad corrida EN la VM
-por primera vez: limpia (los 474 dups del cache = hallazgo conocido, no accion).
+por primera vez: limpia salvo el defecto material conocido de las 474 filas duplicadas del cache;
+no se tomo accion porque el cache canonico no se ha reescrito.
 
 **CLIENTE OKX DEMO TRADING (desplegado 2026-07-13; verificado 2026-07-14).** Objetivo:
 ejercitar por PRIMERA vez el camino de ordenes autenticado real de OKX antes del live de
@@ -231,12 +250,14 @@ un backtest puntual.
   frente al baseline versionado de 209; deuda nueva o mayor falla CI.
 - Paridad Swing ejecutada con el cache local sin modificar: 102,930 barras de entrada / 96,930
   de test, realistic, $9,532,749.59, CAGR 86.56%, Max DD -52.73%, 70 rebalanceos y ratio BTC
-  0.8499. Coincide con el control documentado **sin overlay** ($9.53M), no con el ancla v6
-  $9.505M: el input Bybit local (SHA-256
+  0.8499. **Supersedido como control exacto:** empleo una semantica de fin distinta; no es el
+  control funding-off/v5-compatible protegido de $9,137,545.81 sin manifest valido. Tampoco es el
+  ancla funding-on midnight de $9,505,067.92: el input Bybit local (SHA-256
   `23cc1952a9eed3806fb6f91e9cfdd788d0ae1dcfcc244524ea3f904b4497685f`) no reproduce el overlay
-  canonico. No atribuir esta diferencia al motor ni promover resultados hasta restaurar el input
-  exacto. `anomaly-check` y `/audit` ahora elevan cache ausente/stale como HIGH en vez de degradar
-  sin visibilidad.
+  canonico. El ancla v6-2 protegida no puede re-certificarse hoy sin el input Bybit exacto; no
+  atribuir la diferencia al motor ni promover resultados hasta restaurar ese input.
+  `anomaly-check` y `/audit` elevan cache ausente/stale como HIGH; una corrida con overlay
+  habilitado falla cerrada, no degrada silenciosamente.
 - Validacion local: `python -m pytest -q` = 321 passed; `compileall` = OK; `python -m build` = OK;
   `python tools/ruff_ratchet.py` = OK (207/209). El host actual usa Python 3.14.6 y no puede hacer
   `pip install -e ".[dev]"` porque el numba fijado por pandas-ta soporta `<3.14`; el contrato real
@@ -256,8 +277,9 @@ El siguiente trabajo es observacion de v6/demo, no otra migracion:
    correr v6 simulado + v6 Demo y revisar `main.py status`, Telegram `/audit` y el heartbeat diario.
 2. Cerrar F13 (24h), F15 (30d) y F19 con sus ventanas completas; una semana sin trades no es
    una alerta por si misma para un allocator de 2–3 rebalanceos mensuales.
-3. Resolver la frescura del cache de funding antes de `accumulation` (~2026-10-07); si sigue
-   stale, v6 degrada silenciosamente a v5 y PropSwing modela funding=0.
+3. Resolver la frescura del cache de funding antes de `accumulation` (~2026-10-07). Si el overlay
+   v6 sigue sin un snapshot valido, la corrida falla cerrada y no puede presentarse como v5 o v6;
+   PropSwing conserva su modelo de funding separado.
 
 **Marco general:** optimizacion de backtest del Swing = CERRADA. Hito = validacion forward:
 cerrar F13 (smoke 24h), F15 (paridad 30d — racha reiniciada ~2026-07-11 por el incidente cron)
@@ -278,10 +300,14 @@ v5-vs-v6 empieza a dar señal desde ~2026-10-07.
 - **Pro Trend bugfixes candidatos** (P1, sin backtest aislado): fix MACD 4H key, fix VIX sizing cap.
 - **`tgtCcy` en `OKXClient._live_place_order`:** ARREGLADO 2026-07-13 (market orders fijan
   `tgtCcy=base_ccy`, igual que el cliente demo; tests en `test_exchange.py`). Ya no bloquea live.
-- **Funding Bybit 403 en la VM:** `funding_refresh.py` falla con HTTP 403 (IP de GCP bloqueada?).
-  Sin urgencia hasta fase `accumulation` (~2026-10-07): sin ese cache, v6 degrada a v5 en silencio
-  y PropSwing modela funding=0. Resolver antes de octubre. Desde 2026-07-15 `anomaly-check` y
-  `/audit` lo reportan HIGH si falta o supera 26h, pero el 403 remoto sigue sin resolver.
+- **Funding Bybit 403 en la VM:** la causa remota no esta confirmada, pero el pipeline forward se
+  preparo para usar settlements finales públicos de OKX (`funding_overlay_source="okx"`) y un cache
+  separado, refrescado atómicamente. La API pública de OKX conserva sólo una ventana corta: sirve
+  para paper/Demo forward y no sustituye ni re-certifica el snapshot Bybit protegido de v6-2.
+  Pendiente de despliegue en VM: pull, refresh OKX, reconciliador de fleet y restart. Sin snapshot
+  válido, el overlay habilitado falla cerrado; no degrada a v5 ni a funding neutral. PropSwing
+  mantiene su modelo de funding separado. `anomaly-check` y `/audit` lo reportan HIGH si falta o
+  supera 26h.
 - **Limpieza/refactor de codigo:** backlog en `docs/archive/refactor-backlog.md`. Difiere al cierre del paper
   (no romper determinismo/paridad). (El codigo muerto `execution/order_manager.py` +
   `position_tracker.py` ya se borro en `5ec7a97`, 2026-07-06.)

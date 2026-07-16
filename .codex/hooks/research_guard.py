@@ -12,7 +12,6 @@ import os
 import re
 import socket
 import sys
-import tempfile
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -20,11 +19,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from guard_core import (
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from evidence_contract import validate_manifest, validate_report_provenance  # noqa: E402
+
+from guard_core import (  # noqa: E402
     ROOT,
     append_audit,
-    atomic_json,
-    changed_lines,
     classify,
     command_text,
     current_initial_lines,
@@ -33,31 +36,27 @@ from guard_core import (
     fingerprint,
     frozen_swing_change,
     get_session,
-    head,
-    interpreter_version,
     is_commit,
     is_pr_create,
     line_count,
     load_policy,
     normalize_path,
     parameter_diff,
-    parse_status,
-    patch_paths,
     protected,
     public_policy_summary,
     receipt_valid,
     required_specialists,
-    requests_import,
     resolve_interpreter,
     run,
     secret_kinds,
     session_baseline,
+    shell_mutation_paths,
     specialist_completed,
-    specialist_valid,
     static_file_findings,
     store_specialist,
     store_success,
     touched_scope,
+    tool_paths,
     update_session,
     update_touched,
     worktree_status,
@@ -381,29 +380,6 @@ def validate_tier(
     return True, f"Tier {tier} passed{warning}", digest, False
 
 
-def validate_manifest(path: Path) -> tuple[bool, str]:
-    try:
-        if not path.resolve().is_relative_to(ROOT.resolve()):
-            return False, "manifest path escapes repository"
-        document = json.loads(path.read_text(encoding="utf-8"))
-        identity = document["identity"]
-        required = (
-            document.get("schema_version") == 1,
-            bool(re.fullmatch(r"[0-9a-f]{64}", document.get("run_id", ""))),
-            bool(re.fullmatch(r"[0-9a-f]{64}", document["result"].get("sha256", ""))),
-            bool(identity["repository"].get("worktree_sha256")),
-            bool(identity["dataset"].get("sha256")),
-        )
-        if not all(required):
-            return False, "manifest lacks current provenance fields"
-        for external in identity.get("external_inputs", []):
-            if external.get("exists") and not external.get("sha256"):
-                return False, "manifest has unhashed external input"
-        return True, document["run_id"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        return False, f"invalid manifest ({type(exc).__name__})"
-
-
 def handle_session(payload: dict[str, Any]) -> int:
     baseline = session_baseline(payload.get("session_id"), ROOT)
     try:
@@ -427,13 +403,18 @@ def handle_session(payload: dict[str, Any]) -> int:
 def handle_pre(payload: dict[str, Any]) -> int:
     policy = load_policy()
     command = command_text(payload)
+    shell_paths: list[str] | None = None
+    if str(payload.get("tool_name", "")) in {"Bash", "shell_command"}:
+        shell_paths, shell_error = shell_mutation_paths(command, ROOT)
+        if shell_error:
+            return pre_deny(shell_error)
     forbidden = forbidden_command(command, policy)
     if forbidden:
         reason = f"Blocked command by repository policy: {forbidden}"
         append_audit({"event": "PreToolUse", "control": "integrity-static-diff", "success": False, "reason": reason})
         return pre_deny(reason)
     headers = raw_patch_headers(command)
-    paths = patch_paths(command, ROOT)
+    paths = shell_paths if shell_paths is not None else tool_paths(payload, ROOT)
     if headers and len(paths) < len(set(headers)):
         return pre_deny("Patch contains an outside-repository or path-traversal target")
     secret_types = secret_kinds(command)
@@ -504,7 +485,10 @@ def handle_pre(payload: dict[str, Any]) -> int:
 def handle_post(payload: dict[str, Any]) -> int:
     policy = load_policy()
     command = command_text(payload)
-    paths = patch_paths(command, ROOT)
+    shell_paths, shell_error = shell_mutation_paths(command, ROOT) if str(payload.get("tool_name", "")) in {"Bash", "shell_command"} else (None, None)
+    if shell_error:
+        return post_block(shell_error)
+    paths = shell_paths if shell_paths is not None else tool_paths(payload, ROOT)
     session = get_session(payload.get("session_id"), ROOT)
     findings: list[str] = []
     for path in paths:
@@ -529,7 +513,7 @@ def handle_post(payload: dict[str, Any]) -> int:
         evidence_paths: list[str] = []
         for run_id in manifests:
             relative = f"backtests/manifests/{run_id}.json"
-            ok, detail = validate_manifest(ROOT / relative)
+            ok, detail = validate_manifest(ROOT, ROOT / relative)
             if not ok:
                 append_audit({"event": "PostToolUse", "control": "evidence-contract", "success": False, "manifests": [relative], "reason": detail})
                 return post_block(f"Evidence contract failed: {detail}")
@@ -549,20 +533,15 @@ def handle_post(payload: dict[str, Any]) -> int:
         if not safe_reports:
             return post_block("Report command produced no verifiable in-repository report artifact")
         session = get_session(payload.get("session_id"), ROOT)
-        source_ids = {
-            Path(path).stem for path in session.get("evidence_paths", []) if isinstance(path, str)
-        }
-        joined = False
+        manifests = [ROOT / path for path in session.get("evidence_paths", []) if isinstance(path, str)]
+        linked = False
         for relative in safe_reports:
-            absolute = ROOT / relative
-            if absolute.stat().st_size > 1_000_000:
-                continue
-            text = absolute.read_text(encoding="utf-8", errors="replace")
-            if any(run_id in text for run_id in source_ids):
-                joined = True
+            ok, _ = validate_report_provenance(ROOT, ROOT / relative, manifests)
+            if ok:
+                linked = True
                 break
-        if not source_ids or not joined:
-            reason = "Report provenance is incomplete: no source-manifest run_id join"
+        if not linked:
+            reason = "Report provenance is incomplete: cite a validated source run_id and result hash"
             append_audit({"event": "PostToolUse", "control": "evidence-contract", "success": False, "artifacts": safe_reports, "reason": reason})
             return post_block(reason)
         update_session(
@@ -629,6 +608,47 @@ def parse_specialist_receipt(message: str) -> dict[str, Any] | None:
         return None
 
 
+def specialist_receipt_error(
+    receipt: dict[str, Any] | None,
+    agent: str,
+    contract: dict[str, Any],
+    digest: str,
+    policy: dict[str, Any],
+) -> str:
+    """Validate an untrusted specialist receipt before it becomes reusable state."""
+    required = set(policy["specialist_receipt_schema"]["required"])
+    if receipt is None:
+        return "missing RESEARCH_HOOK_RECEIPT JSON"
+    if required - set(receipt):
+        return f"receipt missing fields: {', '.join(sorted(required - set(receipt)))}"
+    list_fields = {
+        "commands", "artifacts", "manifests", "limitations", "negative_evidence",
+        "permissible_downstream_claims",
+    }
+    if any(not isinstance(receipt.get(field), list) for field in list_fields):
+        return "receipt list evidence fields are malformed"
+    if any(
+        not isinstance(receipt.get(field), dict)
+        for field in ("hashes", "dataset_identity", "revision_tree_state")
+    ):
+        return "receipt identity evidence fields are malformed"
+    if receipt.get("completed") is not True or not isinstance(receipt.get("gate_passed"), bool):
+        return "completed must be true and gate_passed must be boolean"
+    if not isinstance(receipt.get("verdict"), str) or not receipt["verdict"].strip():
+        return "receipt verdict must be a non-empty string"
+    if receipt.get("agent") != agent or receipt.get("skill") != contract["skill"]:
+        return "receipt agent/skill identity mismatch"
+    if receipt.get("fingerprint") != digest:
+        return "receipt fingerprint mismatch"
+    if contract["verdicts"] and receipt["verdict"] not in contract["verdicts"]:
+        return "receipt verdict is outside the agent contract"
+    if contract["verdicts"]:
+        expected_pass = receipt["verdict"] in contract["passing"]
+        if receipt["gate_passed"] != expected_pass:
+            return "gate_passed contradicts the verdict vocabulary"
+    return ""
+
+
 def handle_subagent_stop(payload: dict[str, Any]) -> int:
     policy = load_policy()
     agent = str(payload.get("agent_type", ""))
@@ -637,25 +657,7 @@ def handle_subagent_stop(payload: dict[str, Any]) -> int:
         return emit({"continue": True})
     digest, _ = active_fingerprint(payload, policy)
     receipt = parse_specialist_receipt(str(payload.get("last_assistant_message") or ""))
-    required = set(policy["specialist_receipt_schema"]["required"])
-    error = ""
-    if receipt is None:
-        error = "missing RESEARCH_HOOK_RECEIPT JSON"
-    elif required - set(receipt):
-        error = f"receipt missing fields: {', '.join(sorted(required - set(receipt)))}"
-    elif receipt.get("agent") != agent or receipt.get("skill") != contract["skill"]:
-        error = "receipt agent/skill identity mismatch"
-    elif receipt.get("fingerprint") != digest:
-        error = "receipt fingerprint mismatch"
-    elif contract["verdicts"] and receipt.get("verdict") not in contract["verdicts"]:
-        error = "receipt verdict is outside the agent contract"
-    elif not isinstance(receipt.get("completed"), bool) or not isinstance(receipt.get("gate_passed"), bool):
-        error = "completed and gate_passed must be booleans"
-    else:
-        verdict = receipt.get("verdict")
-        expected_pass = verdict in contract["passing"] if contract["verdicts"] else bool(receipt["gate_passed"])
-        if contract["verdicts"] and bool(receipt["gate_passed"]) != expected_pass:
-            error = "gate_passed contradicts the verdict vocabulary"
+    error = specialist_receipt_error(receipt, agent, contract, digest, policy)
     if error:
         append_audit({"event": "SubagentStop", "control": "research-verdict", "success": False, "agent": agent, "reason": error})
         if payload.get("stop_hook_active"):
@@ -775,9 +777,13 @@ def cli(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate":
         mode = "publish" if "pr" in args.reason.lower() or "release" in args.reason.lower() else "interaction"
-        success, message, digest, reused = validate_tier(
-            args.tier, args.reason, session_id=args.session_id, mode=mode
-        )
+        try:
+            success, message, digest, reused = validate_tier(
+                args.tier, args.reason, session_id=args.session_id, mode=mode
+            )
+        except RuntimeError as exc:
+            print(json.dumps({"success": False, "message": str(exc), "fingerprint": "", "reused": False}, sort_keys=True))
+            return 1
         print(json.dumps({"success": success, "message": message, "fingerprint": digest, "reused": reused}, sort_keys=True))
         return 0 if success else 1
     parser.error("choose --event, describe, or validate")

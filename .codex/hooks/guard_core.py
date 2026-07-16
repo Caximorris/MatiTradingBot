@@ -9,11 +9,13 @@ import json
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
+
+from lock_safety import state_lock as _owner_aware_state_lock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,26 +39,14 @@ def state_root(root: Path = ROOT) -> Path:
 
 @contextlib.contextmanager
 def state_lock(root: Path = ROOT, timeout: float = 1.0):
-    lock = state_root(root) / ".lock"
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            lock.mkdir()
-            break
-        except FileExistsError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("research hook state lock timed out")
-            time.sleep(0.02)
-    try:
+    """Serialize local hook state using PID/start-identity-aware ownership."""
+    with _owner_aware_state_lock(state_root(root), timeout):
         yield
-    finally:
-        with contextlib.suppress(OSError):
-            lock.rmdir()
 
 
 def atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     temporary.write_text(json.dumps(value, sort_keys=True, indent=2), encoding="utf-8")
     os.replace(temporary, path)
 
@@ -129,6 +119,40 @@ def patch_paths(command: str, root: Path = ROOT) -> list[str]:
     return found
 
 
+def tool_paths(payload: dict[str, Any], root: Path = ROOT) -> list[str]:
+    """Extract only explicit file targets from a lifecycle tool payload.
+
+    Codex uses different input shapes for apply_patch, Edit, and Write.  Parsing
+    fields by name avoids treating arbitrary prompt text as a repository path.
+    """
+    tool_input = payload.get("tool_input") or {}
+    found: list[str] = []
+
+    def add(value: str) -> None:
+        normalized = normalize_path(value, root)
+        if normalized and normalized not in found:
+            found.append(normalized)
+
+    def visit(value: Any, key: str = "") -> None:
+        if isinstance(value, dict):
+            for child_key, child in value.items():
+                visit(child, str(child_key).lower())
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, key)
+        elif isinstance(value, str):
+            if key in {"path", "file", "file_path", "filepath", "filename", "target_path"}:
+                add(value)
+            elif key in {"patch", "diff", "content", "command"}:
+                for path in patch_paths(value, root):
+                    add(path)
+
+    visit(tool_input)
+    for path in patch_paths(command_text(payload), root):
+        add(path)
+    return found
+
+
 def parse_status(raw: str) -> dict[str, set[str]]:
     """Parse porcelain-v1 -z, preserving both rename endpoints."""
     tokens = raw.split("\0")
@@ -185,6 +209,9 @@ def session_baseline(session_id: str | None, root: Path = ROOT) -> dict[str, Any
         "created_at": time.time(),
     }
     with state_lock(root):
+        existing = read_json(session_path(session_id, root), {})
+        if existing.get("head") == baseline["head"] and existing.get("created_at"):
+            return existing
         atomic_json(session_path(session_id, root), baseline)
     return baseline
 
@@ -259,8 +286,8 @@ def touched_scope(session_id: str | None, root: Path = ROOT) -> tuple[list[str],
 
 
 def matches(path: str, patterns: Iterable[str]) -> bool:
-    normalized = path.replace("\\", "/")
-    return any(fnmatch.fnmatchcase(normalized, pattern) for pattern in patterns)
+    normalized = path.replace("\\", "/").lower()
+    return any(fnmatch.fnmatchcase(normalized, pattern.lower()) for pattern in patterns)
 
 
 def protected(path: str, policy: dict[str, Any]) -> bool:
@@ -406,7 +433,13 @@ def receipt_path(tier: int, digest: str, root: Path = ROOT) -> Path:
 
 def receipt_valid(tier: int, digest: str, root: Path = ROOT) -> bool:
     row = read_json(receipt_path(tier, digest, root), {})
-    return row.get("success") is True and row.get("fingerprint") == digest
+    return (
+        isinstance(row, dict)
+        and row.get("success") is True
+        and row.get("fingerprint") == digest
+        and row.get("tier") == tier
+        and isinstance(row.get("created_at"), (int, float))
+    )
 
 
 def store_success(tier: int, digest: str, details: dict[str, Any], root: Path = ROOT) -> None:
@@ -422,12 +455,27 @@ def specialist_path(agent: str, digest: str, root: Path = ROOT) -> Path:
 
 def specialist_valid(agent: str, digest: str, root: Path = ROOT) -> bool:
     row = read_json(specialist_path(agent, digest, root), {})
-    return row.get("success") is True and row.get("fingerprint") == digest
+    return (
+        isinstance(row, dict)
+        and row.get("success") is True
+        and row.get("gate_passed") is True
+        and row.get("completed") is True
+        and row.get("agent") == agent
+        and row.get("fingerprint") == digest
+        and isinstance(row.get("created_at"), (int, float))
+    )
 
 
 def specialist_completed(agent: str, digest: str, root: Path = ROOT) -> bool:
     row = read_json(specialist_path(agent, digest, root), {})
-    return row.get("completed") is True and row.get("fingerprint") == digest
+    return (
+        isinstance(row, dict)
+        and row.get("completed") is True
+        and isinstance(row.get("gate_passed"), bool)
+        and row.get("agent") == agent
+        and row.get("fingerprint") == digest
+        and isinstance(row.get("created_at"), (int, float))
+    )
 
 
 def store_specialist(receipt: dict[str, Any], digest: str, root: Path = ROOT) -> None:
@@ -518,6 +566,111 @@ def command_text(payload: dict[str, Any]) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(tool_input, sort_keys=True)
+
+
+_SHELL_MUTATORS = {
+    "set-content", "add-content", "out-file", "remove-item", "move-item",
+    "copy-item", "rename-item", "new-item", "del", "erase", "move", "copy", "ren",
+}
+_SHELL_READ_ONLY = {
+    "cat", "dir", "echo", "get-childitem", "get-content", "get-location", "git", "ls",
+    "pwd", "rg", "ruff", "select-string", "test-path", "type", "where", "write-output",
+}
+
+
+def _shell_segments(command: str) -> list[str] | None:
+    """Split only top-level shell chains; substitutions remain intentionally unsupported."""
+    if re.search(r"`|\$\(|\$\{[^}]*\}\s*\(|\b(?:powershell|pwsh|cmd(?:\.exe)?)\b", command, re.I):
+        return None
+    parts, current, quote = [], [], ""
+    for char in command:
+        if char in "\"'":
+            quote = "" if quote == char else (char if not quote else quote)
+        if not quote and char in ";|&\n":
+            if current:
+                parts.append("".join(current).strip())
+                current = []
+            continue
+        current.append(char)
+    if quote:
+        return None
+    if current:
+        parts.append("".join(current).strip())
+    return [part for part in parts if part]
+
+
+def _expand_shell_variables(command: str, root: Path) -> str | None:
+    values = {"PWD": str(root), "CD": str(root)} | {key.upper(): value for key, value in os.environ.items()}
+
+    def replace(match: re.Match[str]) -> str:
+        name = next(item for item in match.groups() if item is not None).upper()
+        return values.get(name, match.group(0))
+
+    expanded = re.sub(r"\$env:([A-Za-z_]\w*)|%([^%]+)%|\$\{?([A-Za-z_]\w*)\}?", replace, command, flags=re.I)
+    return None if re.search(r"\$env:|%[^%]+%|\$\{?[A-Za-z_]", expanded, re.I) else expanded
+
+
+def _shell_tokens(segment: str) -> list[str]:
+    return [token.strip("\"'") for token in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', segment)]
+
+
+def _shell_path(value: str, root: Path) -> str | None:
+    if any(marker in value for marker in ("*", "?", "[", "]")):
+        return None
+    return normalize_path(value, root)
+
+
+def _option_values(args: list[str], names: set[str]) -> list[str]:
+    return [args[index + 1] for index, value in enumerate(args[:-1]) if value.lower() in names]
+
+
+def shell_mutation_paths(command: str, root: Path = ROOT) -> tuple[list[str], str | None]:
+    """Return fully classified shell mutation targets or a fail-closed reason.
+
+    This is intentionally not a shell parser: unsupported syntax is a denial, not a gap.
+    """
+    expanded = _expand_shell_variables(command, root)
+    segments = _shell_segments(expanded) if expanded is not None else None
+    if not segments:
+        return [], "Shell command contains an unclassified nested shell, substitution, variable, or quote"
+    paths: list[str] = []
+
+    def add(value: str) -> bool:
+        path = _shell_path(value, root)
+        if not path:
+            return False
+        if path not in paths:
+            paths.append(path)
+        return True
+
+    for segment in segments:
+        tokens = _shell_tokens(segment)
+        if not tokens:
+            continue
+        name = tokens[0].lower().removesuffix(".exe")
+        args = tokens[1:]
+        redirects = re.findall(r"(?<![<>=])(?:\d?>{1,2})\s*(\"[^\"]*\"|'[^']*'|\S+)", segment)
+        for target in redirects:
+            if not target.lstrip().startswith("&") and not add(target):
+                return [], "Shell redirection target is not a deterministic in-repository path"
+        if name in {"python", "py", "python3"}:
+            if "-c" in args or "-" in args or ("-m" in args and args[args.index("-m") + 1:args.index("-m") + 2] not in (["pytest"], ["compileall"])):
+                return [], "Python shell execution is not safely classifiable; use a structured edit tool"
+        if name in _SHELL_MUTATORS:
+            if name in {"rename-item", "ren"}:
+                return [], "Rename shell commands are not safely classifiable"
+            named = _option_values(args, {"-path", "-literalpath", "-filepath", "-destination", "-outfilepath"})
+            positional = [value for index, value in enumerate(args) if not value.startswith("-") and (not index or not args[index - 1].startswith("-"))]
+            if name == "new-item" and not named:
+                return [], "New-Item requires an explicit deterministic -Path or -LiteralPath"
+            targets = named or positional
+            required = 2 if name in {"move-item", "copy-item", "move", "copy"} else 1
+            targets = targets[:required]
+            if len(targets) != required or not all(add(target) for target in targets):
+                return [], "Shell mutation lacks complete deterministic in-repository paths"
+        elif name not in _SHELL_READ_ONLY and not (name in {"python", "py", "python3"} and "-m" in args):
+            return [], f"Unrecognized shell command '{tokens[0]}' is not classified read-only"
+    return paths, None
 
 
 def is_commit(command: str) -> bool:

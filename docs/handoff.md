@@ -236,13 +236,19 @@ Ultima validacion local (2026-07-14, tras retirar Prop y anadir basis_carry/mr_r
    heartbeat diario.
 2. Cerrar F13 (24h), F15 (30d) y F19 para v6/demo; no interpretar la ausencia de trades como
    fallo del allocator.
-3. Resolver la frescura del cache funding antes de `accumulation` (~2026-10-07).
+3. Antes de `accumulation`, desplegar la variante forward OKX: refrescar con
+   `python tools/funding_refresh.py --source okx --stale-hours 26`, ejecutar el reconciliador de
+   fleet y reiniciar los servicios. El snapshot OKX es forward-only y no re-certifica el ancla
+   histórica v6-2 basada en Bybit.
 4. Mantener v5 como rollback documentado; no promover un sucesor de v6 sin evidencia forward
    diferenciada. Prop queda retirado — no re-evaluar sin una config que supere el gate corregido.
 
 ## 9. Riesgos pendientes
 
-- El cache funding de Bybit devuelve 403 desde la IP de la VM; sin cache fresco v6 degrada a v5.
+- Bybit devuelve 403 desde la IP de la VM. La sustitución operativa preparada es el snapshot de
+  settlements finales de OKX (`funding_overlay_source=okx`); no es una equivalencia histórica con
+  Bybit, porque la API pública de OKX tiene cobertura corta. Con el overlay habilitado, un snapshot
+  ausente o stale aborta la corrida de forma explícita, no degrada a v5 ni a funding neutral.
 - `docs/prop/hyrotrader-plan.md` esta en el limite de 800 lineas. No seguir ampliandolo; crear docs nuevos.
 - Verificar si el bot Prop (antes de su retiro) mantuvo algun short en la VM desde su despliegue
   (2026-07-11) — su equity/DD en ese tramo no reflejaria funding real (mismo bug, ver EXP-013).

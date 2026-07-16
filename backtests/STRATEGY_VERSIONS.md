@@ -462,7 +462,9 @@ de funding `+0.05`, p10/p90, TTL/dedup 7 dias, solo durante `accumulation`.
 tiempo; v6 domina todas las pruebas disponibles sin empeorar DD/churn/BTC. No autoriza live.
 Rollback exacto a v5: `--config '{"use_phase_policy_router": false, "use_funding_overlay": false}'`.
 Mantener la instancia v5 aislada como control; resolver frescura del funding en VM antes de
-`accumulation` (~2026-10-07), porque cache stale degrada v6 a v5 en silencio.
+`accumulation` (~2026-10-07). **Supersedido:** un cache stale, ausente, malformado o sin cobertura
+evidenciable con el overlay habilitado aborta de forma explicita; v6 solo toma comportamiento v5
+mediante esa configuracion de rollback funding-off deliberada.
 
 ---
 

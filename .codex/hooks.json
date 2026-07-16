@@ -8,7 +8,7 @@
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/research_guard.py\" --event SessionStart",
             "commandWindows": "powershell -NoProfile -Command \"$r=(git rev-parse --show-toplevel); python (Join-Path $r '.codex/hooks/research_guard.py') --event SessionStart\"",
-            "timeout": 5,
+            "timeout": 2,
             "statusMessage": "Loading research integrity baseline"
           }
         ]
@@ -16,7 +16,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(Bash|apply_patch|Edit|Write|mcp__.*create_pull_request.*)$",
+        "matcher": "^(Bash|shell_command|apply_patch|Edit|Write|mcp__.*create_pull_request.*)$",
         "hooks": [
           {
             "type": "command",
@@ -30,7 +30,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "^(Bash|apply_patch|Edit|Write|mcp__.*)$",
+        "matcher": "^(Bash|shell_command|apply_patch|Edit|Write|mcp__.*)$",
         "hooks": [
           {
             "type": "command",
@@ -50,7 +50,7 @@
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/research_guard.py\" --event SubagentStart",
             "commandWindows": "powershell -NoProfile -Command \"$r=(git rev-parse --show-toplevel); python (Join-Path $r '.codex/hooks/research_guard.py') --event SubagentStart\"",
-            "timeout": 5,
+            "timeout": 2,
             "statusMessage": "Loading specialist contract"
           }
         ]
@@ -64,7 +64,7 @@
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/research_guard.py\" --event SubagentStop",
             "commandWindows": "powershell -NoProfile -Command \"$r=(git rev-parse --show-toplevel); python (Join-Path $r '.codex/hooks/research_guard.py') --event SubagentStop\"",
-            "timeout": 5,
+            "timeout": 2,
             "statusMessage": "Validating specialist verdict"
           }
         ]

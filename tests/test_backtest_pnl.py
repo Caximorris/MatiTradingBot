@@ -110,5 +110,13 @@ def test_market_fill_next_open_usa_open_siguiente():
     )
     client.advance(0)
     order = client.place_order("BTC-USDT", "buy", "market", Decimal("1"))
-    assert order.filled_price == Decimal("120")
-    assert order.timestamp == datetime(2024, 1, 1, 1, tzinfo=timezone.utc)
+    assert order.status == "open"
+    assert order.filled_price is None
+    assert client.current_time() == datetime(2024, 1, 1, 0, tzinfo=timezone.utc)
+    assert client.get_balance() == {"USDT": Decimal("1000")}
+
+    fills = client.advance(1)
+
+    assert len(fills) == 1
+    assert fills[0].filled_price == Decimal("120")
+    assert fills[0].timestamp == datetime(2024, 1, 1, 1, tzinfo=timezone.utc)

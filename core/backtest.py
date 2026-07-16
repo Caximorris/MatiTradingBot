@@ -138,6 +138,9 @@ class BacktestClient:
     """
 
     is_paper: bool = True
+    _QUOTE_CURRENCY = "USDT"
+    _VALID_ORDER_SIDES = frozenset({"buy", "sell"})
+    _VALID_ORDER_TYPES = frozenset({"market", "limit"})
 
     def __init__(
         self,
@@ -154,6 +157,7 @@ class BacktestClient:
         self._idx = 0
         self._balance: dict[str, Decimal] = {"USDT": initial_balance}
         self._paper_orders: dict[str, dict] = {}
+        self._deferred_market_orders: dict[str, dict] = {}
         self._reserved_usdt: dict[str, Decimal] = {}
         self._reserved_base: dict[str, Decimal] = {}
         self._pending_fills: list[OrderResult] = []
@@ -190,7 +194,8 @@ class BacktestClient:
         via fill_paper_limit_orders() en el mismo tick.
         """
         self._idx = idx
-        self._pending_fills = self._check_limit_fills()
+        market_fills = self._fill_deferred_market_orders()
+        self._pending_fills = market_fills + self._check_limit_fills()
         return self._pending_fills
 
     @property
@@ -234,8 +239,12 @@ class BacktestClient:
         if reserved_usdt:
             result["USDT"] = result.get("USDT", Decimal("0")) + reserved_usdt
         for order_id, qty in self._reserved_base.items():
-            order = self._paper_orders.get(order_id, {})
-            base = order.get("symbol", "BTC-USDT").split("-")[0]
+            order = self._paper_orders.get(order_id)
+            if order is None:
+                raise RuntimeError(
+                    f"Backtest reservation missing order state for {order_id}"
+                )
+            base = order["symbol"].split("-")[0]
             result[base] = result.get(base, Decimal("0")) + qty
         return result
 
@@ -244,7 +253,7 @@ class BacktestClient:
         self._balance[currency] = self._balance.get(currency, Decimal("0")) + delta
 
     def get_open_orders(self, symbol: str | None = None) -> list:
-        orders = list(self._paper_orders.values())
+        orders = [*self._paper_orders.values(), *self._deferred_market_orders.values()]
         if symbol:
             orders = [o for o in orders if o["symbol"] == symbol]
         return orders
@@ -268,11 +277,38 @@ class BacktestClient:
         **_kwargs,
     ) -> OrderResult:
         order_id = f"BT-{uuid.uuid4().hex[:8]}"
+        validation_error = self._validate_order_input(symbol, side, order_type, size, price)
+        if validation_error:
+            return self._rejected(
+                order_id, symbol, side, size, strategy, self.current_bar_ts(),
+                order_type=order_type, limit_price=price, error=validation_error,
+            )
 
         if order_type == "market":
+            if self.fill_next_open:
+                if self._idx + 1 >= len(self._bars):
+                    return self._rejected(
+                        order_id, symbol, side, size, strategy, self.current_bar_ts(),
+                        error="No hay una barra siguiente para ejecutar la orden market",
+                    )
+                self._deferred_market_orders[order_id] = {
+                    "order_id": order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "size": size,
+                    "strategy": strategy,
+                }
+                return OrderResult(
+                    order_id=order_id, symbol=symbol, side=side,
+                    order_type="market", size=size,
+                    limit_price=None, filled_price=None, filled_qty=Decimal("0"),
+                    fee=Decimal("0"), fee_currency="USDT",
+                    status="open", is_paper=True,
+                    strategy=strategy, timestamp=self.current_bar_ts(),
+                )
             return self._fill_market(order_id, symbol, side, size, strategy)
 
-        lp = price or self.current_bar.close
+        lp = self.current_bar.close if price is None else price
         base = symbol.split("-")[0]
 
         # Reservar saldo para órdenes límite (igual que hace OKXClient paper)
@@ -316,16 +352,30 @@ class BacktestClient:
         )
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
-        order = self._paper_orders.pop(order_id, None)
-        if order is None:
+        deferred = self._deferred_market_orders.get(order_id)
+        if deferred is not None:
+            if symbol != self._symbol or deferred["symbol"] != symbol:
+                return False
+            del self._deferred_market_orders[order_id]
+            return True
+        order = self._paper_orders.get(order_id)
+        if order is None or symbol != self._symbol or order["symbol"] != symbol:
             return False
+        side = order["side"]
         base = order["symbol"].split("-")[0]
-        if order["side"] == "buy":
-            reserved = self._reserved_usdt.pop(order_id, Decimal("0"))
+        if side == "buy":
+            if order_id not in self._reserved_usdt:
+                raise RuntimeError(f"Backtest reservation missing quote funds for {order_id}")
+            reserved = self._reserved_usdt.pop(order_id)
             self._balance["USDT"] = self._balance.get("USDT", Decimal("0")) + reserved
-        else:
-            reserved = self._reserved_base.pop(order_id, Decimal("0"))
+        elif side == "sell":
+            if order_id not in self._reserved_base:
+                raise RuntimeError(f"Backtest reservation missing base funds for {order_id}")
+            reserved = self._reserved_base.pop(order_id)
             self._balance[base] = self._balance.get(base, Decimal("0")) + reserved
+        else:
+            raise RuntimeError(f"Backtest order has invalid stored side for {order_id}: {side}")
+        del self._paper_orders[order_id]
         return True
 
     def fill_paper_limit_orders(
@@ -350,15 +400,49 @@ class BacktestClient:
     def current_time(self) -> datetime:
         return self.current_bar_ts()
 
+    def _validate_order_input(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        size: Decimal,
+        price: Decimal | None,
+    ) -> str | None:
+        """Validate the single-instrument spot simulation before mutating balances."""
+        if symbol != self._symbol:
+            return f"Símbolo no coincide con el BacktestClient: {symbol}"
+        try:
+            base, quote = symbol.split("-")
+        except ValueError:
+            return f"Símbolo inválido: {symbol}"
+        if not base or quote != self._QUOTE_CURRENCY:
+            return f"Moneda cotizada no soportada: {quote or 'ausente'}"
+        if side not in self._VALID_ORDER_SIDES:
+            return f"Lado de orden inválido: {side}"
+        if order_type not in self._VALID_ORDER_TYPES:
+            return f"Tipo de orden inválido: {order_type}"
+        if not isinstance(size, Decimal) or not size.is_finite() or size <= Decimal("0"):
+            return "Tamaño de orden debe ser Decimal finito y mayor que cero"
+        if order_type == "limit":
+            limit_price = self.current_bar.close if price is None else price
+            if (
+                not isinstance(limit_price, Decimal)
+                or not limit_price.is_finite()
+                or limit_price <= Decimal("0")
+            ):
+                return "Precio límite debe ser Decimal finito y mayor que cero"
+        return None
+
     def _fill_market(
-        self, order_id: str, symbol: str, side: str, size: Decimal, strategy: str
+        self,
+        order_id: str,
+        symbol: str,
+        side: str,
+        size: Decimal,
+        strategy: str,
+        raw_price: Decimal | None = None,
     ) -> OrderResult:
-        fill_bar = self.current_bar
-        if self.fill_next_open and self._idx + 1 < len(self._bars):
-            fill_bar = self._bars[self._idx + 1]
-            raw_price = fill_bar.open
-        else:
-            raw_price = self.current_bar.close
+        raw_price = self.current_bar.close if raw_price is None else raw_price
         # Aplica slippage: buy paga más, sell recibe menos
         if self._slippage_bps > 0:
             slip = self._slippage_bps / Decimal("10000")
@@ -368,7 +452,7 @@ class BacktestClient:
             price = raw_price
         fee = (size * price * self._fee_rate).quantize(Decimal("0.00000001"))
         base = symbol.split("-")[0]
-        ts = datetime.fromtimestamp(fill_bar.timestamp / 1000, tz=timezone.utc)
+        ts = self.current_bar_ts()
 
         if side == "buy":
             cost = size * price + fee
@@ -396,6 +480,22 @@ class BacktestClient:
             strategy=strategy, timestamp=ts,
         )
 
+    def _fill_deferred_market_orders(self) -> list[OrderResult]:
+        """Fill prior-tick market orders at this bar's open before strategy execution."""
+        orders = list(self._deferred_market_orders.values())
+        self._deferred_market_orders.clear()
+        return [
+            self._fill_market(
+                order["order_id"],
+                order["symbol"],
+                order["side"],
+                order["size"],
+                order["strategy"],
+                raw_price=self.current_bar.open,
+            )
+            for order in orders
+        ]
+
     def _check_limit_fills(self) -> list[OrderResult]:
         bar = self.current_bar
         filled_results: list[OrderResult] = []
@@ -403,6 +503,8 @@ class BacktestClient:
         for order_id, order in list(self._paper_orders.items()):
             lp = order["price"]
             side = order["side"]
+            if side not in self._VALID_ORDER_SIDES or order["symbol"] != self._symbol:
+                raise RuntimeError(f"Backtest order state is invalid for {order_id}")
             triggers = (side == "buy" and bar.low <= lp) or (side == "sell" and bar.high >= lp)
             if not triggers:
                 continue
@@ -415,7 +517,9 @@ class BacktestClient:
             # El saldo ya fue reservado en place_order — solo aplicar el fill
             if side == "buy":
                 # Teníamos reservado: size*lp USDT. Ahora recibimos size BTC y pagamos fee
-                reserved = self._reserved_usdt.pop(order_id, size * lp)
+                if order_id not in self._reserved_usdt:
+                    raise RuntimeError(f"Backtest reservation missing quote funds for {order_id}")
+                reserved = self._reserved_usdt.pop(order_id)
                 # Devolvemos el exceso (diferencia entre reserva y coste real + fee)
                 net_cost = size * lp + fee
                 surplus = reserved - net_cost
@@ -423,7 +527,9 @@ class BacktestClient:
                 self._balance[base] = self._balance.get(base, Decimal("0")) + size
             else:
                 # Teníamos reservado: size base. Recibimos size*lp - fee USDT
-                self._reserved_base.pop(order_id, None)
+                if order_id not in self._reserved_base:
+                    raise RuntimeError(f"Backtest reservation missing base funds for {order_id}")
+                self._reserved_base.pop(order_id)
                 proceeds = size * lp - fee
                 self._balance["USDT"] = self._balance.get("USDT", Decimal("0")) + proceeds
 
@@ -448,6 +554,7 @@ class BacktestClient:
     def _rejected(
         order_id, symbol, side, size, strategy, ts,
         order_type: str = "market", limit_price: Decimal | None = None,
+        error: str = "Saldo insuficiente",
     ) -> OrderResult:
         return OrderResult(
             order_id=order_id, symbol=symbol, side=side,
@@ -456,7 +563,7 @@ class BacktestClient:
             fee=Decimal("0"), fee_currency="USDT",
             status="rejected", is_paper=True,
             strategy=strategy, timestamp=ts,
-            error="Saldo insuficiente",
+            error=error,
         )
 
 

@@ -35,7 +35,7 @@ import pandas as pd
 from loguru import logger
 
 from strategies.base_strategy import BaseStrategy
-from strategies.funding_extreme import load_funding
+from strategies.funding_extreme import load_funding, mark_manifest_funding_consumed
 
 if TYPE_CHECKING:
     from core.exchange import OKXClient
@@ -118,6 +118,8 @@ class BasisCarryBot(BaseStrategy):
         self.realized: list[tuple[datetime, Decimal]] = []
         self._settlements = load_funding(config.symbol)
         self._avg_series = build_avg_funding_series(self._settlements, config.funding_window)
+        if self._settlements:
+            mark_manifest_funding_consumed(config.symbol)
         self._settle_idx = 0
         self._avg_idx = -1
         if not self._settlements:

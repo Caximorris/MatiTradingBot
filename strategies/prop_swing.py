@@ -49,7 +49,7 @@ from strategies.indicators import (
     adx as adx_fn, atr as atr_fn, ema as ema_fn,
     resample_to_4h, resample_to_daily,
 )
-from strategies.funding_extreme import load_funding
+from strategies.funding_extreme import load_funding, mark_manifest_funding_consumed
 from strategies.macro_context import MacroContext
 
 if TYPE_CHECKING:
@@ -538,6 +538,7 @@ class PropSwingBot(BaseStrategy):
             self._settle_idx += 1
             if s_ts <= pos.get("entry_ms", 0):
                 continue
+            mark_manifest_funding_consumed(self._cfg.symbol, s_ts)
             cost = float(pos["qty"]) * price * rate * side_mult
             if cost:
                 self._client.adjust_balance("USDT", Decimal(str(round(-cost, 8))))

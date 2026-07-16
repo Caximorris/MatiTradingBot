@@ -120,7 +120,7 @@ def anomaly_check(
     from strategies.swing_funding_overlay import last_settlement_ms
     now = datetime.now(timezone.utc)
     snaps, price = _build(now)
-    funding_last_ms = last_settlement_ms("BTCUSDT")
+    funding_last_ms = last_settlement_ms("BTC-USDT", source="okx")
     funding_age_hours = (
         (now.timestamp() * 1000 - funding_last_ms) / 3_600_000
         if funding_last_ms is not None else None

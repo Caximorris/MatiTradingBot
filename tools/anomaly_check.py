@@ -97,9 +97,9 @@ def check_anomalies(snaps: list[dict], *, price: Decimal | None,
         age = "ausente" if funding_age_hours is None else f"{funding_age_hours:.1f}h"
         alerts.append(Alert(
             "HIGH", "funding-cache-stale",
-            f"Cache Bybit de funding stale ({age}; max {FUNDING_CACHE_STALE_HOURS:.0f}h). ",
+            f"Cache de funding del overlay stale ({age}; max {FUNDING_CACHE_STALE_HOURS:.0f}h). ",
             "Reparar tools/funding_refresh.py/cron antes de accumulation; "
-            "v6 degrada a v5 mientras el cache no sea fresco.",
+            "el overlay v6 habilitado falla cerrado mientras el snapshot no sea fresco.",
         ))
 
     # --- Huecos de datos (si el data-audit los paso) ---
