@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from lock_safety import state_lock as _owner_aware_state_lock
+from shell_policy import shell_mutation_paths as shell_mutation_paths
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -519,7 +520,25 @@ def interpreter_version(prefix: list[str], root: Path = ROOT) -> tuple[int, int]
         return None
 
 
-def resolve_interpreter(root: Path = ROOT, *, tier: int) -> tuple[list[str], tuple[int, int], str]:
+def interpreter_has_module(prefix: list[str], module: str, root: Path = ROOT) -> bool:
+    try:
+        completed = run(
+            [*prefix, "-c", f"import importlib.util, sys; sys.exit(0 if importlib.util.find_spec({module!r}) else 1)"],
+            root=root,
+            timeout=3,
+        )
+        return completed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def resolve_interpreter(
+    root: Path = ROOT,
+    *,
+    tier: int,
+    required_modules: Iterable[str] = (),
+) -> tuple[list[str], tuple[int, int], str]:
+    modules = tuple(sorted(set(required_modules)))
     candidates: list[list[str]] = []
     override = os.environ.get("MATIBOT_HOOK_PYTHON")
     if override:
@@ -544,18 +563,29 @@ def resolve_interpreter(root: Path = ROOT, *, tier: int) -> tuple[list[str], tup
         )
     seen: set[tuple[str, ...]] = set()
     fallback: tuple[list[str], tuple[int, int]] | None = None
+    missing_by_interpreter: list[tuple[list[str], tuple[int, int], list[str]]] = []
     for prefix in candidates:
         key = tuple(prefix)
         if key in seen:
             continue
         seen.add(key)
         version = interpreter_version(prefix, root)
+        missing = [module for module in modules if not interpreter_has_module(prefix, module, root)] if version else []
+        if version and missing:
+            missing_by_interpreter.append((prefix, version, missing))
+            continue
         if version in {(3, 12), (3, 13)}:
             return prefix, version, "supported"
         if version and fallback is None:
             fallback = (prefix, version)
     if tier <= 2 and fallback:
         return fallback[0], fallback[1], "unsupported-warning"
+    if missing_by_interpreter:
+        prefix, version, missing = missing_by_interpreter[0]
+        raise RuntimeError(
+            f"Python {version[0]}.{version[1]} at {' '.join(prefix)} lacks required Tier {tier} "
+            f"module(s): {', '.join(missing)}"
+        )
     version_text = f"; found {fallback[1][0]}.{fallback[1][1]}" if fallback else ""
     raise RuntimeError(f"Python 3.12 or 3.13 is required for Tier {tier}{version_text}")
 
@@ -566,111 +596,6 @@ def command_text(payload: dict[str, Any]) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(tool_input, sort_keys=True)
-
-
-_SHELL_MUTATORS = {
-    "set-content", "add-content", "out-file", "remove-item", "move-item",
-    "copy-item", "rename-item", "new-item", "del", "erase", "move", "copy", "ren",
-}
-_SHELL_READ_ONLY = {
-    "cat", "dir", "echo", "get-childitem", "get-content", "get-location", "git", "ls",
-    "pwd", "rg", "ruff", "select-string", "test-path", "type", "where", "write-output",
-}
-
-
-def _shell_segments(command: str) -> list[str] | None:
-    """Split only top-level shell chains; substitutions remain intentionally unsupported."""
-    if re.search(r"`|\$\(|\$\{[^}]*\}\s*\(|\b(?:powershell|pwsh|cmd(?:\.exe)?)\b", command, re.I):
-        return None
-    parts, current, quote = [], [], ""
-    for char in command:
-        if char in "\"'":
-            quote = "" if quote == char else (char if not quote else quote)
-        if not quote and char in ";|&\n":
-            if current:
-                parts.append("".join(current).strip())
-                current = []
-            continue
-        current.append(char)
-    if quote:
-        return None
-    if current:
-        parts.append("".join(current).strip())
-    return [part for part in parts if part]
-
-
-def _expand_shell_variables(command: str, root: Path) -> str | None:
-    values = {"PWD": str(root), "CD": str(root)} | {key.upper(): value for key, value in os.environ.items()}
-
-    def replace(match: re.Match[str]) -> str:
-        name = next(item for item in match.groups() if item is not None).upper()
-        return values.get(name, match.group(0))
-
-    expanded = re.sub(r"\$env:([A-Za-z_]\w*)|%([^%]+)%|\$\{?([A-Za-z_]\w*)\}?", replace, command, flags=re.I)
-    return None if re.search(r"\$env:|%[^%]+%|\$\{?[A-Za-z_]", expanded, re.I) else expanded
-
-
-def _shell_tokens(segment: str) -> list[str]:
-    return [token.strip("\"'") for token in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', segment)]
-
-
-def _shell_path(value: str, root: Path) -> str | None:
-    if any(marker in value for marker in ("*", "?", "[", "]")):
-        return None
-    return normalize_path(value, root)
-
-
-def _option_values(args: list[str], names: set[str]) -> list[str]:
-    return [args[index + 1] for index, value in enumerate(args[:-1]) if value.lower() in names]
-
-
-def shell_mutation_paths(command: str, root: Path = ROOT) -> tuple[list[str], str | None]:
-    """Return fully classified shell mutation targets or a fail-closed reason.
-
-    This is intentionally not a shell parser: unsupported syntax is a denial, not a gap.
-    """
-    expanded = _expand_shell_variables(command, root)
-    segments = _shell_segments(expanded) if expanded is not None else None
-    if not segments:
-        return [], "Shell command contains an unclassified nested shell, substitution, variable, or quote"
-    paths: list[str] = []
-
-    def add(value: str) -> bool:
-        path = _shell_path(value, root)
-        if not path:
-            return False
-        if path not in paths:
-            paths.append(path)
-        return True
-
-    for segment in segments:
-        tokens = _shell_tokens(segment)
-        if not tokens:
-            continue
-        name = tokens[0].lower().removesuffix(".exe")
-        args = tokens[1:]
-        redirects = re.findall(r"(?<![<>=])(?:\d?>{1,2})\s*(\"[^\"]*\"|'[^']*'|\S+)", segment)
-        for target in redirects:
-            if not target.lstrip().startswith("&") and not add(target):
-                return [], "Shell redirection target is not a deterministic in-repository path"
-        if name in {"python", "py", "python3"}:
-            if "-c" in args or "-" in args or ("-m" in args and args[args.index("-m") + 1:args.index("-m") + 2] not in (["pytest"], ["compileall"])):
-                return [], "Python shell execution is not safely classifiable; use a structured edit tool"
-        if name in _SHELL_MUTATORS:
-            if name in {"rename-item", "ren"}:
-                return [], "Rename shell commands are not safely classifiable"
-            named = _option_values(args, {"-path", "-literalpath", "-filepath", "-destination", "-outfilepath"})
-            positional = [value for index, value in enumerate(args) if not value.startswith("-") and (not index or not args[index - 1].startswith("-"))]
-            if name == "new-item" and not named:
-                return [], "New-Item requires an explicit deterministic -Path or -LiteralPath"
-            targets = named or positional
-            required = 2 if name in {"move-item", "copy-item", "move", "copy"} else 1
-            targets = targets[:required]
-            if len(targets) != required or not all(add(target) for target in targets):
-                return [], "Shell mutation lacks complete deterministic in-repository paths"
-        elif name not in _SHELL_READ_ONLY and not (name in {"python", "py", "python3"} and "-m" in args):
-            return [], f"Unrecognized shell command '{tokens[0]}' is not classified read-only"
-    return paths, None
 
 
 def is_commit(command: str) -> bool:
