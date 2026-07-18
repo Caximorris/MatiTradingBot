@@ -24,6 +24,18 @@ from loguru import logger
 
 logger.remove()
 
+FORWARD_FUNDING_SOURCE = "okx"
+
+
+def forward_config() -> SwingAllocatorConfig:
+    """Return the v6-2 config used by the paper forward feed.
+
+    Historical Swing backtests keep their explicit Bybit input. The paper fleet
+    uses the venue-native OKX snapshot, so this checker must not rely on the
+    historical ``SwingAllocatorConfig`` default.
+    """
+    return SwingAllocatorConfig(funding_overlay_source=FORWARD_FUNDING_SOURCE)
+
 
 def _bars_from_df(df) -> list[OHLCVBar]:
     bars = []
@@ -43,7 +55,7 @@ def _bars_from_df(df) -> list[OHLCVBar]:
 
 def main() -> None:
     symbol = "BTC-USDT"
-    cfg = SwingAllocatorConfig()
+    cfg = forward_config()
 
     okx = OKXClient(settings)
     df = okx.get_ohlcv(symbol, "1H", limit=6000)

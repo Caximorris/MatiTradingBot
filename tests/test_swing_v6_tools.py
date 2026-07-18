@@ -7,6 +7,7 @@ import pandas as pd
 from tools.swing_funding_overlay_screen import deduplicate_events, mark_extremes
 from tools.backtest_report import PRESETS
 from tools.okx_demo_setup import demo_config
+from tools.swing_parity_check import FORWARD_FUNDING_SOURCE, forward_config
 from tools.swing_paper_setup import _v5_config, _v6_config
 from tools.swing_v5_freeze_report import V5_CONFIG
 from tools.swing_v6_freeze_report import V6_CONFIG
@@ -63,3 +64,10 @@ def test_v6_default_presets_and_v5_rollback_are_explicit():
         assert cfg["funding_overlay_lookback_settlements"] == 90
         for key, value in V6_CONFIG.items():
             assert defaults[key] == value
+
+
+def test_forward_parity_uses_same_okx_funding_source_as_v6_and_demo():
+    assert FORWARD_FUNDING_SOURCE == "okx"
+    assert forward_config().funding_overlay_source == "okx"
+    assert _v6_config()["funding_overlay_source"] == "okx"
+    assert demo_config()["funding_overlay_source"] == "okx"
