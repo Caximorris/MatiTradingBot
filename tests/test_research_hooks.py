@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -19,7 +20,9 @@ sys.path.insert(0, str(HOOKS))
 import evidence_contract  # noqa: E402
 import guard_core  # noqa: E402
 import lock_safety  # noqa: E402
+import offline_guard  # noqa: E402
 import research_guard  # noqa: E402
+import shell_policy  # noqa: E402
 
 
 def _sha256(value: object) -> str:
@@ -68,6 +71,8 @@ def test_policy_has_complete_tiered_control_contract() -> None:
     assert all(required <= set(row) for row in policy["controls"])
     assert max(row["tier"] for row in policy["controls"]) == 3
     assert guard_core.focal_tests({"docs"}, policy) == []
+    assert ["-m", "build"] in policy["tier3_commands"]
+    assert ["-m", "build", "--no-isolation"] not in policy["tier3_commands"]
 
 
 def test_hook_configuration_covers_shell_command_mutations() -> None:
@@ -106,6 +111,26 @@ def test_shell_read_only_commands_and_known_source_edits_are_classified(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert guard_core.shell_mutation_paths("git status --short") == ([], None)
+    assert guard_core.shell_mutation_paths(
+        "python3.13 -m pytest -q -p no:cacheprovider tests/test_research_hooks.py"
+    ) == ([], None)
+    assert guard_core.shell_mutation_paths(
+        ".venv/bin/python -m pytest -q tests/test_research_hooks.py"
+    ) == ([], None)
+    assert guard_core.shell_mutation_paths(
+        ".codex/hooks/research_guard.py validate --tier 2 --reason local-check"
+    ) == ([], None)
+    assert guard_core.shell_mutation_paths(
+        ".venv/bin/python .codex/hooks/research_guard.py validate --tier 2 --reason local-check"
+    ) == ([], None)
+    _, error = guard_core.shell_mutation_paths("/tmp/python3.13 -m pytest -q tests/test_research_hooks.py")
+    assert error == "Python interpreter path is not trusted for validation"
+    _, error = guard_core.shell_mutation_paths("python3.13 -m pytest -q --version")
+    assert error == "Python shell execution is not an approved validation or read-only CLI command"
+    _, error = guard_core.shell_mutation_paths(
+        ".codex/hooks/research_guard.py validate --tier 2 --reason local-check --unsafe"
+    )
+    assert error == "Unrecognized shell command '.codex/hooks/research_guard.py' is not classified read-only"
     assert guard_core.shell_mutation_paths("Get-Content .codex\\hooks\\guard_core.py") == ([], None)
     paths, error = guard_core.shell_mutation_paths("Set-Content .codex\\hooks\\guard_core.py '# x'")
     assert (paths, error) == ([".codex/hooks/guard_core.py"], None)
@@ -114,6 +139,148 @@ def test_shell_read_only_commands_and_known_source_edits_are_classified(
     monkeypatch.setattr(research_guard, "update_touched", lambda *_args, **_kwargs: None)
     response = _pre_shell("Set-Content .codex\\hooks\\guard_core.py '# x'", capsys)
     assert "Changed scopes: hooks" in response["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -m pytest -q",
+        "python -m pytest -q -p no:cacheprovider tests",
+        "python -m pytest -q tests/test_research_hooks.py::test_policy_has_complete_tiered_control_contract",
+        ".venv/bin/python -m compileall -q .",
+        ".venv/bin/python -m build",
+        ".venv/bin/python -m pip check",
+        ".venv/bin/python -m ruff check .",
+        ".venv/bin/python tools/ruff_ratchet.py",
+        ".venv/bin/python main.py --help",
+        ".venv/bin/python main.py backtest --help",
+        ".venv/bin/python main.py mode",
+        ".venv/bin/python main.py status",
+        ".venv/bin/python main.py paper-status",
+        ".venv/bin/python main.py anomaly-check",
+    ],
+)
+def test_canonical_validation_and_read_only_cli_commands_are_allowed(command: str) -> None:
+    assert guard_core.shell_mutation_paths(command) == ([], None)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -m pytest -q pyproject.toml",
+        "python -m pytest -q -p arbitrary_plugin tests",
+        "python -m pytest -q --basetemp outside tests",
+        "python -m build --no-isolation",
+        "python -m pip install build",
+        "python -m ruff check . --fix",
+        "python main.py " + "start",
+        "python main.py " + "stop",
+        "python main.py data-audit",
+        "python tools/paper_" + "fleet_setup.py",
+    ],
+)
+def test_nearby_unsafe_python_commands_are_denied(command: str) -> None:
+    paths, error = guard_core.shell_mutation_paths(command)
+    assert paths == []
+    assert error == "Python shell execution is not an approved validation or read-only CLI command"
+
+
+def test_git_and_direct_ruff_commands_fail_closed() -> None:
+    assert guard_core.shell_mutation_paths("git status --short --branch") == ([], None)
+    assert guard_core.shell_mutation_paths("git diff --check") == ([], None)
+    assert guard_core.shell_mutation_paths(
+        "git add -- tests/test_research_hooks.py"
+    ) == (["tests/test_research_hooks.py"], None)
+    assert guard_core.shell_mutation_paths("git commit -m 'fix: harden hooks'") == ([], None)
+    assert guard_core.shell_mutation_paths(
+        "git push -u origin codex/fix-research-hook-validation"
+    ) == ([], None)
+    assert guard_core.shell_mutation_paths("ruff check .") == ([], None)
+
+    for command in (
+        "git add -A",
+        "git checkout " + "-- strategies/pro_trend.py",
+        "git push origin main",
+        "git push origin codex/topic:main",
+        "git push origin codex/topic:refs/heads/main",
+        "git push origin +codex/topic",
+        "git push --delete origin codex/topic",
+        "git commit --amend",
+        "ruff check . --fix",
+    ):
+        paths, error = guard_core.shell_mutation_paths(command)
+        assert paths == []
+        assert error
+
+
+def test_shell_validation_paths_reject_symlink_escapes(tmp_path: Path) -> None:
+    tests_root = tmp_path / "tests"
+    tests_root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("pass\n", encoding="utf-8")
+    (tests_root / "escape.py").symlink_to(outside)
+    guard_dir = tmp_path / ".codex" / "hooks"
+    guard_dir.mkdir(parents=True)
+    (guard_dir / "research_guard.py").symlink_to(outside)
+
+    assert not shell_policy.is_safe_pytest(["-m", "pytest", "-q", "tests/escape.py"], tmp_path)
+    assert not shell_policy.is_guard_cli(".codex/hooks/research_guard.py", ["describe"], tmp_path)
+
+
+def test_interpreter_preflight_requires_all_tier_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MATIBOT_HOOK_PYTHON", "chosen-python")
+    monkeypatch.setattr(
+        guard_core,
+        "interpreter_version",
+        lambda prefix, _root: (3, 13) if prefix == ["chosen-python"] else None,
+    )
+    available = {"pytest", "ruff"}
+    monkeypatch.setattr(
+        guard_core,
+        "interpreter_has_module",
+        lambda _prefix, module, _root: module in available,
+    )
+
+    with pytest.raises(RuntimeError, match=r"lacks required Tier 3 module\(s\): build"):
+        guard_core.resolve_interpreter(
+            tier=3, required_modules={"pytest", "build", "ruff"}
+        )
+
+    available.add("build")
+    assert guard_core.resolve_interpreter(
+        tier=3, required_modules={"pytest", "build", "ruff"}
+    ) == (["chosen-python"], (3, 13), "supported")
+
+
+def test_hook_child_environment_denies_python_network(tmp_path: Path) -> None:
+    state_directory = guard_core.state_root(tmp_path)
+    env = offline_guard.child_environment(state_directory, offline=True)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import socket; socket.create_connection(('127.0.0.1', 9))",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "network access disabled by MatiTradingBot research hook" in completed.stderr
+    assert env["PIP_NO_INDEX"] == "1"
+    assert env["UV_OFFLINE"] == "1"
+
+    build_env = offline_guard.child_environment(state_directory, offline=False)
+    assert "MATIBOT_HOOK_OFFLINE" not in build_env
+    assert "PIP_NO_INDEX" not in build_env
+    assert build_env["PYTHONPYCACHEPREFIX"].endswith("pycache")
+    assert offline_guard.is_isolated_build([sys.executable, "-m", "build"])
+    assert not offline_guard.is_isolated_build([sys.executable, "-m", "pytest", "-q"])
 
 
 def test_shell_path_normalization_is_case_insensitive_and_expands_static_environment(

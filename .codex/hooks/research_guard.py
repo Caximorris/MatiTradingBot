@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import socket
 import sys
@@ -24,6 +23,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from evidence_contract import validate_manifest, validate_report_provenance  # noqa: E402
+from offline_guard import child_environment, is_isolated_build  # noqa: E402
 
 from guard_core import (  # noqa: E402
     ROOT,
@@ -52,6 +52,7 @@ from guard_core import (  # noqa: E402
     session_baseline,
     shell_mutation_paths,
     specialist_completed,
+    state_root,
     static_file_findings,
     store_specialist,
     store_success,
@@ -155,14 +156,6 @@ def protected_changes(paths: list[str], policy: dict[str, Any]) -> list[str]:
     return sorted(path for path in paths if protected(path, policy))
 
 
-def environment_for_child() -> dict[str, str]:
-    env = dict(os.environ)
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["MATIBOT_HOOK_OFFLINE"] = "1"
-    env["NO_PROXY"] = "*"
-    return env
-
-
 def redact_output(text: str, limit: int = 4000) -> str:
     bounded = text[-limit:]
     for pattern in (
@@ -186,7 +179,8 @@ def execute_plan(
     for command in commands:
         remaining = max(1.0, timeout - (time.monotonic() - started))
         try:
-            result = run(command, root=ROOT, timeout=remaining, env=environment_for_child())
+            child_env = child_environment(state_root(ROOT), offline=not is_isolated_build(command))
+            result = run(command, root=ROOT, timeout=remaining, env=child_env)
         except Exception as exc:
             reason = f"{control} command failed to execute: {type(exc).__name__}"
             append_audit(
@@ -205,7 +199,9 @@ def execute_plan(
         }
         ledger.append(row)
         if result.returncode:
-            reason = f"{control} failed: {' '.join(command)} (exit {result.returncode})"
+            detail = redact_output(result.stderr or result.stdout, limit=500).strip()
+            suffix = f": {detail}" if detail else ""
+            reason = f"{control} failed: {' '.join(command)} (exit {result.returncode}){suffix}"
             append_audit(
                 {
                     "event": "validation", "control": control, "success": False,
@@ -321,8 +317,12 @@ def validate_tier(
         )
         return False, reason_text, "", False
 
-    prefix, version, support = resolve_interpreter(ROOT, tier=tier)
     categories = set(categories)
+    tests = focal_tests(categories, policy, ROOT) if tier == 2 else []
+    required_modules = {"build", "pytest", "ruff"} if tier == 3 else ({"pytest"} if tests else set())
+    prefix, version, support = resolve_interpreter(
+        ROOT, tier=tier, required_modules=required_modules
+    )
     digest = fingerprint(paths, categories, policy, root=ROOT, interpreter=[*prefix, f"{version[0]}.{version[1]}"])
     if receipt_valid(tier, digest, ROOT):
         return True, f"reused Tier {tier} success receipt {digest[:12]}", digest, True
@@ -343,7 +343,6 @@ def validate_tier(
     commands: list[list[str]] = []
     control = "integrity-targeted" if tier == 2 else "completion-engineering"
     if tier == 2:
-        tests = focal_tests(categories, policy, ROOT)
         if tests:
             commands.append([*prefix, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests])
         if categories & BACKTEST_RELATED:
@@ -565,7 +564,10 @@ def active_fingerprint(payload: dict[str, Any], policy: dict[str, Any]) -> tuple
     paths, categories, _ = touched_scope(payload.get("session_id"), ROOT)
     evidence = [path for path in session.get("evidence_paths", []) if isinstance(path, str)]
     paths = sorted(set(paths + evidence))
-    prefix, version, _ = resolve_interpreter(ROOT, tier=2)
+    needs_pytest = bool(focal_tests(categories, policy, ROOT))
+    prefix, version, _ = resolve_interpreter(
+        ROOT, tier=2, required_modules={"pytest"} if needs_pytest else set()
+    )
     return fingerprint(
         paths, categories, policy, root=ROOT, interpreter=[*prefix, f"{version[0]}.{version[1]}"],
     ), categories

@@ -21,6 +21,13 @@ authorize arbitrary commands on another workstation. Codex currently executes co
 hooks; Skills and specialist agents are routed through `SubagentStart`/`SubagentStop`
 context and structured receipts, not invoked recursively from a hook.
 
+### Claude Read guard
+
+`.claude/hooks/read_guard.py` is a separate Claude Code `Read` pre-tool guard, wired by
+`.claude/settings.json`. It blocks raw backtest journals and files at or above 150 KB so
+the assistant uses summaries, slices, or targeted searches instead. Codex does not run
+that hook; do not copy it into `.codex/hooks/` unless a Codex event explicitly wires it.
+
 ## Execution graph
 
 ```mermaid
@@ -81,6 +88,18 @@ boundary. A failed receipt never enters the cache.
 - Tier 2 uses reduced, allowlisted tests. Its backtest smoke creates in-memory bars,
   disables socket and `urllib`, runs twice for deterministic output, and fails if a
   manifest, journal, or report appears.
+- Shell classification allowlists exact validation and read-only CLI forms. Full or scoped
+  pytest, compileall, isolated package build, dependency checks, Ruff, help, and the documented
+  local status commands are accepted; arbitrary Python, pytest plugins/options, mutating CLI
+  commands, non-isolated builds, and targets outside `tests/` fail closed.
+- Tier 2 and Tier 3 test/analysis child processes load a temporary `sitecustomize` that denies
+  socket connections and DNS resolution. Package installers also receive offline flags. The exact
+  isolated distribution-build command is the only exception because a clean PEP 517 environment
+  may need to provision the declared `setuptools` and `wheel` requirements. This prevents accidental
+  test network use; it is not an OS sandbox for hostile native executables.
+- Tier 3 preflights Python 3.12/3.13 plus `pytest`, `build`, and `ruff` before issuing a receipt.
+  Distribution builds remain isolated, matching CI; missing local build tools or cached build
+  requirements fail visibly instead of silently switching to the ambient environment.
 - A research manifest must self-validate: schema/run id and result hash must recompute;
   repository worktree and dataset hashes must exist; Python must be 3.12/3.13; dependency
   identity cannot contain `NOT_INSTALLED`; extant external inputs need SHA-256. Swing
