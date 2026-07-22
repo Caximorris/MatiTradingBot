@@ -92,6 +92,7 @@ def test_runner_emits_manifest_after_success(monkeypatch, isolated_runner) -> No
         lambda **kwargs: captured.update(kwargs) or "backtests/manifests/test.json",
     )
 
+    manifests = []
     result = _run_backtest(
         "BTC-USDT",
         "1H",
@@ -102,6 +103,7 @@ def test_runner_emits_manifest_after_success(monkeypatch, isolated_runner) -> No
         datetime(2024, 1, 2, tzinfo=UTC),
         prefetched_bars=_bars(),
         show_progress=False,
+        manifest_out=manifests,
     )
 
     assert result is not None
@@ -110,6 +112,78 @@ def test_runner_emits_manifest_after_success(monkeypatch, isolated_runner) -> No
     assert captured["warmup_bars"] == 20
     assert len(captured["bars"]) == 21
     assert captured["external_context_builder"]() == []
+    assert manifests == ["backtests/manifests/test.json"]
+
+
+def test_cross_asset_swing_keeps_legacy_btc_inventory_non_applicable(
+    monkeypatch, isolated_runner
+) -> None:
+    config = {
+        "use_halving": False,
+        "use_phase_policy_router": False,
+        "use_funding_overlay": False,
+    }
+
+    class Engine:
+        def __init__(self, **kwargs) -> None:
+            kwargs["bt_client"].adjust_balance("ETH", Decimal("4"))
+            self.last_strategy = SimpleNamespace(
+                name="swing_allocator",
+                _cfg=SimpleNamespace(to_dict=lambda: config),
+                _rebalance_log=[{
+                    "direction": "INIT",
+                    "price": 2000.0,
+                    "btc_pct_after": 0.5,
+                }],
+            )
+
+        def run(self, on_tick=None):
+            result = _result()
+            result.symbol = "ETH-USDT"
+            return result
+
+    meta = SimpleNamespace(
+        name="swing_allocator",
+        warmup_days=0,
+        display_name="Swing Allocator",
+        make_config=lambda _symbol, _config: SimpleNamespace(to_dict=lambda: config),
+        make_bot=lambda *_args: None,
+    )
+    journal_args = {}
+    manifest_args = {}
+    monkeypatch.setattr("strategies.registry.get", lambda _name: meta)
+    monkeypatch.setattr("core.backtest.BacktestEngine", Engine)
+    monkeypatch.setattr(
+        "reporting.swing_journal.write_swing_journal",
+        lambda **kwargs: journal_args.update(kwargs) or "backtests/journal_test.json",
+    )
+    monkeypatch.setattr(
+        "reporting.experiment_manifest.write_experiment_evidence",
+        lambda **kwargs: manifest_args.update(kwargs) or "backtests/manifests/test.json",
+    )
+
+    result = _run_backtest(
+        "ETH-USDT",
+        "1H",
+        "swing",
+        10000.0,
+        config,
+        datetime(2024, 1, 1, tzinfo=UTC),
+        datetime(2024, 1, 2, tzinfo=UTC),
+        prefetched_bars=_bars(),
+        show_progress=False,
+    )
+
+    assert journal_args["asset_name"] == "ETH"
+    assert journal_args["final_asset_qty"] == 4.0
+    assert journal_args["final_btc_qty"] == 0.0
+    assert result.final_asset_qty == Decimal("4")
+    assert result.bnh_initial_asset == Decimal("5")
+    assert result.asset_vs_bnh_ratio == Decimal("0.8")
+    assert result.final_btc_qty == Decimal("0")
+    assert result.bnh_initial_btc == Decimal("0")
+    assert result.btc_vs_bnh_ratio == Decimal("0")
+    assert manifest_args["result"] is result
 
 
 def test_context_requirements_are_strategy_specific() -> None:
@@ -136,6 +210,12 @@ def test_context_requirements_are_strategy_specific() -> None:
     }
     assert external_context_requirements("prop_swing", {"model_funding": False})["bybit_funding"] is False
     assert external_context_requirements("prop_swing", {"model_funding": True})["bybit_funding"] is True
+
+
+def test_cross_asset_swing_requires_btc_phase_provenance() -> None:
+    requirements = external_context_requirements(
+        "swing_allocator", {"phase_symbol": "BTC-USDT"})
+    assert requirements["btc_phase"] is True
 
 
 def test_context_capture_marks_unqueried_context_loaded_but_unused(monkeypatch) -> None:

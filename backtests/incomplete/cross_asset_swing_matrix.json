@@ -1,0 +1,59 @@
+{
+  "event": "matrix_complete",
+  "outcomes": [
+    {
+      "final_balance": "17616.68913508",
+      "manifests": [
+        "backtests/manifests/a4cf2b677933aadf10bf3032fb92e8e5fcff08fea57caab01fbdadf9b197e716.json"
+      ],
+      "status": "completed",
+      "symbol": "ETH-USDT",
+      "variant": "control"
+    },
+    {
+      "final_balance": "30124.56164414",
+      "manifests": [
+        "backtests/manifests/861f82fecfc6bde2aadd4645ae57de3680c5faaa01d0acd697b0701ecf4b8900.json"
+      ],
+      "status": "completed",
+      "symbol": "ETH-USDT",
+      "variant": "regular_v6"
+    },
+    {
+      "final_balance": "30124.56164414",
+      "manifests": [
+        "backtests/manifests/3547bbbf9f9dca805108b6620fcb14bda3b8e3b340a8c4a788317d59457ece3d.json"
+      ],
+      "status": "completed",
+      "symbol": "ETH-USDT",
+      "variant": "btc_phase"
+    },
+    {
+      "final_balance": "49393.31314056",
+      "manifests": [
+        "backtests/manifests/b1ffb55e54a9e593a4b1f3f9d8efcbd6f3f5d0f5d2742b0f1df9860d080c4369.json"
+      ],
+      "status": "completed",
+      "symbol": "SOL-USDT",
+      "variant": "control"
+    },
+    {
+      "final_balance": "155479.09056554",
+      "manifests": [
+        "backtests/manifests/674717605726e9c7eaafed45335fcf2fb8050fa4060071cbf4868bc90d623ffa.json"
+      ],
+      "status": "completed",
+      "symbol": "SOL-USDT",
+      "variant": "regular_v6"
+    },
+    {
+      "final_balance": "155479.09056554",
+      "manifests": [
+        "backtests/manifests/60c8dbf105548e52c58a3aa10311915bd0684ecb550c27836bfa3f814ffd3429.json"
+      ],
+      "status": "completed",
+      "symbol": "SOL-USDT",
+      "variant": "btc_phase"
+    }
+  ]
+}

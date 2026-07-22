@@ -87,6 +87,15 @@ def _pre_shell(command: str, capsys: pytest.CaptureFixture[str]) -> dict:
     return json.loads(capsys.readouterr().out)
 
 
+def _post_shell(command: str, capsys: pytest.CaptureFixture[str], *, tool_response: dict) -> dict:
+    assert research_guard.handle_post({
+        "tool_name": "shell_command",
+        "tool_input": {"command": command},
+        "tool_response": tool_response,
+    }) == 0
+    return json.loads(capsys.readouterr().out)
+
+
 @pytest.mark.parametrize(
     ("command", "expected_reason"),
     [
@@ -154,6 +163,8 @@ def test_shell_read_only_commands_and_known_source_edits_are_classified(
         ".venv/bin/python tools/ruff_ratchet.py",
         ".venv/bin/python main.py --help",
         ".venv/bin/python main.py backtest --help",
+        ".venv/bin/python main.py backtest --strategy swing --symbol ETH-USDT --from 2021-07-01 --to 2026-01-01 --timeframe 1H --balance 10000 --costs realistic --config '{\"phase_symbol\":\"BTC-USDT\",\"use_funding_overlay\":false}'",
+        ".venv/bin/python tools/cross_asset_swing_matrix.py",
         ".venv/bin/python main.py mode",
         ".venv/bin/python main.py status",
         ".venv/bin/python main.py paper-status",
@@ -176,6 +187,7 @@ def test_canonical_validation_and_read_only_cli_commands_are_allowed(command: st
         "python main.py " + "start",
         "python main.py " + "stop",
         "python main.py data-audit",
+        "python main.py backtest --strategy pro --symbol BTC-USDT --from 2020-09-01 --to 2026-01-01 --timeframe 1H --balance 10000 --costs realistic --config '{}'",
         "python tools/paper_" + "fleet_setup.py",
     ],
 )
@@ -193,6 +205,9 @@ def test_git_and_direct_ruff_commands_fail_closed() -> None:
     ) == (["tests/test_research_hooks.py"], None)
     assert guard_core.shell_mutation_paths("git commit -m 'fix: harden hooks'") == ([], None)
     assert guard_core.shell_mutation_paths(
+        "git switch -c codex/cross-asset-swing-handoff"
+    ) == ([], None)
+    assert guard_core.shell_mutation_paths(
         "git push -u origin codex/fix-research-hook-validation"
     ) == ([], None)
     assert guard_core.shell_mutation_paths("ruff check .") == ([], None)
@@ -200,6 +215,7 @@ def test_git_and_direct_ruff_commands_fail_closed() -> None:
     for command in (
         "git add -A",
         "git checkout " + "-- strategies/pro_trend.py",
+        "git switch -c main",
         "git push origin main",
         "git push origin codex/topic:main",
         "git push origin codex/topic:refs/heads/main",
@@ -211,6 +227,23 @@ def test_git_and_direct_ruff_commands_fail_closed() -> None:
         paths, error = guard_core.shell_mutation_paths(command)
         assert paths == []
         assert error
+
+
+def test_experiment_evidence_gate_requires_python_execution(capsys) -> None:
+    for command in (
+        "git add -- tools/cross_asset_swing_matrix.py",
+        "rg -n '^' tools/cross_asset_swing_matrix.py",
+    ):
+        response = _post_shell(command, capsys, tool_response={"output": ""})
+        assert response == {}
+
+    response = _post_shell(
+        ".venv/bin/python tools/cross_asset_swing_matrix.py",
+        capsys,
+        tool_response={"output": "matrix complete"},
+    )
+    assert response["decision"] == "block"
+    assert "current-schema manifest" in response["reason"]
 
 
 def test_shell_validation_paths_reject_symlink_escapes(tmp_path: Path) -> None:
@@ -364,7 +397,7 @@ def test_manifest_rejects_unsupported_python_and_incomplete_swing_evidence(tmp_p
     document["run_id"] = _sha256(document["identity"])
     swing = swing.with_name(f"{document['run_id']}.json")
     swing.write_text(json.dumps(document), encoding="utf-8")
-    assert "BTC-holder comparison metrics" in evidence_contract.validate_manifest(tmp_path / "swing", swing)[1]
+    assert "asset-holder comparison metrics" in evidence_contract.validate_manifest(tmp_path / "swing", swing)[1]
 
 
 def test_tier3_cli_returns_structured_fail_closed_result(monkeypatch, capsys) -> None:

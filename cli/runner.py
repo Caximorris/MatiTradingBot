@@ -44,6 +44,7 @@ def _run_backtest(
     show_progress: bool = True,
     cost_mode: str = "ideal",
     journal_out: list | None = None,
+    manifest_out: list | None = None,
 ):
     """
     Descarga (o reutiliza) barras y ejecuta el BacktestEngine con barra de progreso.
@@ -218,7 +219,7 @@ def _run_backtest(
                 from reporting.swing_journal import write_swing_journal
                 _base_ccy     = symbol.split("-")[0]
                 _final_balance_raw = bt_client._get_total_balance()
-                _final_btc    = float(_final_balance_raw.get(_base_ccy, 0))
+                _final_asset   = Decimal(str(_final_balance_raw.get(_base_ccy, 0)))
                 swing_path = write_swing_journal(
                     rebalance_log=strat._rebalance_log,
                     strategy_name=strat.name,
@@ -230,20 +231,32 @@ def _run_backtest(
                     config_overrides=config if config else {},
                     initial_balance=float(bt_client.initial_balance),
                     final_balance=float(result.final_balance),
-                    final_btc_qty=_final_btc,
+                    final_btc_qty=float(_final_asset) if _base_ccy == "BTC" else 0.0,
+                    asset_name=_base_ccy,
+                    final_asset_qty=float(_final_asset),
                     resolved_config=resolved_config,
                     backtest_summary=backtest_summary,
                 )
-                # BTC vs B&H — metrica fundacional del Swing (SWING_PLAN): <1.0 = tienes menos BTC que B&H
+                # Asset vs B&H: <1.0 means the allocator holds less coin than matched B&H.
                 _init_ev = next((r for r in strat._rebalance_log if r["direction"] == "INIT"), None)
                 _init_px = _init_ev["price"] if _init_ev else 0.0
-                _bnh_btc = (float(bt_client.initial_balance) / _init_px) if _init_px > 0 else 0.0
-                _ratio   = (_final_btc / _bnh_btc) if _bnh_btc > 0 else 0.0
+                _init_price = Decimal(str(_init_px))
+                _bnh_asset = (
+                    bt_client.initial_balance / _init_price
+                    if _init_price > 0 else Decimal("0")
+                )
+                _ratio = (_final_asset / _bnh_asset) if _bnh_asset > 0 else Decimal("0")
+                result.final_asset_qty = _final_asset
+                result.bnh_initial_asset = _bnh_asset
+                result.asset_vs_bnh_ratio = _ratio
+                result.final_btc_qty = _final_asset if _base_ccy == "BTC" else Decimal("0")
+                result.bnh_initial_btc = _bnh_asset if _base_ccy == "BTC" else Decimal("0")
+                result.btc_vs_bnh_ratio = _ratio if _base_ccy == "BTC" else Decimal("0")
                 _rc = "green" if _ratio >= 1.0 else "red"
                 evidence_messages.extend((
                     f"[dim]Swing journal -> {swing_path}[/dim]",
-                    f"[bold]BTC vs B&H:[/bold] [{_rc}]{_ratio:.4f}[/{_rc}]  "
-                    f"(final {_final_btc:.4f} BTC vs B&H {_bnh_btc:.4f})",
+                    f"[bold]{_base_ccy} vs B&H:[/bold] [{_rc}]{_ratio:.4f}[/{_rc}]  "
+                    f"(final {_final_asset:.4f} {_base_ccy} vs B&H {_bnh_asset:.4f})",
                 ))
 
                 artifact_paths.append(swing_path)
@@ -282,6 +295,8 @@ def _run_backtest(
                 context_requirements=context_requirements,
                 seed=None,
             )
+            if manifest_out is not None:
+                manifest_out.append(manifest_path)
             if journal_out is not None:
                 journal_out.extend(artifact_paths)
             else:

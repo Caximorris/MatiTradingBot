@@ -75,9 +75,14 @@ def validate_manifest(root: Path, path: Path) -> tuple[bool, str]:
         config = strategy.get("resolved_config", {})
         if strategy.get("resolved_name") == "swing_allocator":
             metrics = result_payload["metrics"]
-            required_metrics = {"final_btc_qty", "bnh_initial_btc", "btc_vs_bnh_ratio"}
+            symbol = identity.get("instrument", {}).get("symbol", "BTC-USDT")
+            required_metrics = (
+                {"final_btc_qty", "bnh_initial_btc", "btc_vs_bnh_ratio"}
+                if symbol == "BTC-USDT"
+                else {"final_asset_qty", "bnh_initial_asset", "asset_vs_bnh_ratio"}
+            )
             if not required_metrics.issubset(metrics):
-                return False, "Swing manifest lacks BTC-holder comparison metrics"
+                return False, "Swing manifest lacks asset-holder comparison metrics"
             if config.get("use_funding_overlay") and not any(
                 item.get("exists") and "funding_bybit_" in item.get("path", "") for item in externals
             ):

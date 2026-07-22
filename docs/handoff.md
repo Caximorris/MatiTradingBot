@@ -1,17 +1,41 @@
-# Handoff 2026-07-14 — MatiTradingBot
+# Handoff 2026-07-22 — MatiTradingBot
 
-Este archivo es el punto de arranque para continuar mañana desde otro PC.
+Este archivo es el punto de arranque para continuar desde otro PC.
 
-> **ESTADO ACTUAL:** trabajar sobre `main`. Swing v6-2 es el default congelado; v5 queda como
+> **ESTADO ACTUAL:** para retomar el trabajo incompleto descrito abajo, usar la rama
+> `codex/cross-asset-swing-handoff`. Swing v6-2 es el default congelado; v5 queda como
 > control/rollback historico. El cliente OKX Demo y el fleet de dos bots (v6 + Demo) estan
 > desplegados y verificados en la VM; **Prop/CFT se RETIRO de la fleet activa el 2026-07-14**
 > (gate de adopcion invalidado por un bug de funding — ver SESSION.md y EXPERIMENTS.md EXP-013).
-> El estado operativo y los siguientes pasos viven en `SESSION.md`. Commit de sincronizacion
-> inicial: `7d61ca5`; este handoff se mantiene actualizado para continuar desde otro PC.
+> El estado operativo y los siguientes pasos viven en `SESSION.md`. La rama de handoff contiene
+> trabajo de research sin terminar: no es una promocion de estrategia ni cambia el default live.
+
+## 0. Handoff de research incompleto (2026-07-22)
+
+- Rama: `codex/cross-asset-swing-handoff`.
+- Objetivo en curso: comparar Swing sobre BTC, ETH y SOL en la ventana comun cerrada
+  `2021-07-01T00:00:00Z/2026-01-01T00:00:00Z`, timeframe 1H, balance 10,000 y costes realistic.
+- Se anadio un reloj de fase BTC opcional (`phase_symbol="BTC-USDT"`) para candidatos ETH/SOL,
+  manteniendo sus indicadores y su inventario en el activo negociado. El default BTC no cambia.
+- `tools/cross_asset_swing_matrix.py` congela cinco corridas, pero la matriz nueva aun no se ha
+  completado ni validado de extremo a extremo. Revisar antes de ejecutar la coherencia entre los
+  nombres de metricas que usa `main()` y los que cubre `_result_metrics()`.
+- `backtests/incomplete/cross_asset_swing_matrix.json` preserva una matriz preliminar anterior de
+  seis corridas y enlaza manifests individuales. No coincide con el contrato nuevo de cinco
+  corridas y no autoriza ninguna conclusion ni promocion.
+- El cache `data/cache/SOL-USDT_1H.json` se conserva para continuidad reproducible. El manifest
+  SOL observado identifica 45,480 barras de entrada, 39,480 barras testeadas y SHA-256 de dataset
+  `84224e49b9f963f18614457ba979ef8c75c0b835d30de1936454142ca111920e`.
+- Antes de continuar: inspeccionar el diff, validar identidad/conteo de BTC/ETH/SOL, corregir o
+  confirmar el harness, ejecutar tests y solo entonces lanzar la matriz congelada. No optimizar
+  parametros ni tocar el default v6-2 con estos resultados.
+- Validacion de empaquetado del handoff: 452 tests pasan; compileall, build, pip check y el
+  ratchet Ruff pasan. Ruff conserva 207 hallazgos frente al baseline permitido de 209.
 
 ## 1. Estado rapido
 
-- Rama de trabajo: `main`.
+- Rama operativa estable: `main`. Rama de research retomable:
+  `codex/cross-asset-swing-handoff`.
 - Default de estrategia: **Swing Allocator v6-2**, congelado.
 - Paper fleet: v6 simulado + v6 OKX Demo, activos en VM GCP `matitrbot`, con Telegram y checks
   diarios; legacy/v5 se retiraron del registro, conservando rollback e historial.
