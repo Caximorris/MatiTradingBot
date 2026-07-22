@@ -4,7 +4,8 @@ Complemento de CLAUDE.md. **Deliberadamente corto** para no gastar tokens en cad
 El detalle historico (logs de sesion, tablas de backtest, referencia por modulo, prop/Hyro,
 bloques HECHO/Descartado de sesiones 12-18) vive en **`docs/archive/session-archive.md`** — leelo BAJO DEMANDA.
 
-**Ultima actualizacion: 2026-07-16** (v6-2 congelado; fleet desplegada = v6 simulado + v6 OKX
+**Ultima actualizacion: 2026-07-22** (handoff de research cross-asset incompleto en
+`codex/cross-asset-swing-handoff`; v6-2 sigue congelado; fleet desplegada = v6 simulado + v6 OKX
 Demo (**Prop Firm RETIRADO** ese mismo dia, ver bloque abajo); registros legacy/v5 retirados.
 Fix de retry tras rebalanceo incompleto incluido. Telegram con panel persistente sin argumentos;
 status CLI multi-cartera corregido. 272 tests pasan. Mas tarde el mismo dia: via "capital
@@ -14,6 +15,17 @@ parked (ver bloque CAPITAL OCIOSO abajo).)
 ---
 
 ## ESTADO ACTUAL
+
+**HANDOFF CROSS-ASSET INCOMPLETO (2026-07-22).** La rama
+`codex/cross-asset-swing-handoff` preserva trabajo en curso para una comparacion Swing BTC/ETH/SOL
+en ventana comun 2021-07-01 a 2026-01-01, 1H, 10,000 y costes realistic. Incluye soporte opt-in
+`phase_symbol="BTC-USDT"`, metricas genericas de inventario del activo, manifests y un harness de
+cinco corridas. El default BTC v6-2 no cambia. Una matriz preliminar anterior de seis corridas se
+conserva en `backtests/incomplete/cross_asset_swing_matrix.json`, pero no coincide con el harness
+nuevo y no es evidencia de promocion. Antes de ejecutar: revisar la coherencia de metricas del
+harness, validar identidad/conteo de los tres datasets y correr la suite. Detalle operativo en
+`docs/handoff.md`. Validacion de empaquetado: 452 tests, compileall, build, pip check y ratchet
+Ruff pasan; la matriz de cinco corridas no se ejecuto.
 
 **DEFAULT VIGENTE: Swing Allocator v6-2 — CONGELADO** (decision explicita 2026-07-13).
 v6-2 = v5 + phase router `v5_equiv` + funding overlay 0.05 p10/p90, TTL/dedup 7d, solo

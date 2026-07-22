@@ -343,6 +343,72 @@ def test_v6_is_default_and_named_v5_missing_flags_stays_v5():
     assert explicit_v5_override.use_funding_overlay is True
 
 
+def test_cross_asset_phase_symbol_overrides_only_phase(monkeypatch):
+    import strategies.macro_context as macro
+
+    monkeypatch.setattr(macro, "get_macro_signal", lambda _now, symbol: {
+        "halving_phase": "unknown", "mvrv": 1.2,
+    } if symbol == "ETH-USDT" else pytest.fail(f"unexpected symbol: {symbol}"))
+    monkeypatch.setattr(macro, "btc_phase_signal", lambda _now: {
+        "halving_phase": "bear_onset", "days_since_halving": 600,
+    })
+    bot = SwingAllocatorBot(
+        client=BacktestClient(),
+        config=SwingAllocatorConfig(symbol="ETH-USDT", phase_symbol="BTC-USDT"),
+    )
+    context = bot._get_macro_context()
+    assert context["halving_phase"] == "bear_onset"
+    assert context["mvrv"] == 1.2
+
+
+def test_cross_asset_phase_symbol_rejects_non_btc_clock():
+    with pytest.raises(ValueError, match="phase_symbol"):
+        SwingAllocatorConfig.from_dict({"phase_symbol": "ETH-USDT"})
+
+
+def test_cross_asset_phase_symbol_is_normalized_for_provenance():
+    cfg = SwingAllocatorConfig.from_dict({"phase_symbol": " BTC-USDT "})
+    assert cfg.phase_symbol == "BTC-USDT"
+    assert SwingAllocatorConfig.from_dict(cfg.to_dict()).to_dict() == cfg.to_dict()
+
+
+def test_cross_asset_phase_source_changes_target_without_run_order_leak(monkeypatch):
+    import strategies.macro_context as macro
+
+    now = datetime(2022, 1, 1, tzinfo=timezone.utc)  # BTC bear_onset; ETH phase is unknown.
+
+    def target(symbol: str, phase_symbol: str) -> tuple[float, list[str]]:
+        client = BacktestClient()
+        client.now = now
+        bot = SwingAllocatorBot(
+            client=client,
+            config=SwingAllocatorConfig(
+                symbol=symbol,
+                phase_symbol=phase_symbol,
+                use_phase_policy_router=True,
+                use_funding_overlay=False,
+                use_regime=False,
+            ),
+        )
+        bot._get_daily_indicators = lambda: None
+        bot._get_4h_context = lambda: None
+        bot._get_market_context = lambda: None
+        return bot._compute_target(0.6)
+
+    expected = {
+        ("ETH-USDT", ""): (pytest.approx(0.6), []),
+        ("ETH-USDT", "BTC-USDT"): (pytest.approx(0.3), ["halving_bear_onset"]),
+        ("BTC-USDT", ""): (pytest.approx(0.3), ["halving_bear_onset"]),
+    }
+    forward = list(expected)
+
+    for order in (forward, list(reversed(forward)), forward):
+        for key in order:
+            # Contaminate the legacy selector deliberately; Swing must ignore it.
+            monkeypatch.setattr(macro, "_ACTIVE_ASSET", "BTC" if key[0] == "ETH-USDT" else "ETH")
+            assert target(*key) == expected[key]
+
+
 def test_funding_overlay_adds_to_phase_router_target(monkeypatch):
     import strategies.swing_funding_overlay as overlay
 

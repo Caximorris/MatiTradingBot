@@ -21,6 +21,8 @@ def write_swing_journal(
     initial_balance: float,
     final_balance: float,
     final_btc_qty: float = 0.0,
+    asset_name: str | None = None,
+    final_asset_qty: float | None = None,
     resolved_config: dict | None = None,
     backtest_summary: dict | None = None,
 ) -> str:
@@ -43,11 +45,17 @@ def write_swing_journal(
     pcts = [r["btc_pct_after"] for r in rebalance_log]
     avg_btc_pct = round(sum(pcts) / len(pcts) * 100, 1) if pcts else 0.0
 
-    # BTC acumulado vs Buy & Hold
+    asset_name = (asset_name or symbol.split("-")[0]).upper()
+    asset_qty = final_btc_qty if final_asset_qty is None else final_asset_qty
+    # Traded-asset inventory vs Buy & Hold. Legacy BTC field names remain for
+    # compatibility, but are non-applicable (zero) for other traded assets.
     init_event = next((r for r in rebalance_log if r["direction"] == "INIT"), None)
     init_price = init_event["price"] if init_event else 0.0
-    bnh_btc    = round(initial_balance / init_price, 6) if init_price > 0 else 0.0
-    btc_ratio  = round(final_btc_qty / bnh_btc, 4) if bnh_btc > 0 else 0.0
+    bnh_asset = round(initial_balance / init_price, 6) if init_price > 0 else 0.0
+    asset_ratio = round(asset_qty / bnh_asset, 4) if bnh_asset > 0 else 0.0
+    legacy_btc_qty = asset_qty if asset_name == "BTC" else 0.0
+    legacy_bnh_btc = bnh_asset if asset_name == "BTC" else 0.0
+    legacy_btc_ratio = asset_ratio if asset_name == "BTC" else 0.0
 
     # Signals frecuencia
     all_signals: list[str] = []
@@ -69,9 +77,13 @@ def write_swing_journal(
         "final_balance_usdt":    round(final_balance, 2),
         "pnl_pct":               round((final_balance / initial_balance - 1) * 100, 2)
                                  if initial_balance > 0 else 0.0,
-        "final_btc_qty":         round(final_btc_qty, 6),
-        "bnh_initial_btc":       bnh_btc,
-        "btc_vs_bnh_ratio":      btc_ratio,
+        "asset":                 asset_name,
+        "final_asset_qty":       round(asset_qty, 6),
+        "bnh_initial_asset":     bnh_asset,
+        "asset_vs_bnh_ratio":    asset_ratio,
+        "final_btc_qty":         round(legacy_btc_qty, 6),
+        "bnh_initial_btc":       legacy_bnh_btc,
+        "btc_vs_bnh_ratio":      legacy_btc_ratio,
         "signal_frequency":      signal_freq,
     }
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 from pathlib import Path
 
@@ -135,7 +136,48 @@ def _is_safe_main_cli(script: str, args: list[str], root: Path) -> bool:
         return True
     if len(args) == 2 and args[1] == "--help" and args[0] and not args[0].startswith("-"):
         return True
+    if _is_frozen_cross_asset_backtest(args):
+        return True
     return args in (["mode"], ["status"], ["paper-status"], ["anomaly-check"])
+
+
+def _is_frozen_cross_asset_backtest(args: list[str]) -> bool:
+    """Allow only the preregistered ETH/SOL Swing evidence run matrix."""
+    if not args or args[0] != "backtest":
+        return False
+    values: dict[str, str] = {}
+    index = 1
+    while index < len(args):
+        key = args[index]
+        if key not in {"--strategy", "--symbol", "--from", "--to", "--timeframe", "--balance", "--costs", "--config", "--verbose"}:
+            return False
+        if key == "--verbose":
+            if key in values:
+                return False
+            values[key] = "true"
+            index += 1
+            continue
+        if index + 1 >= len(args) or key in values:
+            return False
+        values[key] = args[index + 1]
+        index += 2
+    required = {"--strategy", "--symbol", "--from", "--to", "--timeframe", "--balance", "--costs", "--config"}
+    if set(values) - (required | {"--verbose"}) or not required <= set(values):
+        return False
+    if values["--strategy"].lower() != "swing" or values["--symbol"] not in {"ETH-USDT", "SOL-USDT"}:
+        return False
+    if values["--from"] != "2021-07-01" or values["--to"] != "2026-01-01":
+        return False
+    if values["--timeframe"] != "1H" or values["--balance"] != "10000" or values["--costs"] not in {"realistic", "conservative"}:
+        return False
+    try:
+        config = json.loads(values["--config"])
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(config, dict) or config.get("use_funding_overlay") is not False:
+        return False
+    phase_symbol = str(config.get("phase_symbol", "")).strip().upper()
+    return phase_symbol in {"", "BTC-USDT"}
 
 
 def _is_trusted_python(token: str, root: Path) -> bool:
@@ -168,6 +210,8 @@ def _is_safe_python_command(args: list[str], root: Path) -> bool:
         return True
     if args and is_guard_cli(args[0], args[1:], root):
         return True
+    if args == ["tools/cross_asset_swing_matrix.py"]:
+        return (root / args[0]).is_file()
     return bool(args) and _is_safe_main_cli(args[0], args[1:], root)
 
 
@@ -195,6 +239,8 @@ def _classify_git(args: list[str], root: Path) -> tuple[list[str], str | None]:
     ):
         return [], None
     if command == "branch" and rest == ["--show-current"]:
+        return [], None
+    if command == "switch" and len(rest) == 2 and rest[0] == "-c" and _is_codex_branch(rest[1]):
         return [], None
     if command == "remote" and rest == ["-v"]:
         return [], None

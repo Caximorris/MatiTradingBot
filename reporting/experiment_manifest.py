@@ -1,6 +1,5 @@
 """Deterministic provenance manifests for offline backtest evidence."""
 from __future__ import annotations
-
 import hashlib
 import importlib.metadata
 import json
@@ -17,17 +16,11 @@ from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
-
-
 SCHEMA_VERSION = 1
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_DIR = Path("backtests/manifests")
-
-
 class ManifestError(RuntimeError):
     """A run cannot be recorded as complete and reproducible."""
-
-
 def write_experiment_manifest(
     *,
     result: Any,
@@ -72,7 +65,6 @@ def write_experiment_manifest(
     config_fingerprint = _sha256_json(
         {"overrides": config_overrides, "resolved": resolved_config}
     )
-
     identity = {
         "harness": "cli.runner._run_backtest/v1",
         "repository": repository,
@@ -119,7 +111,6 @@ def write_experiment_manifest(
     }
     normalized_identity = _normalize(identity)
     run_id = _sha256_json(normalized_identity)
-
     metrics = _result_metrics(result)
     result_payload = {
         "metrics": metrics,
@@ -139,14 +130,12 @@ def write_experiment_manifest(
             "artifacts": [_artifact_record(item, root) for item in artifacts],
         }
     )
-
     output_dir = (root / MANIFEST_DIR).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / f"{run_id}.json"
     if destination.exists():
         _validate_existing(destination, run_id, manifest["result"]["sha256"])
         return destination
-
     payload = _canonical_bytes(manifest) + b"\n"
     temporary = output_dir / f".{run_id}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
     try:
@@ -170,7 +159,6 @@ def write_experiment_evidence(
     **manifest_kwargs: Any,
 ) -> Path:
     """Publish a manifest or remove artifacts created by the failed run.
-
     Only caller-designated, newly-created artifacts under ``backtests/`` are
     eligible for cleanup. Historical reports and manifests are never touched.
     """
@@ -223,7 +211,7 @@ def external_context_requirements(strategy: str, config: dict[str, Any]) -> dict
     swing = strategy == "swing_allocator"
     swing_funding_source = str(config.get("funding_overlay_source", "bybit")).lower()
     swing_uses_funding = swing and bool(config.get("use_funding_overlay"))
-    return {
+    requirements = {
         "macro": (strategy == "pro_trend" and not disabled)
         or (strategy == "scalp_momentum" and bool(config.get("use_macro_filter")))
         or (swing and bool(config.get("use_mvrv"))),
@@ -237,6 +225,9 @@ def external_context_requirements(strategy: str, config: dict[str, Any]) -> dict
         or (strategy == "prop_swing" and bool(config.get("model_funding")))
         or (swing_uses_funding and swing_funding_source == "bybit"),
     }
+    if swing and str(config.get("phase_symbol", "")).upper() == "BTC-USDT":
+        requirements["btc_phase"] = True
+    return requirements
 def capture_external_contexts(
     *, requirements: dict[str, bool], resolved_strategy: str, symbol: str, effective_from: datetime,
     effective_to: datetime, config: dict[str, Any],
@@ -244,9 +235,19 @@ def capture_external_contexts(
     """Read only the already-loaded, effective context slices after simulation."""
     records: list[dict[str, Any]] = []
     asset = symbol.split("-")[0].upper()
+    if requirements.get("btc_phase"):
+        from strategies.macro_context import btc_phase_signal
+        observations = [
+            (effective_from.isoformat(), btc_phase_signal(effective_from)["halving_phase"]),
+            (effective_to.isoformat(), btc_phase_signal(effective_to)["halving_phase"]),
+        ]
+        records.append(_context_spec(
+            "btc_phase", "BTC halving calendar", "BTC-USDT", effective_from, effective_to,
+            observations, "strategies/macro_context.py", "btc_phase_signal.v1",
+            loaded=True, consumed=True, coverage="covered", freshness="not_applicable",
+        ))
     if requirements.get("macro"):
         from strategies import macro_context as macro
-
         context = macro._INSTANCES.get(asset)
         accessed_from, accessed_to, consumed = _access_window(
             macro._MANIFEST_ACCESSES, effective_from, effective_to, days_before=7
@@ -265,7 +266,6 @@ def capture_external_contexts(
         ))
     if requirements.get("market"):
         from strategies import market_context as market
-
         accessed_from, accessed_to, consumed = _access_window(
             market._MANIFEST_ACCESSES, effective_from, effective_to,
             days_before=int(config.get("market_filter_lookback", 10)) + 5,
@@ -281,7 +281,6 @@ def capture_external_contexts(
             ))
     if requirements.get("flow"):
         from strategies import onchain_flow as flow
-
         key = symbol.upper()
         accessed_from, accessed_to, consumed = _access_window(
             flow._MANIFEST_ACCESSES.get(key, []), effective_from, effective_to
@@ -295,7 +294,6 @@ def capture_external_contexts(
         ))
     if requirements.get("okx_funding") and resolved_strategy != "swing_allocator":
         from strategies import funding_context as funding
-
         inst_id = funding._instrument_id(symbol)
         accessed_from, accessed_to, consumed = _access_window(
             funding._MANIFEST_ACCESSES.get(inst_id, []), effective_from, effective_to, days_before=5
@@ -319,7 +317,6 @@ def capture_external_contexts(
     ):
         if resolved_strategy in {"basis_carry", "funding_extreme", "prop_swing"}:
             from strategies import funding_extreme as bybit
-
             path = bybit._ROOT / "data" / "cache" / f"funding_bybit_{symbol.replace('-', '').upper()}.json"
             markers = bybit._MANIFEST_CONSUMED.get(symbol.upper(), [])
             consumed = bool(markers)
@@ -336,10 +333,8 @@ def capture_external_contexts(
             loader_path, loader_version = "strategies/funding_extreme.py", "funding_extreme/load_funding.v1"
         else:
             from strategies import swing_funding_overlay as overlay
-
             source = str(config.get("funding_overlay_source", "bybit")).lower()
             path = overlay.funding_cache_path(symbol, source)
-
             accessed_from, accessed_to, consumed = _access_window(
                 overlay.manifest_accesses(symbol, source), effective_from, effective_to,
                 days_before=(int(config.get("funding_overlay_lookback_settlements", 90)) + 2) // 3,
@@ -502,13 +497,18 @@ def _result_metrics(result: Any) -> dict[str, Any]:
     excluded = {"trades", "equity_curve"}
     if not is_dataclass(result):
         raise ManifestError("backtest result must be a dataclass")
-    return {
+    metrics = {
         field.name: getattr(result, field.name)
         for field in fields(result)
         if field.name not in excluded
     }
-
-
+    for name in (
+        "final_asset_qty", "bnh_initial_asset", "asset_vs_bnh_ratio",
+        "final_btc_qty", "bnh_initial_btc", "btc_vs_bnh_ratio",
+    ):
+        if hasattr(result, name):
+            metrics[name] = getattr(result, name)
+    return metrics
 def _artifact_record(value: str | Path, root: Path) -> dict[str, Any]:
     supplied = Path(value)
     absolute = supplied.resolve() if supplied.is_absolute() else (root / supplied).resolve()
@@ -629,8 +629,6 @@ def _context_statuses(
         else:
             statuses[context_type] = "configured_not_loaded"
     return statuses
-
-
 def _external_input_record(value: str | Path, root: Path) -> dict[str, Any]:
     supplied = Path(value)
     absolute = supplied.resolve() if supplied.is_absolute() else (root / supplied).resolve()
@@ -657,8 +655,6 @@ def _external_input_record(value: str | Path, root: Path) -> dict[str, Any]:
         "size_bytes": absolute.stat().st_size,
         "coverage": _funding_coverage(absolute) if kind == "funding" else None,
     }
-
-
 def _funding_coverage(path: Path) -> dict[str, Any]:
     try:
         rows = json.loads(path.read_text(encoding="utf-8"))
@@ -666,7 +662,6 @@ def _funding_coverage(path: Path) -> dict[str, Any]:
         raise ManifestError(f"funding input is unreadable: {path}") from exc
     if not isinstance(rows, list) or not rows:
         raise ManifestError(f"funding input is empty: {path}")
-
     timestamps: list[int] = []
     for row in rows:
         try:
@@ -676,7 +671,6 @@ def _funding_coverage(path: Path) -> dict[str, Any]:
         if timestamp_ms <= 0 or not math.isfinite(rate):
             raise ManifestError(f"funding input has an invalid value: {path}")
         timestamps.append(timestamp_ms)
-
     first_timestamp = min(timestamps)
     last_timestamp = max(timestamps)
     return {
@@ -686,8 +680,6 @@ def _funding_coverage(path: Path) -> dict[str, Any]:
         "first_settlement_utc": _timestamp_iso(first_timestamp),
         "last_settlement_utc": _timestamp_iso(last_timestamp),
     }
-
-
 def _funding_slice(
     external_records: Iterable[dict[str, Any]], from_dt: datetime, to_dt: datetime
 ) -> list[dict[str, Any]]:
@@ -702,8 +694,6 @@ def _funding_slice(
         for record in external_records
         if record["kind"] == "funding"
     ]
-
-
 def _created_artifact_paths(
     values: Iterable[str | Path], root: Path
 ) -> tuple[Path, ...]:
@@ -721,15 +711,11 @@ def _created_artifact_paths(
             raise ManifestError(f"created artifact is not removable generated evidence: {value}")
         paths.append(absolute)
     return tuple(dict.fromkeys(paths))
-
-
 def _sequence_hash(values: Iterable[Any]) -> str:
     digest = hashlib.sha256()
     for value in values:
         digest.update(_canonical_bytes(value) + b"\n")
     return digest.hexdigest()
-
-
 def _normalize(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -763,22 +749,16 @@ def _normalize(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_normalize(item) for item in value]
     raise ManifestError(f"unsupported manifest value: {type(value).__name__}")
-
-
 def _utc_iso(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ManifestError("manifest datetimes must be timezone-aware")
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 def _timestamp_iso(value: int | None) -> str | None:
     if value is None:
         return None
     return datetime.fromtimestamp(value / 1000, tz=timezone.utc).isoformat().replace(
         "+00:00", "Z"
     )
-
-
 def _sha256_json(value: Any) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 

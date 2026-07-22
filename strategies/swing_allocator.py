@@ -19,20 +19,19 @@ from loguru import logger
 @dataclass
 class SwingAllocatorConfig:
     symbol: str = "BTC-USDT"
+    # Empty preserves BTC behavior. Set to BTC-USDT for an ETH/SOL candidate
+    # whose four-phase cycle clock is sourced from BTC only.
+    phase_symbol: str = ""
 
-    # -- Limites de allocation --
     base_btc_pct:  float = 0.60   # punto neutral (sin senales)
-    # v4 default: floor 0.20 desbloquea la defensa profunda. Rollback: 0.30.
     min_btc_pct:   float = 0.20   # hard floor
     max_btc_pct:   float = 1.00   # hard ceiling — hasta 100%
 
-    # -- Control de rebalanceo --
     rebalance_threshold:        float = 0.10  # umbral minimo de diferencia para actuar
     min_days_between_rebalance: int   = 3     # cooldown entre rebalanceos
     max_price_jump_pct:         float = 0.25  # F14: rechazar tick si salta >25% vs vela previa
     persist_live_rebalance_log: bool  = True  # F14: JSONL en paper/live (no backtest)
 
-    # -- Toggles de senales (para ablation testing) --
     use_regime:    bool = True    # EMA50D/200D + ADX — regimen macro
     use_mvrv:      bool = False   # MVRV ratio — descartado en sensitivity v1
     use_rsi:       bool = False   # RSI diario — descartado en sensitivity v1
@@ -43,13 +42,9 @@ class SwingAllocatorConfig:
     use_funding:   bool = False   # funding rate — experimental
     use_dxy:       bool = False   # DXY direction — experimental
     instance_id:   str = ""       # live/paper namespace for parallel experiments
-    # v6-2 default: table-driven v5-equivalent policy + accumulation funding overlay.
-    # Set both flags False for an exact v5 rollback.
     use_phase_policy_router: bool = True
     phase_policy_profile: str = "v5_equiv"
     use_funding_overlay: bool = True
-    # Historical v6-2 evidence uses Bybit. The paper fleet can opt into the
-    # venue-native OKX feed without rewriting that protected research input.
     funding_overlay_source: str = "bybit"
     funding_overlay_phases: str = "accumulation"
     funding_overlay_delta: float = 0.05
@@ -59,10 +54,6 @@ class SwingAllocatorConfig:
     funding_overlay_ttl_days: int = 7
     funding_overlay_dedup_days: int = 7
 
-    # EXP-014/015 (EXPERIMENTS.md): overlay de riesgo por spike de reserva de exchange
-    # on-chain (CoinMetrics SplyExNtv). NO es direccional (esa mitad se rechazo en el
-    # screen) — solo reduce el target cuando un spike (percentil alto del ROC) precede
-    # historicamente volatilidad realizada elevada. Default False: v6-2 no cambia.
     use_flow_vol_overlay: bool = False
     flow_vol_delta:        float = -0.15
     flow_vol_roc_window:   int   = 60
@@ -70,17 +61,13 @@ class SwingAllocatorConfig:
     flow_vol_ttl_days:     int   = 14
     flow_vol_dedup_days:   int   = 14
 
-    # v2: en bear_onset suprime SOLO regime_bull; regime_bear se mantiene. False vuelve a v1.
     regime_off_on_bear_onset: bool = True
 
-    # v3: en bull_peak, perder EMA50D cerrada capea solo el target maximo a 85%.
     bull_peak_ema50_cap_enabled: bool = True
     bull_peak_ema50_cap:         float = 0.85
 
-    # Latch del cap probado y descartado: default False mantiene v3 intacto.
     bull_peak_cap_latch: bool = False
 
-    # -- Deltas de cada senal (cuanto mueve el target) --
     delta_regime_bull:   float =  0.20   # bull macro: EMA50D>200D + precio>200D + ADX>15
     delta_regime_bear:   float = -0.20   # bear macro: EMA50D<200D
     delta_rsi_ob:        float = -0.15   # RSI > rsi_overbought
@@ -98,7 +85,6 @@ class SwingAllocatorConfig:
     delta_dxy_strong:    float = -0.05   # DXY subio > 1.5% en 10 dias
     delta_dxy_weak:      float =  0.05   # DXY bajo > 1.5% en 10 dias
 
-    # -- Thresholds de senales --
     adx_min_trend:  float = 15.0
     rsi_overbought: float = 75.0
     rsi_oversold:   float = 35.0
@@ -107,29 +93,24 @@ class SwingAllocatorConfig:
     vix_extreme:    float = 55.0
     funding_high:   float = 0.0005   # mismo umbral que Pro Trend
 
-    # -- Flags de correccion de auditoria (F8/F9). --
-    # F8: indicadores diarios solo con dias cerrados. False reproduce v4 congelado.
     daily_on_closed_only: bool = True
     # clock_aligned_cadence: evalua en horas UTC multiplos de 4 en vez de _bar_count % 4
     # (F9 medido y NO adoptado: no redujo sensibilidad al offset).
     clock_aligned_cadence: bool = False
 
-    # -- Umbrales de fase de halving (F4 auditoria) --
-    # Defaults historicos; solo para sensitivity.
     phase_post_end:  int = 180
     phase_peak_end:  int = 540
     phase_onset_end: int = 900
 
-    # -- Historial para indicadores de largo plazo --
-    # OJO: EMA200D truncada a esta ventana; cambiar lookback_hours cambia senales.
     lookback_hours:   int  = 6000    # ~250 dias en 1H — suficiente para EMA200D
     pi_cycle_enabled: bool = True    # auto-False para no-BTC en main.py
 
     @classmethod
     def from_dict(cls, d: dict) -> "SwingAllocatorConfig":
         c = cls()
-        # Existing isolated v5 paper rows predate the v6 default and therefore omit
-        # these flags. Keep that named control on real v5 after a code deployment.
+        phase_symbol = str(d.get("phase_symbol", "")).strip().upper()
+        if phase_symbol and phase_symbol != "BTC-USDT":
+            raise ValueError("phase_symbol must be BTC-USDT for the BTC phase clock")
         if str(d.get("instance_id", "")).lower() == "v5":
             if "use_phase_policy_router" not in d:
                 c.use_phase_policy_router = False
@@ -150,6 +131,7 @@ class SwingAllocatorConfig:
                 setattr(c, k, float(v))
             else:
                 setattr(c, k, v)
+        c.phase_symbol = phase_symbol
         return c
 
     def to_dict(self) -> dict:
@@ -747,7 +729,16 @@ class SwingAllocatorBot:
     def _get_macro_context(self) -> dict | None:
         try:
             from strategies.macro_context import get_macro_signal
-            return get_macro_signal(self._client.current_time())
+            from strategies.macro_context import btc_phase_signal
+
+            now = self._client.current_time()
+            context = get_macro_signal(now, self._cfg.symbol)
+            phase_symbol = self._cfg.phase_symbol.strip().upper()
+            if phase_symbol:
+                if phase_symbol != "BTC-USDT":
+                    raise ValueError("phase_symbol must be BTC-USDT for the BTC phase clock")
+                context.update(btc_phase_signal(now))
+            return context
         except Exception as exc:
             logger.debug("[{}] Error macro context: {}", self.name, exc)
             return None

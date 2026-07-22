@@ -73,6 +73,10 @@ EXPERIMENT_COMMAND = re.compile(
     r"(?i)(?:main\.py\s+(?:backtest|walk-forward|baselines|sensitivity|compare|random-backtest)|"
     r"tools[/\\].*(?:matrix|frontier|bootstrap|rolling|stress|ablation|replay)\.py)"
 )
+PYTHON_COMMAND = re.compile(
+    r"(?i)(?:^|\s)(?:python(?:3(?:\.\d+)?)?|"
+    r"\.venv[/\\](?:bin[/\\]python|Scripts[/\\]python\.exe))\s+"
+)
 REPORT_COMMAND = re.compile(r"(?i)tools[/\\].*(?:report|chart|audit)\.py")
 MANIFEST_PATH = re.compile(r"backtests[/\\]manifests[/\\]([0-9a-f]{64})\.json")
 REPORT_PATH = re.compile(r"(?:reports|backtests)[/\\][A-Za-z0-9_.-]+\.(?:json|md|html)")
@@ -296,19 +300,19 @@ def validate_tier(
     mode: str = "interaction",
 ) -> tuple[bool, str, str, bool]:
     policy = load_policy()
+    evidence_paths: set[str] = set()
     if mode == "interaction" and session_id:
-        paths, categories, _ = touched_scope(session_id, ROOT)
+        changed_paths, categories, _ = touched_scope(session_id, ROOT)
         session = get_session(session_id, ROOT)
-        paths = sorted(
-            set(paths)
-            | {path for path in session.get("evidence_paths", []) if isinstance(path, str)}
-            | {path for path in session.get("report_paths", []) if isinstance(path, str)}
-        )
+        evidence_paths = {path for path in session.get("evidence_paths", []) if isinstance(path, str)}
+        paths = sorted(set(changed_paths) | evidence_paths | {path for path in session.get("report_paths", []) if isinstance(path, str)})
     elif mode == "staged":
-        paths, categories = path_scope("staged", policy)
+        changed_paths, categories = path_scope("staged", policy)
+        paths = changed_paths
     else:
-        paths, categories = path_scope("publish", policy)
-    blocked = protected_changes(paths, policy)
+        changed_paths, categories = path_scope("publish", policy)
+        paths = changed_paths
+    blocked = protected_changes(sorted(set(changed_paths) - evidence_paths), policy)
     if blocked:
         reason_text = f"protected paths changed: {', '.join(blocked)}"
         append_audit(
@@ -503,7 +507,7 @@ def handle_post(payload: dict[str, Any]) -> int:
         return post_block(reason)
 
     response_text = json.dumps(payload.get("tool_response"), sort_keys=True, default=str)
-    if EXPERIMENT_COMMAND.search(command):
+    if PYTHON_COMMAND.search(command) and EXPERIMENT_COMMAND.search(command):
         manifests = sorted(set(MANIFEST_PATH.findall(response_text)))
         if not manifests:
             reason = "Experiment completed without a referenced current-schema manifest; research evidence is incomplete"

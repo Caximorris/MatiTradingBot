@@ -62,6 +62,17 @@ def set_phase_bounds(post_end: int = 180, peak_end: int = 540, onset_end: int = 
     PHASE_POST_END, PHASE_PEAK_END, PHASE_ONSET_END = post_end, peak_end, onset_end
 
 
+def btc_phase_signal(dt: datetime | date) -> dict[str, int | str]:
+    """Return the deterministic BTC cycle phase for a point-in-time timestamp.
+
+    The phase clock is derived only from observed BTC halving dates.  It is
+    intentionally independent of the active traded symbol so an ETH/SOL
+    allocator can use BTC as its cycle clock while retaining local indicators.
+    """
+    days, phase = MacroContext("BTC").halving_phase(dt)
+    return {"days_since_halving": days, "halving_phase": phase}
+
+
 # CoinMetrics asset IDs para cada activo soportado
 _CM_ASSETS: dict[str, str] = {
     "BTC": "btc",
@@ -300,11 +311,17 @@ def load_macro_context(
     _INSTANCES[asset].load(from_dt, to_dt)
 
 
-def get_macro_signal(dt: datetime | date) -> dict:
-    """Consulta las senales macro para la fecha dada (activo activo del ultimo load)."""
-    ctx = _INSTANCES.get(_ACTIVE_ASSET)
+def get_macro_signal(dt: datetime | date, symbol: str | None = None) -> dict:
+    """Consulta senales macro para un simbolo explicito o el ultimo activo cargado.
+
+    ``symbol`` evita depender de ``_ACTIVE_ASSET`` en consumidores que pueden
+    ejecutar varios activos secuencialmente dentro del mismo proceso. Omitirlo
+    conserva el contrato historico de Pro Trend y Scalp Momentum.
+    """
+    asset = symbol.split("-")[0].upper() if symbol else _ACTIVE_ASSET
+    ctx = _INSTANCES.get(asset)
     if ctx is None:
-        ctx = MacroContext(_ACTIVE_ASSET)
-        _INSTANCES[_ACTIVE_ASSET] = ctx
+        ctx = MacroContext(asset)
+        _INSTANCES[asset] = ctx
     _MANIFEST_ACCESSES.append(dt)
     return ctx.macro_signal(dt)
