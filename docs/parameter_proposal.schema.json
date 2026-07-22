@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["status", "active", "candidate", "dataset_hash", "created_at"],
+  "properties": {
+    "status": {"const": "RESEARCH_ONLY"},
+    "active": {"type": "object", "required": ["start_bear_defense", "start_accumulation"]},
+    "candidate": {"type": "object", "required": ["start_bear_defense", "start_accumulation"]},
+    "dataset_hash": {"type": "string", "minLength": 8},
+    "created_at": {"type": "string"},
+    "approval": {"const": null}
+  },
+  "additionalProperties": true
+}

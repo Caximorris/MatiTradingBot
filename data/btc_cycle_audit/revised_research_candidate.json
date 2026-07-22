@@ -1,0 +1,6 @@
+{
+  "status": "RESEARCH_ONLY",
+  "candidate": null,
+  "reason": "No candidate is emitted until public-data coverage, placebo, LOCO, and fixed sensitivity gates complete.",
+  "approval": null
+}
