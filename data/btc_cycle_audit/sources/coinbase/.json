@@ -1,0 +1,17 @@
+{
+  "rows": [],
+  "snapshot": {
+    "coverage_end_utc": null,
+    "coverage_start_utc": null,
+    "dataset_hash": "",
+    "errors": [
+      "HTTPError:HTTP Error 400: Bad Request"
+    ],
+    "interval": "1d",
+    "retrieved_at": "2026-07-22T08:21:34.178520Z",
+    "revisions": 0,
+    "rows": 0,
+    "source": "coinbase",
+    "status": "FAILED"
+  }
+}

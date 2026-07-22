@@ -1,0 +1,10 @@
+{
+  "status": "ACTIVE_PRODUCTION_POLICY",
+  "strategy_version": "v6-2",
+  "start_bear_defense": 540,
+  "start_accumulation": 900,
+  "phase_post_end": 180,
+  "production_changed_by_audit": false,
+  "candidate_parameters_are_read_by_strategy": false,
+  "updated_at": "2026-07-22T00:00:00Z"
+}

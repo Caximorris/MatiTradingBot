@@ -1,0 +1,11 @@
+{
+  "status": "INCOMPLETE",
+  "gates": {
+    "matrix_completed": true,
+    "placebo_suite_completed": true,
+    "loco_suite_completed": true,
+    "all_required_metrics_present": false,
+    "dataset_hash_unchanged": true,
+    "production_unchanged": true
+  }
+}
