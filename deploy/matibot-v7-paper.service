@@ -1,0 +1,20 @@
+[Unit]
+Description=MatiTradingBot v7 Cycle Core local paper (paper-only)
+After=network-online.target matibot-v7-shadow.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=__APP_DIR__/.venv/bin/python tools/v7_promotion_controller.py --wait --promote --interval 300
+ExecStart=__APP_DIR__/.venv/bin/python main.py start --only swing_cycle_core_v7_btc_usdt_paper --tick 30
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+MemoryMax=350M
+
+[Install]
+WantedBy=multi-user.target
