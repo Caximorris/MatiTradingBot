@@ -88,6 +88,11 @@ worktree, or commit secrets, runtime state, canonical caches, raw journals, logs
 Creating a commit does not authorize push. If a required decision materially changes risk, scope, or
 production behavior, stop and ask for it; otherwise proceed with the fast lane.
 
+## Long-running tasks
+
+Follow docs/codex/autonomous-continuation.md. Maintain .codex/TASK_STATE.md, resume the first
+incomplete milestone, and do not end on a progress update while recoverable work remains.
+
 ## References on demand
 
 - Current state: `SESSION.md`; historical record: `docs/archive/session-archive.md`.
@@ -98,54 +103,3 @@ production behavior, stop and ask for it; otherwise proceed with the fast lane.
   Use Graphify only for an explicit multi-module architecture/map request, capped at 600 tokens by default.
 - `python tools/instruction_budget.py` enforces the persistent-instruction budget. Keep project skills
   below 110 lines each and 1,100 lines total; move rare detail into referenced documents.
-
-## Autonomous continuation and decision policy
-
-For long-running or multi-step tasks:
-
-* Maintain the current objective, milestones, completed work, active milestone, blockers, test evidence, and exact next action in `.codex/TASK_STATE.md`.
-* Read `.codex/TASK_STATE.md` at the start of every continuation and resume the first incomplete milestone.
-* Do not repeat completed analysis or completed milestones.
-* A progress update is not a final response. After a progress update, continue with another tool call or implementation action.
-* Never state that work is continuing after ending the response. No work occurs in the background.
-* Do not return a final response while recoverable actionable work remains.
-
-When new evidence proves that an earlier reference result, assumption, metric, or implementation is defective:
-
-* Preserve the defective artifact for audit.
-* Mark it invalid with the exact reason.
-* Continue using the corrected invariant or implementation.
-* Do not ask the user whether to retain a known defect merely to reproduce an old metric.
-
-Ask the user for a decision only when:
-
-* Multiple technically valid alternatives represent materially different product preferences.
-* The action is destructive or irreversible.
-* Production, VM resources, external accounts, credentials, money, paper/live trading, protected data, or explicitly frozen behavior would be changed.
-* Required information cannot reasonably be inferred from the task objective.
-
-The following are not user-decision blockers:
-
-* A discovered bug.
-* An invalid historical metric.
-* A failed test.
-* A numerical discrepancy.
-* Missing implementation.
-* A timeout or resource issue.
-* A need to replace a defective reference.
-* One blocked subtask when independent work remains.
-
-For those cases:
-
-1. Record the issue in `.codex/TASK_STATE.md`.
-2. Select the correctness-preserving option.
-3. Fix or isolate the issue.
-4. Continue all unaffected milestones.
-5. Run final validation after the last code change.
-
-A final response is allowed only when:
-
-* All actionable milestones are complete; or
-* A demonstrated hard safety blocker prevents every remaining milestone.
-
-A hard blocker must identify the exact unsafe action, affected code or resource, evidence, and why no safe independent work remains.
