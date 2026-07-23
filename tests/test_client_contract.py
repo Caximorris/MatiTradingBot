@@ -24,6 +24,7 @@ STRATEGY_CLIENT_CONTRACT = {
     "get_funding_rate",
     "get_ohlcv",
     "get_open_orders",
+    "get_order_status",
     "get_positions",
     "get_ticker",
     "is_paper",
@@ -38,7 +39,7 @@ EXPECTED_PUBLIC_SURFACE = {
         "get_order_history", "get_paper_orders", "is_available",
     },
     BacktestClient: STRATEGY_CLIENT_CONTRACT | {
-        "advance", "current_bar", "current_bar_ts",
+        "advance", "current_bar", "current_bar_ts", "get_completed_ticker",
     },
 }
 

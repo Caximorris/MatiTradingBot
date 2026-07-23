@@ -146,9 +146,15 @@ def _run_backtest(
             progress.update(sim_task, completed=done,
                             detail=f"{done:,}/{total:,} barras")
 
-        bt_client = BacktestClient(symbol=symbol, bars=all_bars,
-                                    initial_balance=Decimal(str(balance)),
-                                    cost_mode=cost_mode)
+        # v7's causal candidate contract executes a decision on the next bar's
+        # open. All established strategies retain the historical same-bar fill.
+        bt_client = BacktestClient(
+            symbol=symbol,
+            bars=all_bars,
+            initial_balance=Decimal(str(balance)),
+            cost_mode=cost_mode,
+            fill_next_open=meta.name == "swing_cycle_core",
+        )
 
         def factory(client, session):
             cfg_obj = meta.make_config(symbol.upper(), config)

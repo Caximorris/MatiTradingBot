@@ -20,6 +20,7 @@ from cli.runner import _instantiate_strategy
 def start(
     tick: int = typer.Option(30, "--tick", "-t", help="Segundos entre ticks de cada bot."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
+    only: str = typer.Option("", "--only", help="Nombre exacto de un bot service-managed."),
 ):
     """Arranca todos los bots marcados como activos en la DB."""
     _setup_logging(verbose)
@@ -39,8 +40,17 @@ def start(
     default_risk_manager = RiskManager(client=default_client, app_settings=settings)
 
     with get_session() as s:
-        active_bots = s.query(BotState).filter(BotState.is_active == True).all()
-        bot_configs = [(b.strategy_name, b.symbol, b.get_config()) for b in active_bots]
+        active_bots = s.query(BotState).filter(BotState.is_active).all()
+        bot_configs = []
+        for bot in active_bots:
+            config = bot.get_config()
+            # Dedicated v7 units own their registrations. The legacy matibot
+            # service must never run them as an accidental fourth scheduler.
+            if config.get("service_managed") and bot.strategy_name != only:
+                continue
+            if only and bot.strategy_name != only:
+                continue
+            bot_configs.append((bot.strategy_name, bot.symbol, config))
 
     if not bot_configs:
         console.print("[yellow]No hay bots activos. Usa 'okx-trader bot enable' para activar uno.[/yellow]")
@@ -54,6 +64,15 @@ def start(
 
     clients: dict[tuple[str, str], tuple[object, RiskManager]] = {}
     for name, symbol, config in bot_configs:
+        if config.get("execution") in {"v7_shadow", "v7_local_paper"}:
+            from core.v7_operations import assert_paper_only
+            assert_paper_only(settings, config)
+            portfolio_id = str(config["paper_portfolio_id"])
+            bot_client = _make_client(settings, paper_state_name=portfolio_id)
+            clients[(name, symbol)] = (
+                bot_client, RiskManager(client=bot_client, app_settings=settings),
+            )
+            continue
         if config.get("execution") == "okx_demo":
             # Ordenes contra la cuenta DEMO real de OKX (data de mercado sigue siendo real).
             # Si falla (credenciales demo ausentes/invalidas), se salta SOLO este bot: los

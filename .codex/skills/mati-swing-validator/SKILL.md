@@ -13,13 +13,14 @@ research or implementation skill.
 
 ## Trigger Conditions
 
-Use for every Swing Allocator experiment, comparison, journal review, v5/v6 question, funding
-overlay, BTC allocation/exposure test, drawdown investigation, or promotion/default decision.
+Use only for a Swing default/promotion decision, a request to alter frozen v6-2, or a request to
+interpret its forward evidence. Do not use it to implement or prepare an isolated Swing candidate
+for paper.
 
 ## When Not to Use
 
 - Do not use as the only skill for data integrity, simulator bias, statistics, or code quality.
-- Do not use for Pro Trend or unrelated strategies.
+- Do not use for Pro Trend, unrelated strategies, or ordinary candidate-to-paper work.
 - Do not treat historical improvement as authorization for live trading or another closed-sample
   exception.
 
@@ -30,9 +31,8 @@ Read `AGENTS.md`, `SESSION.md`, `backtests/STRATEGY_VERSIONS.md`, `EXPERIMENTS.m
 `docs/swing/v6-plan.md`. For comparison, validation, or promotion, read
 `references/swing-protocol.md`.
 
-Also apply the relevant generic skills: `$quant-validate-data`, `$quant-audit-backtest`,
-`$quant-analyze-performance`, and `$quant-test-robustness`. Use `$quant-run-experiment` to execute a
-fixed matrix and `$quant-engineer-strategy` only when implementation was explicitly requested.
+Use the relevant generic audit skills only when their question is material to the promotion decision.
+Do not create a complete specialist chain by default.
 
 ## Operating Rules
 

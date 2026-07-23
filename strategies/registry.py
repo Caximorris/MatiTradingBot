@@ -127,6 +127,15 @@ _REGISTRY: list[StrategyMeta] = [
         aliases=("swing",),
         pi_cycle_btc_only=True,
     ),
+    StrategyMeta(
+        name="swing_cycle_core", display_name="Swing Cycle Core (v7 candidate)",
+        module="strategies.swing_cycle_core",
+        bot_cls="SwingCycleCoreBot", config_cls="SwingCycleCoreConfig",
+        # The frozen causal suite includes a 250-day completed-bar warmup.
+        # Keep every CLI/report path on that same evidence contract.
+        warmup_days=250, output="allocator",
+        aliases=("cycle_core",),
+    ),
 ]
 
 # Índice: nombre canónico + alias → meta

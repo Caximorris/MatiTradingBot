@@ -164,6 +164,7 @@ def test_shell_read_only_commands_and_known_source_edits_are_classified(
         ".venv/bin/python main.py --help",
         ".venv/bin/python main.py backtest --help",
         ".venv/bin/python main.py backtest --strategy swing --symbol ETH-USDT --from 2021-07-01 --to 2026-01-01 --timeframe 1H --balance 10000 --costs realistic --config '{\"phase_symbol\":\"BTC-USDT\",\"use_funding_overlay\":false}'",
+        "python main.py backtest --strategy pro --symbol BTC-USDT --from 2020-09-01 --to 2026-01-01 --timeframe 1H --balance 10000 --costs realistic --config '{}'",
         ".venv/bin/python tools/cross_asset_swing_matrix.py",
         ".venv/bin/python main.py mode",
         ".venv/bin/python main.py status",
@@ -187,7 +188,7 @@ def test_canonical_validation_and_read_only_cli_commands_are_allowed(command: st
         "python main.py " + "start",
         "python main.py " + "stop",
         "python main.py data-audit",
-        "python main.py backtest --strategy pro --symbol BTC-USDT --from 2020-09-01 --to 2026-01-01 --timeframe 1H --balance 10000 --costs realistic --config '{}'",
+        "python main.py backtest --strategy pro --from tomorrow --to 2026-01-01 --costs realistic",
         "python tools/paper_" + "fleet_setup.py",
     ],
 )

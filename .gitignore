@@ -76,5 +76,21 @@ graphify-out/.graphify_python
 graphify-out/.graphify_root
 graphify-out/20??-??-??/
 
+# Local V7 research/build outputs.  Source, curated inputs, and explicit evidence remain tracked.
+.codex/*-build-output/
+.codex/v7-paper-build/
+backtests/v6_causal_comparator.*
+backtests/v6_causal_comparator_result.json
+backtests/v7_cycle_core*/
+backtests/v7_cycle_core*_runner.*
+backtests/v7_reconciliation_*/
+data/btc_cycle_audit/finalize_output.json
+data/btc_cycle_audit/placebo.json
+data/btc_cycle_audit/sensitivity_5x5.json
+data/btc_cycle_audit/sensitivity_*.err
+data/btc_cycle_audit/sensitivity_*.log
+data/btc_cycle_audit/resumable_*.err
+data/btc_cycle_audit/resumable_*.log
+
 # macOS
 .DS_Store

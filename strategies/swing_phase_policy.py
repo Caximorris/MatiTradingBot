@@ -28,6 +28,16 @@ PHASE_POLICY_PROFILES: dict[str, dict[str, PhasePolicy]] = {
         ),
         "accumulation": PhasePolicy(neutral_target=0.60, bull_target=0.80, bear_target=0.40),
     },
+    # Research-only ablation: retain v5-equivalent bear/accumulation behavior while
+    # making both bullish phases a constant 100% BTC target.  It is never a default.
+    "bull_phase_hold_research": {
+        "post_halving": PhasePolicy(neutral_target=1.00, bull_target=1.00, bear_target=1.00),
+        "bull_peak": PhasePolicy(neutral_target=1.00, bull_target=1.00, bear_target=1.00),
+        "bear_onset": PhasePolicy(
+            neutral_target=0.30, bull_target=0.30, bear_target=0.20, suppress_bull=True,
+        ),
+        "accumulation": PhasePolicy(neutral_target=0.60, bull_target=0.80, bear_target=0.40),
+    },
 }
 
 

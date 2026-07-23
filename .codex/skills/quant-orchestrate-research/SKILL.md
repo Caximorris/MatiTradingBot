@@ -13,14 +13,13 @@ orchestration prose for specialist work.
 
 ## Trigger Conditions
 
-Use this skill when the request spans multiple research domains, is underspecified, asks for an
-end-to-end investigation, or uses a generic phrase such as "research", "improve", "validate",
-"compare", or "optimize" without naming the required method.
+Use this skill only when the user asks for broad research, an independent audit, or a
+promotion/default decision. It is not the default path for implementing an isolated strategy.
 
 ## When Not to Use
 
-- Do not use for a single well-scoped data, backtest, robustness, statistics, strategy, experiment,
-  or code-review task; invoke the matching specialist directly.
+- Do not use for a normal strategy implementation, repair, backtest iteration, or paper-candidate
+  preparation; use `$quant-engineer-strategy` and the candidate-paper workflow instead.
 - Do not use for paper/live operations, deployment, or exchange actions.
 - Do not use as authority to change a frozen default or promote a candidate.
 
@@ -43,14 +42,14 @@ promotion protocol.
    from the map.
 3. Inspect existing experiments and discarded ideas before proposing work. Do not reopen a closed
    path without new evidence.
-4. Establish the evidence chain in this order when applicable:
-   hypothesis -> data -> backtest integrity -> experiment -> performance -> robustness -> verdict.
-5. Spawn specialists directly from the root because the default subagent depth is one. Parallelize
-   independent read-only gates, allow at most one writer, and wait for every required verdict.
+4. Establish only the evidence chain needed for the decision. A candidate-paper decision may use
+   local implementation and its defined validation suite; promotion needs the full applicable chain.
+5. Spawn only specialists with a distinct unanswered question. Never create agents merely to satisfy
+   process, duplicate an existing test, or obtain a receipt.
 6. Separate implementation from validation. An implementing agent cannot validate or waive an
    independent data, execution, bias, risk, code-review, or robustness gate.
-7. Default "optimize parameters" to sensitivity mapping and falsification. Require preregistration,
-   an untouched test set, a run budget, and a plateau/stability criterion before any search.
+7. Default "optimize parameters" to sensitivity mapping and falsification. Require a run budget and
+   an untouched test set before using results for a default/promotion decision.
 8. Stop at any approval boundary or integrity failure. Preserve negative and inconclusive results.
 9. Send completed artifacts to `evidence-curator`; return one integrated memo without overriding
    any specialist verdict.
@@ -60,8 +59,8 @@ promotion protocol.
 - Confirm every claim maps to an inspected file, command output, journal summary, or cited source.
 - Confirm paired runs use identical windows, candles, costs, warmup, configuration path, and harness.
 - Confirm no protected file, canonical cache, journal, runtime DB, or external system was mutated.
-- Confirm every selected specialist produced its required output and that no gate was silently skipped.
-- Confirm no implementer certified its own work and no two writer agents edited concurrently.
+- Confirm selected specialists answered the question they were assigned; do not manufacture gates.
+- Confirm no two writer agents edited concurrently.
 - Review `git status`, the full diff, and generated artifacts before declaring completion.
 
 ## Expected Output

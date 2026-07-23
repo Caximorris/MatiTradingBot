@@ -66,9 +66,6 @@ def _read_owner(lock: Path) -> dict[str, Any] | None:
 
 def _pid_alive(pid: int) -> bool | None:
     if os.name == "nt":
-        listed = _windows_tasklist_liveness(pid)
-        if listed is not None:
-            return listed
         try:
             import ctypes
             from ctypes import wintypes
@@ -167,12 +164,16 @@ def release(lock: Path, token: str) -> bool:
     owner = _read_owner(lock)
     if owner is None or owner["token"] != token:
         return False
-    try:
-        (lock / "owner.json").unlink()
-        lock.rmdir()
-        return True
-    except OSError:
-        return False
+    deadline = time.monotonic() + 0.25
+    while True:
+        try:
+            (lock / "owner.json").unlink(missing_ok=True)
+            lock.rmdir()
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.005)
 
 
 def reclaim_abandoned(lock: Path) -> bool:

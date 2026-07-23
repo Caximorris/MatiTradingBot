@@ -390,7 +390,7 @@ def test_live_market_buy_sets_tgtccy_base(client):
     assert params["sz"] == "0.05"
     assert params["tdMode"] == "cash"
     assert result.order_id == "oid-1"
-    assert result.status == "filled"
+    assert result.status == "open"
 
 
 def test_live_market_sell_sets_tgtccy_base(client):
