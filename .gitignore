@@ -80,6 +80,7 @@ graphify-out/20??-??-??/
 .codex/*-build-output/
 .codex/v7-paper-build/
 backtests/v6_causal_comparator.*
+backtests/v6_causal_comparator_result.json
 backtests/v7_cycle_core*/
 backtests/v7_cycle_core*_runner.*
 backtests/v7_reconciliation_*/
