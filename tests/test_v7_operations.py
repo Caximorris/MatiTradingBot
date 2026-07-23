@@ -46,9 +46,38 @@ def test_v7_configs_are_separate_and_paper_only():
     shadow, paper = config_for("shadow"), config_for("paper")
     assert SHADOW_NAME != PAPER_NAME
     assert shadow["paper_portfolio_id"] != paper["paper_portfolio_id"]
+    assert shadow["transition_journal_path"] != paper["transition_journal_path"]
+    assert shadow["service_managed"] is paper["service_managed"] is True
+    assert {shadow["execution"], paper["execution"]} == {"v7_shadow", "v7_local_paper"}
     assert_paper_only(_Settings(True), shadow)
     with pytest.raises(RuntimeError, match="paper"):
         assert_paper_only(_Settings(False), paper)
+
+
+def test_v7_setup_registers_both_instances_inactive_by_default(monkeypatch):
+    from core import database
+    from tools.v7_paper_setup import register
+
+    class State:
+        def __init__(self) -> None:
+            self.config = None
+            self.is_active = None
+
+        def set_config(self, config) -> None:
+            self.config = config
+
+    states = {}
+
+    def get_or_create(_session, name, _symbol, *, config):
+        states[name] = State()
+        return states[name]
+
+    monkeypatch.setattr(database, "get_or_create_bot_state", get_or_create)
+    result = register(object())
+
+    assert set(result) == {SHADOW_NAME, PAPER_NAME}
+    assert all(state.is_active is False for state in states.values())
+    assert states[SHADOW_NAME].config["paper_portfolio_id"] != states[PAPER_NAME].config["paper_portfolio_id"]
 
 
 def test_controller_accepts_identity_from_real_shadow_bot(tmp_path: Path):
