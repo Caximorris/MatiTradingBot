@@ -164,12 +164,16 @@ def release(lock: Path, token: str) -> bool:
     owner = _read_owner(lock)
     if owner is None or owner["token"] != token:
         return False
-    try:
-        (lock / "owner.json").unlink()
-        lock.rmdir()
-        return True
-    except OSError:
-        return False
+    deadline = time.monotonic() + 0.25
+    while True:
+        try:
+            (lock / "owner.json").unlink(missing_ok=True)
+            lock.rmdir()
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.005)
 
 
 def reclaim_abandoned(lock: Path) -> bool:

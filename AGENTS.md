@@ -94,3 +94,7 @@ production behavior, stop and ask for it; otherwise proceed with the fast lane.
 - Candidate paper workflow: `docs/forward-test/candidate-paper-workflow.md`.
 - Swing default/forward controls: `docs/swing/v6-plan.md`, `docs/forward-test/contract.md`.
 - Architecture and research tools: `.codex/skills/quant-orchestrate-research/references/project-surface.md`.
+- Run `python tools/context_pack.py strategy|backtest|paper` before broad repository exploration.
+  Use Graphify only for an explicit multi-module architecture/map request, capped at 600 tokens by default.
+- `python tools/instruction_budget.py` enforces the persistent-instruction budget. Keep project skills
+  below 110 lines each and 1,100 lines total; move rare detail into referenced documents.
