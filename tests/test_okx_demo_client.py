@@ -108,7 +108,7 @@ def test_market_buy_sets_tgtccy_base(tmp_path):
     assert params["tgtCcy"] == "base_ccy"
     assert params["sz"] == "0.05"
     assert params["tdMode"] == "cash"
-    assert result.status == "filled"
+    assert result.status == "partially_filled"
     assert result.order_id == "oid-1"
 
 
@@ -193,7 +193,7 @@ def test_exec_quote_routes_usdt_orders_to_usdc(tmp_path):
     assert trade.place_order.call_args.kwargs["instId"] == "BTC-USDC"
     # La estrategia sigue viendo su propio simbolo, no el de ejecucion.
     assert result.symbol == "BTC-USDT"
-    assert result.status == "filled"
+    assert result.status == "partially_filled"
 
 
 def test_exec_quote_aliases_usdc_balance_as_usdt(tmp_path):
@@ -239,7 +239,7 @@ def test_market_order_partial_fill_then_cancel_keeps_real_qty(tmp_path):
                "fee": "-18.5", "feeCcy": "USDC"}
     c = _client(tmp_path, trade=_fake_trade(fill=partial))
     result = c.place_order("BTC-USDC", "sell", "market", Decimal("1"), strategy="t")
-    assert result.status == "filled"
+    assert result.status == "partially_filled"
     assert result.filled_qty == Decimal("0.15")   # la qty REAL, no la pedida
     assert result.filled_price == Decimal("60544")
 

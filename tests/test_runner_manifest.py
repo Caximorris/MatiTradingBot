@@ -115,6 +115,165 @@ def test_runner_emits_manifest_after_success(monkeypatch, isolated_runner) -> No
     assert manifests == ["backtests/manifests/test.json"]
 
 
+@pytest.mark.parametrize(
+    ("resolved_name", "expected_fill_next_open"),
+    [
+        ("swing_cycle_core", True),
+        ("swing_allocator", False),
+        ("pro_trend", False),
+    ],
+)
+def test_runner_uses_next_open_fills_only_for_v7_cycle_core(
+    monkeypatch, isolated_runner, resolved_name, expected_fill_next_open
+) -> None:
+    meta = SimpleNamespace(
+        name=resolved_name,
+        warmup_days=0,
+        display_name="Test Strategy",
+        make_config=lambda _symbol, _config: SimpleNamespace(to_dict=lambda: {}),
+        make_bot=lambda *_args: None,
+    )
+    captured = {}
+
+    class Engine:
+        def __init__(self, **kwargs) -> None:
+            captured["fill_next_open"] = kwargs["bt_client"].fill_next_open
+            self.last_strategy = SimpleNamespace(
+                name=resolved_name,
+                _cfg=SimpleNamespace(to_dict=lambda: {}),
+            )
+
+        def run(self, on_tick=None):
+            return _result()
+
+    monkeypatch.setattr("strategies.registry.get", lambda _name: meta)
+    monkeypatch.setattr("core.backtest.BacktestEngine", Engine)
+    monkeypatch.setattr(
+        "reporting.experiment_manifest.write_experiment_evidence",
+        lambda **_kwargs: "backtests/manifests/test.json",
+    )
+
+    result = _run_backtest(
+        "BTC-USDT",
+        "1H",
+        "an_alias_is_irrelevant_after_resolution",
+        1000.0,
+        {},
+        datetime(2024, 1, 1, tzinfo=UTC),
+        datetime(2024, 1, 2, tzinfo=UTC),
+        prefetched_bars=_bars(),
+        show_progress=False,
+    )
+
+    assert result is not None
+    assert captured["fill_next_open"] is expected_fill_next_open
+
+
+def test_runner_executes_v7_decision_on_completed_close_and_next_open(monkeypatch) -> None:
+    """The normal runner must preserve v7's causal decision/fill sequence."""
+    import core.backtest as backtest
+
+    decision_at = datetime(2024, 4, 20, 4, tzinfo=UTC)
+    completed_close = Decimal("100")
+    decision_close = Decimal("200")
+    next_open = Decimal("100")
+    warmup_start = decision_at - timedelta(hours=20)
+    bars = [
+        OHLCVBar(
+            timestamp=int((warmup_start + timedelta(hours=index)).timestamp() * 1000),
+            open=completed_close,
+            high=completed_close,
+            low=completed_close,
+            close=completed_close,
+            volume=Decimal("1"),
+        )
+        for index in range(20)
+    ]
+    bars.extend((
+        OHLCVBar(
+            timestamp=int(decision_at.timestamp() * 1000),
+            open=Decimal("150"),
+            high=decision_close,
+            low=Decimal("150"),
+            close=decision_close,
+            volume=Decimal("1"),
+        ),
+        OHLCVBar(
+            timestamp=int((decision_at + timedelta(hours=1)).timestamp() * 1000),
+            open=next_open,
+            high=Decimal("110"),
+            low=Decimal("90"),
+            close=Decimal("105"),
+            volume=Decimal("1"),
+        ),
+    ))
+    captured = {}
+    original_engine = backtest.BacktestEngine
+    original_client = backtest.BacktestClient
+
+    class TrackingBacktestClient(original_client):
+        def place_order(self, *args, **kwargs):
+            result = super().place_order(*args, **kwargs)
+            captured.setdefault("deferred_order_counts", []).append(
+                len(self._deferred_market_orders)
+            )
+            return result
+
+    class CapturingEngine(original_engine):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            captured["engine"] = self
+
+    monkeypatch.setattr(backtest, "BacktestClient", TrackingBacktestClient)
+    monkeypatch.setattr(backtest, "BacktestEngine", CapturingEngine)
+    monkeypatch.setattr(
+        "reporting.experiment_manifest.write_experiment_evidence",
+        lambda **kwargs: captured.update(manifest=kwargs) or "backtests/manifests/test.json",
+    )
+
+    result = _run_backtest(
+        "BTC-USDT",
+        "1H",
+        "cycle_core",
+        1000.0,
+        {},
+        decision_at,
+        decision_at + timedelta(hours=2),
+        prefetched_bars=bars,
+        show_progress=False,
+    )
+
+    engine = captured["engine"]
+    client = engine._client
+    strategy = engine.last_strategy
+    assert result is not None
+    assert client.fill_next_open is True
+    assert len(strategy._decision_log) == 1
+    decision = strategy._decision_log[0]
+    assert decision["timestamp"] == decision_at.isoformat()
+    assert decision["block"] == "2024-04-20T1"
+    assert decision["phase"] == "post_halving"
+    assert decision["target"] == "1"
+    assert Decimal(decision["current"]) == Decimal("0")
+    # The request is sized from the completed close (100), not the decision bar close (200).
+    assert len(strategy._transition_log) == 1
+    assert strategy._transition_log[0]["status"] == "open"
+    assert strategy._transition_log[0]["qty"] == "9.950000"
+    assert captured["deferred_order_counts"] == [1]
+    assert not client._deferred_market_orders
+    assert len(client._executed) == 1
+    assert client._executed[0].timestamp == decision_at + timedelta(hours=1)
+    assert client._executed[0].price == next_open
+    assert client._executed[0].quantity == Decimal("9.950000")
+    assert captured["manifest"]["fill_next_open"] is True
+
+
+def test_v7_registry_declares_250_day_warmup() -> None:
+    from strategies.registry import get
+
+    assert get("swing_cycle_core").warmup_days == 250
+
+
 def test_cross_asset_swing_keeps_legacy_btc_inventory_non_applicable(
     monkeypatch, isolated_runner
 ) -> None:

@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.v7_operations import RUNTIME, canonical_hash
+from core.v7_operations import RUNTIME, canonical_hash, canonical_unlocked_v7_state
 
 
 def _state_name(instance: str) -> str:
@@ -66,8 +66,7 @@ def unlock(instance: str, audit_id: str) -> dict:
         row = session.query(BotState).filter_by(strategy_name=_state_name(instance), symbol="BTC-USDT").first()
         if row is None:
             raise RuntimeError("strategy state not found")
-        row.set_config({"version": 1, "state": "STABLE_RISK_ON", "phase": None,
-                        "last_block": None, "order_id": None, "error": None})
+        row.set_config(canonical_unlocked_v7_state())
     return {"unlocked": True, "instance": instance, "audit_id": audit_id, "orders_submitted": 0}
 
 

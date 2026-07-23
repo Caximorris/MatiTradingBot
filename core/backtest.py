@@ -158,6 +158,10 @@ class BacktestClient:
         self._balance: dict[str, Decimal] = {"USDT": initial_balance}
         self._paper_orders: dict[str, dict] = {}
         self._deferred_market_orders: dict[str, dict] = {}
+        # Durable order observations are required by strategies which defer a
+        # market fill.  Unlike _pending_fills this survives the next strategy
+        # tick and is read-only to the caller.
+        self._order_status: dict[str, OrderResult] = {}
         self._reserved_usdt: dict[str, Decimal] = {}
         self._reserved_base: dict[str, Decimal] = {}
         self._pending_fills: list[OrderResult] = []
@@ -206,6 +210,12 @@ class BacktestClient:
 
     def get_ticker(self, symbol: str) -> Decimal:
         return self.current_bar.close
+
+    def get_completed_ticker(self, symbol: str) -> Decimal:
+        """Last fully closed 1H price for causal decision adapters."""
+        if self._idx <= 0:
+            raise RuntimeError("No completed bar is available at the first cursor position")
+        return self._bars[self._idx - 1].close
 
     def get_ohlcv(self, symbol: str, timeframe: str = "1H", limit: int = 100, bar: str = "1H"):
         """Devuelve un DataFrame OHLCV igual que OKXClient.get_ohlcv para compatibilidad."""
@@ -258,6 +268,13 @@ class BacktestClient:
             orders = [o for o in orders if o["symbol"] == symbol]
         return orders
 
+    def get_order_status(self, symbol: str, order_id: str) -> OrderResult | None:
+        """Return the normalized latest observation for a submitted order."""
+        result = self._order_status.get(order_id)
+        if result is None or result.symbol != symbol:
+            return None
+        return result
+
     def get_positions(self) -> list:
         return []
 
@@ -274,23 +291,28 @@ class BacktestClient:
         size: Decimal,
         price: Decimal | None = None,
         strategy: str = "",
+        client_order_id: str | None = None,
         **_kwargs,
     ) -> OrderResult:
-        order_id = f"BT-{uuid.uuid4().hex[:8]}"
+        order_id = client_order_id or f"BT-{uuid.uuid4().hex[:8]}"
         validation_error = self._validate_order_input(symbol, side, order_type, size, price)
         if validation_error:
-            return self._rejected(
+            result = self._rejected(
                 order_id, symbol, side, size, strategy, self.current_bar_ts(),
                 order_type=order_type, limit_price=price, error=validation_error,
             )
+            self._order_status[order_id] = result
+            return result
 
         if order_type == "market":
             if self.fill_next_open:
                 if self._idx + 1 >= len(self._bars):
-                    return self._rejected(
+                    result = self._rejected(
                         order_id, symbol, side, size, strategy, self.current_bar_ts(),
                         error="No hay una barra siguiente para ejecutar la orden market",
                     )
+                    self._order_status[order_id] = result
+                    return result
                 self._deferred_market_orders[order_id] = {
                     "order_id": order_id,
                     "symbol": symbol,
@@ -298,7 +320,7 @@ class BacktestClient:
                     "size": size,
                     "strategy": strategy,
                 }
-                return OrderResult(
+                result = OrderResult(
                     order_id=order_id, symbol=symbol, side=side,
                     order_type="market", size=size,
                     limit_price=None, filled_price=None, filled_qty=Decimal("0"),
@@ -306,7 +328,11 @@ class BacktestClient:
                     status="open", is_paper=True,
                     strategy=strategy, timestamp=self.current_bar_ts(),
                 )
-            return self._fill_market(order_id, symbol, side, size, strategy)
+                self._order_status[order_id] = result
+                return result
+            result = self._fill_market(order_id, symbol, side, size, strategy)
+            self._order_status[order_id] = result
+            return result
 
         lp = self.current_bar.close if price is None else price
         base = symbol.split("-")[0]
@@ -484,7 +510,7 @@ class BacktestClient:
         """Fill prior-tick market orders at this bar's open before strategy execution."""
         orders = list(self._deferred_market_orders.values())
         self._deferred_market_orders.clear()
-        return [
+        results = [
             self._fill_market(
                 order["order_id"],
                 order["symbol"],
@@ -495,6 +521,9 @@ class BacktestClient:
             )
             for order in orders
         ]
+        for result in results:
+            self._order_status[result.order_id] = result
+        return results
 
     def _check_limit_fills(self) -> list[OrderResult]:
         bar = self.current_bar

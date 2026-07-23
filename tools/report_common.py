@@ -72,6 +72,7 @@ def run_strategy(
     balance: float = 10000.0,
     bars: list[Any] | None = None,
     quiet: bool = True,
+    fill_next_open: bool = False,
 ) -> RunOutput:
     """Ejecuta un backtest y devuelve result + estrategia + barras."""
     config = config or {}
@@ -100,8 +101,12 @@ def run_strategy(
     from_ts = int(from_dt.timestamp() * 1000)
     warmup_bars = max(len([b for b in bars if b.timestamp < from_ts]), 20)
 
+    # V7 decides from the previous completed bar and must therefore use the
+    # matching next-open fill contract in every reporting path as well as CLI.
+    causal_next_open = fill_next_open or meta.name == "swing_cycle_core"
     client = BacktestClient(symbol=symbol, bars=bars,
-                            initial_balance=Decimal(str(balance)), cost_mode=cost_mode)
+                            initial_balance=Decimal(str(balance)), cost_mode=cost_mode,
+                            fill_next_open=causal_next_open)
 
     def factory(c, s):
         cfg_obj = meta.make_config(symbol.upper(), config)
@@ -176,34 +181,38 @@ def equity_series(result: Any, candles: list) -> dict[str, list]:
     return {"dates": dates, "equity": equity, "bnh": bnh, "dd": dd}
 
 
-# Halvings BTC (el ultimo es estimado). Mismo set que tools/swing_chart.py.
-HALVINGS = ["2012-11-28", "2016-07-09", "2020-05-11", "2024-04-20", "2028-03-15"]
-
-
 def phase_bands(symbol: str, from_dt: datetime, to_dt: datetime,
                 config: dict | None = None) -> list[dict]:
-    """Bandas de fase del ciclo de halving dentro de [from,to]. Solo BTC; [] para el resto."""
+    """Exact CyclePhaseClock bands inside [from,to], without estimated events."""
     if not symbol.upper().startswith("BTC"):
         return []
     config = config or {}
-    post = int(config.get("phase_post_end", 180))
-    peak = int(config.get("phase_peak_end", 540))
-    onset = int(config.get("phase_onset_end", 900))
-    hs = [datetime.strptime(h, "%Y-%m-%d").replace(tzinfo=timezone.utc) for h in HALVINGS]
+    from strategies.cycle_phase_clock import CyclePhaseClock
+    values: dict[str, Any] = {
+        "post_halving_end": int(config.get("phase_post_end", 180)),
+        "bear_onset_start": int(config.get("phase_bear_start", config.get("phase_peak_end", 540))),
+        "accumulation_start": int(config.get("phase_accumulation_start", config.get("phase_onset_end", 900))),
+    }
+    if "confirmed_halving_timestamps" in config:
+        values["halving_timestamps"] = tuple(
+            datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+            for value in config["confirmed_halving_timestamps"]
+        )
+    clock = CyclePhaseClock(**values)
     bands = []
-    for i, h in enumerate(hs):
-        nxt = hs[i + 1] if i + 1 < len(hs) else h + timedelta(days=1600)
+    for i, h in enumerate(clock.halving_timestamps):
+        nxt = (clock.halving_timestamps[i + 1] if i + 1 < len(clock.halving_timestamps)
+               else to_dt)
         segs = [
-            ("post_halving", h, h + timedelta(days=post)),
-            ("bull_peak", h + timedelta(days=post), h + timedelta(days=peak)),
-            ("bear_onset", h + timedelta(days=peak), h + timedelta(days=onset)),
-            ("accumulation", h + timedelta(days=onset), nxt),
+            ("post_halving", h, h + timedelta(days=clock.post_halving_end)),
+            ("bull_peak", h + timedelta(days=clock.post_halving_end), h + timedelta(days=clock.bear_onset_start)),
+            ("bear_onset", h + timedelta(days=clock.bear_onset_start), h + timedelta(days=clock.accumulation_start)),
+            ("accumulation", h + timedelta(days=clock.accumulation_start), nxt),
         ]
         for name, a, b in segs:
             a2, b2 = max(a, from_dt), min(b, to_dt)
             if a2 < b2:
-                bands.append({"name": name, "from": a2.strftime("%Y-%m-%d"),
-                              "to": b2.strftime("%Y-%m-%d")})
+                bands.append({"name": name, "from": a2.isoformat(), "to": b2.isoformat()})
     return bands
 
 
@@ -213,6 +222,23 @@ def extract_markers(strategy: Any) -> tuple[list[dict], str]:
       {date, ts, kind: entry|exit|init, side, price, pnl, info}
     Devuelve (markers, output_kind) con output_kind in {allocator, trade, none}.
     """
+    v7_events = getattr(strategy, "_event_log", None)
+    if v7_events is not None:
+        markers = []
+        for event in v7_events:
+            event_type = str(event.get("event_type", "transition"))
+            markers.append({
+                "date": str(event.get("timestamp", ""))[:10],
+                "ts": str(event.get("timestamp", ""))[:16].replace("T", " "),
+                "kind": event_type,
+                "side": event_type.upper(),
+                "price": float(event.get("price", 0.0)), "pnl": None,
+                "info": (f"{event.get('previous_phase')} → {event.get('new_phase')} | "
+                         f"target {event.get('previous_target')} → {event.get('new_target')} | "
+                         f"{event.get('status')}: {event.get('reason')}"),
+            })
+        return markers, "cycle_core"
+
     reb = getattr(strategy, "_rebalance_log", None)
     if reb:
         out = []

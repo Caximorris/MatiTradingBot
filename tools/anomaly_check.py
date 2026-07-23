@@ -11,7 +11,7 @@ Dedup por (code, bot) con TTL para no spamear el chat en cada tick.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -139,6 +139,38 @@ def check_anomalies(snaps: list[dict], *, price: Decimal | None,
                 "Normal si acaba de arrancar; si persiste, revisar el scheduler.",
                 bot=label,
             ))
+
+        if s.get("is_v7") and s.get("is_active"):
+            health = s.get("v7_health") or {}
+            if not health.get("service_managed"):
+                alerts.append(Alert(
+                    "HIGH", "v7-service-unmanaged",
+                    f"v7 '{label}' activo sin service_managed=true en su configuracion.",
+                    "No certificar el soak; revisar el registro v7 y el supervisor del proceso.",
+                    bot=label,
+                ))
+            if not health.get("execution_valid"):
+                alerts.append(Alert(
+                    "CRITICAL", "v7-invalid-execution",
+                    f"v7 '{label}' tiene un modo de ejecucion no aislado o ausente.",
+                    "Desactivar la instancia e investigar la configuracion; v7 solo admite paper aislado.",
+                    bot=label,
+                ))
+            if not health.get("journal_exists"):
+                alerts.append(Alert(
+                    "HIGH", "v7-transition-journal-missing",
+                    f"v7 '{label}' no tiene journal de transiciones en {health.get('journal_path')!r}.",
+                    "No contar evidencia de soak; revisar transition_journal_path y el servicio v7.",
+                    bot=label,
+                ))
+            if not health.get("promotion_report_valid") or health.get("promotion_report_failures"):
+                detail = ", ".join(health.get("promotion_report_failures") or ["invalid"])
+                alerts.append(Alert(
+                    "HIGH", "v7-promotion-report-failed",
+                    f"Reporte de promocion v7 para '{label}' invalido o fallido: {detail}.",
+                    "No promover; regenerar el reporte desde evidencia valida y revisar el journal/estado shadow.",
+                    bot=label,
+                ))
 
         # Balances imposibles
         for ccy, amt in s.get("balances", {}).items():

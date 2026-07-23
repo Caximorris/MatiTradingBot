@@ -11,13 +11,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.v7_operations import RUNTIME, PromotionState, canonical_hash
+from core.v7_operations import (
+    RUNTIME,
+    V7_FROZEN_GATE_INPUTS,
+    PromotionState,
+    v7_configuration_evidence_hash,
+)
+from tools.v7_paper_setup import config_for
 
 STATE_PATH = RUNTIME / "promotion_state.json"
-TESTS = (
-    "tests/test_swing_cycle_core.py",
-    "tests/test_v7_operations.py",
-)
+TESTS = V7_FROZEN_GATE_INPUTS["operational_tests"]
 
 
 def main() -> int:
@@ -42,7 +45,7 @@ def main() -> int:
     from config.settings import load_settings
     settings = load_settings()
     state.checks["paper_account_verified"] = bool(settings.is_paper)
-    state.configuration_hash = canonical_hash({"tests": TESTS, "checks": state.checks})
+    state.configuration_hash = v7_configuration_evidence_hash(config_for("shadow"), root=ROOT)
     state.save(STATE_PATH)
     print(json.dumps({"passed": passed, "checks": state.checks}, sort_keys=True))
     return completed.returncode

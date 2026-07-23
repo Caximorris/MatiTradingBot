@@ -13,31 +13,117 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core.v7_operations import PromotionState, RUNTIME, atomic_json, canonical_hash
+from core.v7_operations import (
+    JournalIntegrityError,
+    PromotionState,
+    RUNTIME,
+    TransitionJournal,
+    atomic_json,
+    canonical_hash,
+    is_valid_v7_state,
+    v7_configuration_evidence_hash,
+)
+from strategies.swing_cycle_core import SwingCycleCoreBot, SwingCycleCoreConfig
 from tools.v7_paper_setup import PAPER_NAME, SHADOW_NAME, config_for
 
 STATE_PATH = RUNTIME / "promotion_state.json"
 REPORT_PATH = RUNTIME / "promotion_report.json"
 
 
-def _events(path: Path) -> list[dict]:
+def _shadow_journal_identity() -> tuple[str, str]:
+    """Derive the journal identity from the real shadow bot contract."""
+    config = SwingCycleCoreConfig.from_dict(config_for("shadow"))
+    return SwingCycleCoreBot(None, config).name, config.instance_id
+
+
+def _shadow_configuration_evidence_hash() -> str:
+    return v7_configuration_evidence_hash(config_for("shadow"), root=ROOT)
+
+
+def _shadow_state() -> dict | None:
+    """Read the persisted v7 state without creating rows or initializing the DB."""
     try:
-        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-    except (OSError, ValueError):
-        return []
+        from core.database import BotState, get_session
+        with get_session() as session:
+            row = session.query(BotState).filter_by(
+                strategy_name=SHADOW_NAME, symbol="BTC-USDT"
+            ).first()
+            return row.get_config() if row is not None else None
+    except Exception:
+        return None
 
 
-def update(state: PromotionState, *, now: datetime | None = None) -> PromotionState:
+def _valid_shadow_state(value: object) -> bool:
+    return is_valid_v7_state(value)
+
+
+def _derived_zero_counters(events: list[dict], shadow_state: dict) -> dict[str, int]:
+    """Derive, never retain, every zero-event promotion counter from evidence."""
+    statuses = [str(event["status"]).lower() for event in events]
+    reasons = [str(event["reason"]).lower() for event in events]
+    submitted = {"EXIT_ORDER_SUBMITTED", "ENTRY_ORDER_SUBMITTED"}
+    return {
+        "duplicate_transitions": 0,  # validation rejects the first duplicate.
+        "unexplained_error_locks": int(shadow_state["state"] == "ERROR_LOCKED"),
+        "fail_open_events": sum(status in {"fail_open", "continued_after_failure"} for status in statuses),
+        "unreconciled_position_events": int(
+            shadow_state["state"] in submitted
+            or shadow_state["pending_order"] is not None
+            or shadow_state["order_id"] is not None
+        ),
+        "v6_regressions": sum("v6_regression" in reason for reason in reasons),
+        "production_live_orders": sum(
+            status in {"live_order", "production_live_order"} for status in statuses
+        ),
+    }
+
+
+def update(state: PromotionState, *, now: datetime | None = None,
+           journal_path: Path | None = None, shadow_state: dict | None = None) -> PromotionState:
     now = now or datetime.now(timezone.utc)
-    shadow_journal = RUNTIME / "v7_btc_usdt_shadow" / "transitions.jsonl"
-    decisions = {e.get("transition_id") for e in _events(shadow_journal) if e.get("status") == "decision"}
-    state.counters["valid_evaluation_windows"] = len({key for key in decisions if key})
+    shadow_journal = journal_path or RUNTIME / "v7_btc_usdt_shadow" / "transitions.jsonl"
+    strategy_id, instance_id = _shadow_journal_identity()
+    try:
+        expected_evidence_hash = _shadow_configuration_evidence_hash()
+    except ValueError:
+        expected_evidence_hash = None
+    state.checks["configuration_evidence_valid"] = (
+        isinstance(state.configuration_hash, str)
+        and state.configuration_hash == expected_evidence_hash
+    )
+    try:
+        events = TransitionJournal(shadow_journal).validate(
+            strategy_id=strategy_id, instance_id=instance_id
+        )
+    except JournalIntegrityError:
+        state.checks["transition_journal_valid"] = False
+        state.counters["valid_evaluation_windows"] = 0
+        state.counters.update({key: 1 for key in (
+            "duplicate_transitions", "unexplained_error_locks", "fail_open_events",
+            "unreconciled_position_events", "v6_regressions", "production_live_orders",
+        )})
+        return state
+    state.checks["transition_journal_valid"] = True
+    observed_state = shadow_state if shadow_state is not None else _shadow_state()
+    if not _valid_shadow_state(observed_state):
+        state.checks["shadow_state_valid"] = False
+        state.counters["valid_evaluation_windows"] = 0
+        state.counters.update({key: 1 for key in (
+            "duplicate_transitions", "unexplained_error_locks", "fail_open_events",
+            "unreconciled_position_events", "v6_regressions", "production_live_orders",
+        )})
+        return state
+    state.checks["shadow_state_valid"] = True
+    decisions = {event["transition_id"] for event in events if event["status"] == "decision"}
+    state.counters["valid_evaluation_windows"] = len(decisions)
+    state.counters.update(_derived_zero_counters(events, observed_state))
     if state.shadow_started_at is None and decisions:
         state.shadow_started_at = now.isoformat()
     return state
 
 
 def promote_if_eligible(state: PromotionState) -> tuple[bool, list[str]]:
+    state = update(state)
     allowed, missing = state.eligible()
     if not allowed:
         return False, missing

@@ -256,6 +256,19 @@ class OKXDemoClient:
             logger.warning("[DEMO] get_open_orders({}) fallo: {}", symbol, exc)
             return []
 
+    def get_order_status(self, symbol: str, order_id: str):
+        """Return a conservative normalized observation; failures are unknown."""
+        info = self._query_order(self._exec_symbol(symbol), order_id)
+        if info is None:
+            raise ExchangeUnavailable("demo order status unavailable")
+        state, px, qty, fee, fee_ccy = info
+        status = {"filled": "filled", "live": "open", "partially_filled": "partially_filled",
+                  "canceled": "rejected", "mmp_canceled": "rejected"}.get(state, "unknown")
+        return OrderResult(order_id=order_id, symbol=symbol, side="", order_type="market",
+                           size=qty, limit_price=None, filled_price=px, filled_qty=qty,
+                           fee=fee, fee_currency=self._alias_ccy(fee_ccy), status=status,
+                           is_paper=True, strategy="", timestamp=self._utcnow(), error=state)
+
     def get_order_history(self, symbol: str, limit: int = 100) -> list[dict]:
         try:
             resp = self._call_api(
@@ -279,6 +292,7 @@ class OKXDemoClient:
         size: Decimal,
         price: Decimal | None = None,
         strategy: str = "",
+        client_order_id: str | None = None,
     ) -> OrderResult:
         _, quote_ccy = symbol.split("-")
         # La orden viaja a OKX en el simbolo de EJECUCION (BTC-USDC en cuentas EEA);
@@ -309,6 +323,8 @@ class OKXDemoClient:
             params["tgtCcy"] = "base_ccy"
         elif order_type == "limit" and price is not None:
             params["px"] = str(price)
+        if client_order_id:
+            params["clOrdId"] = client_order_id
 
         try:
             resp = self._call_api(self._trade_api.place_order, **params)
@@ -325,10 +341,10 @@ class OKXDemoClient:
 
         order_id = data["ordId"]
         filled_price: Decimal | None = price if order_type == "limit" else None
-        filled_qty = size if order_type == "market" else Decimal("0")
+        filled_qty = Decimal("0")
         fee = Decimal("0")
         fee_ccy = quote_ccy
-        status = "open" if order_type == "limit" else "filled"
+        status = "open"
 
         if order_type == "market":
             info = self._query_order(exec_symbol, order_id)
@@ -349,6 +365,7 @@ class OKXDemoClient:
                     filled_qty, fee, fee_ccy = qty, q_fee, self._alias_ccy(q_fee_ccy)
                     if px is not None:
                         filled_price = px
+                    status = "filled" if state == "filled" else "partially_filled"
 
         result = OrderResult(
             order_id=order_id, symbol=symbol, side=side, order_type=order_type,

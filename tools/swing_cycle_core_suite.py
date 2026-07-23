@@ -11,14 +11,15 @@ import hashlib
 import json
 import sys
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-OUT = ROOT / "backtests" / "v7_cycle_core"
+# Never overwrite same-close evidence: causal cases have a separate identity.
+OUT = ROOT / "backtests" / "v7_cycle_core_causal"
 CACHE = ROOT / "data" / "cache" / "BTC-USDT_1H.json"
 FUNDING = ROOT / "data" / "cache" / "funding_bybit_BTCUSDT.json"
 START = datetime(2015, 1, 1, tzinfo=timezone.utc)
@@ -76,9 +77,10 @@ def load_bars() -> tuple[list[Any], dict[str, Any]]:
     }
 
 
-def _clock_dates(shift: int = 0) -> list[str]:
-    base = (date(2012, 11, 28), date(2016, 7, 9), date(2020, 5, 11), date(2024, 4, 20))
-    return [(item + timedelta(days=shift)).isoformat() for item in base]
+def _clock_timestamps(shift: int = 0) -> list[str]:
+    from strategies.cycle_phase_clock import CyclePhaseClock
+    return [(item + timedelta(days=shift)).isoformat().replace("+00:00", "Z")
+            for item in CyclePhaseClock().halving_timestamps]
 
 
 def specs() -> list[dict[str, Any]]:
@@ -111,7 +113,7 @@ def specs() -> list[dict[str, Any]]:
     for delay in (1, 6, 12, 24, 72):
         rows.append({"id": f"delay_{delay}h", "strategy": "swing_cycle_core", "config": {"bear_onset_btc_pct": "0", "transition_delay_hours": delay}, "cost": "realistic"})
     for shift in (-365, -180, 0, 180, 365):
-        rows.append({"id": f"placebo_{shift:+d}d", "strategy": "swing_cycle_core", "config": {"bear_onset_btc_pct": "0", "confirmed_halving_dates": _clock_dates(shift)}, "cost": "realistic"})
+        rows.append({"id": f"placebo_{shift:+d}d", "strategy": "swing_cycle_core", "config": {"bear_onset_btc_pct": "0", "confirmed_halving_timestamps": _clock_timestamps(shift)}, "cost": "realistic"})
     return rows
 
 
@@ -125,7 +127,8 @@ def _run(spec: dict[str, Any], bars: list[Any], dataset: dict[str, Any]) -> dict
     config = dict(spec["config"])
     cfg = meta.make_config("BTC-USDT", config)
     client_kwargs: dict[str, Any] = {"symbol": "BTC-USDT", "bars": bars,
-                                     "initial_balance": Decimal("10000"), "cost_mode": spec["cost"]}
+                                     "initial_balance": Decimal("10000"), "cost_mode": spec["cost"],
+                                     "fill_next_open": True}
     if spec["cost"] == "twice_conservative":
         client_kwargs.update(cost_mode="twice_conservative", fee_rate=Decimal("0.002"), slippage_bps=30)
     client = BacktestClient(**client_kwargs)
@@ -165,11 +168,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=OUT)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--v7-only", action="store_true",
+                        help="run only causal v7 cases; generic v6 lacks deferred-fill reconciliation")
     args = parser.parse_args()
     index_path = args.out / "index.json"
     state = json.loads(index_path.read_text(encoding="utf-8")) if index_path.exists() else {"cases": {}}
     bars, dataset = load_bars()
     suite = specs()
+    if args.v7_only:
+        suite = [spec for spec in suite if spec["strategy"] == "swing_cycle_core"]
     suite_sha = hashlib.sha256(_json({"dataset": dataset, "cases": suite,
         "strategy_sha256": _sha(ROOT / "strategies" / "swing_cycle_core.py"),
         "clock_sha256": _sha(ROOT / "strategies" / "cycle_phase_clock.py")}).encode()).hexdigest()

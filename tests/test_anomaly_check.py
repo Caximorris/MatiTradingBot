@@ -35,6 +35,43 @@ def test_stale_bot_flagged_high():
     assert a.severity == "HIGH"
 
 
+def test_active_v7_health_failures_are_detected_fail_closed():
+    alerts = ac.check_anomalies([_snap(
+        label="v7-shadow", name="swing_cycle_core_v7_btc_usdt_shadow",
+        is_v7=True, wallet_exists=False, stale=True, last_run_age_min=45.0,
+        v7_health={
+            "service_managed": False,
+            "execution_valid": False,
+            "journal_exists": False,
+            "journal_path": None,
+            "promotion_report_valid": False,
+            "promotion_report_failures": ["unreadable_or_invalid"],
+        },
+    )], price=Decimal("40000"), now=NOW)
+
+    codes = {alert.code for alert in alerts}
+    assert {
+        "wallet-missing", "bot-stale-tick", "v7-service-unmanaged",
+        "v7-invalid-execution", "v7-transition-journal-missing",
+        "v7-promotion-report-failed",
+    } <= codes
+
+
+def test_healthy_active_v7_has_no_v7_health_alert():
+    alerts = ac.check_anomalies([_snap(
+        label="v7-shadow", name="swing_cycle_core_v7_btc_usdt_shadow", is_v7=True,
+        v7_health={
+            "service_managed": True,
+            "execution_valid": True,
+            "journal_exists": True,
+            "promotion_report_valid": True,
+            "promotion_report_failures": [],
+        },
+    )], price=Decimal("40000"), now=NOW)
+
+    assert not any(alert.code.startswith("v7-") for alert in alerts)
+
+
 def test_negative_balance_is_critical():
     alerts = ac.check_anomalies([_snap(balances={"USDT": Decimal("-5")})],
                                 price=Decimal("40000"), now=NOW)

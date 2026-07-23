@@ -106,8 +106,8 @@ def build_html(run, series, candles, markers, kind) -> str:
         for l, v, c in anchors)
 
     n_exits = sum(1 for m in markers if m["kind"] == "exit")
-    label_ops = "rebalanceos" if kind == "allocator" else "trades"
-    n_ops = len(markers) if kind == "allocator" else n_exits
+    label_ops = "eventos v7" if kind == "cycle_core" else ("rebalanceos" if kind == "allocator" else "trades")
+    n_ops = len(markers) if kind in {"allocator", "cycle_core"} else n_exits
     secondary = [
         f'<span class="sec">Final: <b>{money(final_eq)}</b></span>',
         f'<span class="sec">Sharpe: <b>{float(r.sharpe_ratio):.2f}</b></span>',
@@ -145,6 +145,8 @@ def main() -> int:
     ap.add_argument("--costs", default="realistic")
     ap.add_argument("--timeframe", default="1H")
     ap.add_argument("--config", default=None, help="JSON o preset @v5/@v6/@prop")
+    ap.add_argument("--fill-next-open", action="store_true",
+                    help="Usa fills en la apertura de la vela siguiente (contrato causal v7).")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -155,7 +157,8 @@ def main() -> int:
 
     print(f"Ejecutando {strategy} {args.symbol} {f.date()}..{t.date()} costes={args.costs} ...")
     run = run_strategy(symbol=args.symbol, strategy=strategy, from_dt=f, to_dt=t,
-                       cost_mode=args.costs, config=config, timeframe=args.timeframe)
+                       cost_mode=args.costs, config=config, timeframe=args.timeframe,
+                       fill_next_open=args.fill_next_open)
     candles = daily_candles(run.bars, f, t)
     series = equity_series(run.result, candles)
     markers, kind = extract_markers(run.strategy)

@@ -32,6 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "data" / "runtime"
 REBALANCES = RUNTIME / "swing_rebalances.jsonl"
 LEGACY_PAPER_STATE = RUNTIME / "paper_state.json"
+V7_EXECUTIONS = frozenset({"v7_shadow", "v7_local_paper"})
+V7_PROMOTION_REPORT = RUNTIME / "v7" / "promotion_report.json"
 
 # Espejo de tg_views.LIVENESS_MAX_AGE_MIN: bot activo sin tick mas viejo que esto = proceso caido.
 LIVENESS_MAX_AGE_MIN = 10
@@ -101,11 +103,15 @@ def discover_bots(session) -> list[dict]:
     out = []
     for r in rows:
         name = str(r.strategy_name).lower()
-        if not name.startswith(("swing_allocator", "prop_swing")):
-            continue
-        if not is_operable_bot_name(r.strategy_name, r.symbol):
-            continue
         cfg = r.get_config() or {}
+        is_v7 = (
+            name.startswith("swing_cycle_core")
+            and str(cfg.get("instance_id", "")).startswith("v7_")
+        )
+        if not name.startswith(("swing_allocator", "swing_cycle_core", "prop_swing")):
+            continue
+        if not is_operable_bot_name(r.strategy_name, r.symbol) and not is_v7:
+            continue
         out.append({
             "label": bot_label(r.strategy_name, cfg),
             "name": r.strategy_name,
@@ -115,8 +121,77 @@ def discover_bots(session) -> list[dict]:
             "portfolio_id": cfg.get("paper_portfolio_id"),
             "execution": cfg.get("execution"),
             "execution_quote": cfg.get("execution_quote"),
+            "is_v7": is_v7,
+            "v7_config": cfg if is_v7 else None,
         })
     return out
+
+
+def _v7_artifact_path(value: object, runtime_dir: Path) -> Path | None:
+    """Resolve a configured v7 evidence path, rejecting paths outside runtime."""
+    if not isinstance(value, str) or not value:
+        return None
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = ROOT / candidate
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(runtime_dir.resolve())
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
+def v7_health(config: dict | None, *, runtime_dir: Path | None = None) -> dict:
+    """Read-only, fail-closed health evidence for one registered v7 instance."""
+    from core.v7_operations import canonical_hash
+
+    config = config or {}
+    runtime_dir = runtime_dir or RUNTIME
+    journal_path = _v7_artifact_path(config.get("transition_journal_path"), runtime_dir)
+    report_path = runtime_dir / "v7" / "promotion_report.json"
+    report_valid = False
+    report_failures: list[str] = []
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected_hash = report.pop("report_hash")
+        state = report.get("state")
+        checks = state.get("checks") if isinstance(state, dict) else None
+        counters = state.get("counters") if isinstance(state, dict) else None
+        zero_counters = (
+            "duplicate_transitions", "unexplained_error_locks", "fail_open_events",
+            "unreconciled_position_events", "v6_regressions", "production_live_orders",
+        )
+        if (
+            not isinstance(expected_hash, str)
+            or expected_hash != canonical_hash(report)
+            or not isinstance(report.get("promotion_eligible"), bool)
+            or not isinstance(checks, dict)
+            or not isinstance(counters, dict)
+        ):
+            raise ValueError("invalid promotion report")
+        report_failures.extend(
+            key for key in (
+                "transition_journal_valid", "shadow_state_valid", "configuration_evidence_valid",
+            )
+            if checks.get(key) is not True
+        )
+        report_failures.extend(
+            key for key in zero_counters if counters.get(key) != 0
+        )
+        report_valid = True
+    except (OSError, ValueError, TypeError):
+        report_failures.append("unreadable_or_invalid")
+
+    return {
+        "service_managed": config.get("service_managed") is True,
+        "execution_valid": config.get("execution") in V7_EXECUTIONS,
+        "journal_path": str(journal_path) if journal_path is not None else None,
+        "journal_exists": journal_path is not None and journal_path.is_file(),
+        "promotion_report_path": str(report_path),
+        "promotion_report_valid": report_valid,
+        "promotion_report_failures": report_failures,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +262,7 @@ def build_snapshots(session, *, price: Decimal | None = None,
         wallet = paper_state_path_for(b["portfolio_id"])
         balances = read_paper_balances(wallet)
         rebalances = filter_bot_rebalances(all_reb, b["name"])
+        health = v7_health(b["v7_config"]) if b["is_v7"] else None
         equity, ratio = perf_ratio(balances, rebalances, price)
         stale, age_min = _staleness(b["is_active"], b["last_run"], now)
 
@@ -217,6 +293,7 @@ def build_snapshots(session, *, price: Decimal | None = None,
             "stale": stale,
             "next_eval_utc": nxt_eval,
             "mins_to_next_eval": mins_to_eval,
+            "v7_health": health,
         })
     return snaps
 

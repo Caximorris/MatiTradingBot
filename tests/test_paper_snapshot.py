@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from tools import paper_snapshot as ps
+from core.v7_operations import canonical_hash
+from tools.v7_paper_setup import SHADOW_NAME, config_for
 
 
 # --- Fakes minimos para simular BotState + session sin DB real ----------------
@@ -42,6 +44,30 @@ class _FakeSession:
 
 def _write_wallet(path, btc, usdt):
     path.write_text(json.dumps({"balances": {"BTC": btc, "USDT": usdt}}), encoding="utf-8")
+
+
+def _write_v7_promotion_report(path):
+    report = {
+        "promotion_eligible": False,
+        "state": {
+            "checks": {
+                "transition_journal_valid": True,
+                "shadow_state_valid": True,
+                "configuration_evidence_valid": True,
+            },
+            "counters": {
+                "duplicate_transitions": 0,
+                "unexplained_error_locks": 0,
+                "fail_open_events": 0,
+                "unreconciled_position_events": 0,
+                "v6_regressions": 0,
+                "production_live_orders": 0,
+            },
+        },
+    }
+    report["report_hash"] = canonical_hash(report)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report), encoding="utf-8")
 
 
 NOW = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
@@ -94,6 +120,45 @@ def test_discover_bots_includes_prop_and_excludes_other_strategies():
     assert [b["name"] for b in bots] == [
         "swing_allocator_v6_btc_usdt", "prop_swing_btc_usdt",
     ]
+
+
+def test_build_snapshots_includes_v7_runtime_health(tmp_path, monkeypatch):
+    monkeypatch.setattr(ps, "RUNTIME", tmp_path)
+    config = config_for("shadow")
+    journal = tmp_path / "v7_btc_usdt_shadow" / "transitions.jsonl"
+    journal.parent.mkdir()
+    journal.write_text("evidence\n", encoding="utf-8")
+    config["transition_journal_path"] = str(journal)
+    _write_v7_promotion_report(tmp_path / "v7" / "promotion_report.json")
+    _write_wallet(tmp_path / "paper_state_swing_cycle_core_v7_btc_usdt_shadow.json", "0", "1000")
+
+    snaps = ps.build_snapshots(
+        _FakeSession([_FakeBot(SHADOW_NAME, "BTC-USDT", True, NOW, config)]),
+        price=Decimal("40000"), now=NOW, rebalances_path=tmp_path / "empty.jsonl",
+    )
+
+    assert len(snaps) == 1
+    health = snaps[0]["v7_health"]
+    assert snaps[0]["is_v7"] is True
+    assert health["service_managed"] is True
+    assert health["execution_valid"] is True
+    assert health["journal_exists"] is True
+    assert health["promotion_report_valid"] is True
+    assert health["promotion_report_failures"] == []
+
+
+def test_v7_health_fails_closed_when_configuration_evidence_is_invalid(tmp_path):
+    report_path = tmp_path / "v7" / "promotion_report.json"
+    _write_v7_promotion_report(report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["state"]["checks"]["configuration_evidence_valid"] = False
+    report["report_hash"] = canonical_hash({key: value for key, value in report.items() if key != "report_hash"})
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    health = ps.v7_health({}, runtime_dir=tmp_path)
+
+    assert health["promotion_report_valid"] is True
+    assert health["promotion_report_failures"] == ["configuration_evidence_valid"]
 
 
 def test_build_snapshots_marks_stale_and_computes_metrics(tmp_path, monkeypatch):

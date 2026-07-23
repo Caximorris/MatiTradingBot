@@ -121,6 +121,7 @@ class OKXClient:
         self._paper_lock = threading.Lock()
         self._paper_balance: dict[str, Decimal] = {"USDT": Decimal("10000")}
         self._paper_orders: dict[str, OrderResult] = {}
+        self._paper_completed_orders: dict[str, OrderResult] = {}
         self._paper_counter = 0
         state_file = "paper_state.json"
         if paper_state_name:
@@ -329,6 +330,31 @@ class OKXClient:
         if not self._available or self._trade_api is None:
             return []
 
+    def get_order_status(self, symbol: str, order_id: str) -> OrderResult | None:
+        """Normalized, non-optimistic order observation for strategy recovery."""
+        if self._is_paper:
+            with self._paper_lock:
+                return self._paper_orders.get(order_id) or self._paper_completed_orders.get(order_id)
+        if not self._available or self._trade_api is None:
+            raise ExchangeUnavailable("Trade API no disponible para reconciliacion")
+        try:
+            response = self._call_api(self._trade_api.get_order, instId=symbol, ordId=order_id)
+            data = response.get("data", [])[0]
+            state = data.get("state", "unknown")
+            status = {"filled": "filled", "live": "open", "partially_filled": "partially_filled",
+                      "canceled": "rejected", "mmp_canceled": "rejected"}.get(state, "unknown")
+            return OrderResult(order_id=order_id, symbol=symbol, side=data.get("side", ""),
+                               order_type=data.get("ordType", "market"), size=Decimal(str(data.get("sz", "0"))),
+                               limit_price=Decimal(str(data["px"])) if data.get("px") else None,
+                               filled_price=Decimal(str(data["avgPx"])) if data.get("avgPx") else None,
+                               filled_qty=Decimal(str(data.get("accFillSz", "0"))),
+                               fee=abs(Decimal(str(data.get("fee", "0")))),
+                               fee_currency=data.get("feeCcy", symbol.split("-")[1]), status=status,
+                               is_paper=False, strategy="", timestamp=self._utcnow(),
+                               error=data.get("state", ""))
+        except Exception as exc:
+            raise ExchangeUnavailable(f"order status unavailable: {exc}") from exc
+
         try:
             resp = self._call_api(self._trade_api.get_order_list, instId=symbol)
             return resp.get("data", [])
@@ -391,10 +417,11 @@ class OKXClient:
         size: Decimal,
         price: Decimal | None = None,
         strategy: str = "manual",
+        client_order_id: str | None = None,
     ) -> OrderResult:
         if self._is_paper:
             return self._paper_place_order(symbol, side, order_type, size, price, strategy)
-        return self._live_place_order(symbol, side, order_type, size, price, strategy)
+        return self._live_place_order(symbol, side, order_type, size, price, strategy, client_order_id)
 
     def cancel_order(self, order_id: str, symbol: str) -> bool:
         if self._is_paper:
@@ -450,6 +477,7 @@ class OKXClient:
                     fee=fee, fee_currency=quote_ccy, status="filled",
                     is_paper=True, strategy=strategy, timestamp=self._utcnow(),
                 )
+                self._paper_completed_orders[order_id] = result
                 logger.info(
                     "[PAPER] {} {} {} qty={} @ {} fee={} {}",
                     side.upper(), order_id, symbol, size, fill_price, fee, quote_ccy,
@@ -639,6 +667,7 @@ class OKXClient:
         size: Decimal,
         price: Decimal | None,
         strategy: str,
+        client_order_id: str | None = None,
     ) -> OrderResult:
         if not self._available or self._trade_api is None:
             raise ExchangeUnavailable("Trade API no disponible")
@@ -659,6 +688,8 @@ class OKXClient:
                 params["tgtCcy"] = "base_ccy"
             elif order_type == "limit" and price is not None:
                 params["px"] = str(price)
+            if client_order_id:
+                params["clOrdId"] = client_order_id
 
             resp = self._check_okx_response(self._trade_api.place_order(**params))
             data = resp["data"][0]
@@ -671,10 +702,10 @@ class OKXClient:
                 size=size,
                 limit_price=price,
                 filled_price=price if order_type == "limit" else None,
-                filled_qty=size if order_type == "market" else Decimal("0"),
+                filled_qty=Decimal("0"),
                 fee=Decimal("0"),      # se actualiza cuando llega el fill
                 fee_currency=quote_ccy,
-                status="open" if order_type == "limit" else "filled",
+                status="open",
                 is_paper=False,
                 strategy=strategy,
                 timestamp=self._utcnow(),

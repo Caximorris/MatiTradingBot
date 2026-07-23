@@ -111,7 +111,7 @@ window.addEventListener('resize', () => chart.resize());
 
 const UP='#26a69a', DOWN='#ef5350', ACCENT='#5b8dee', GOLD='#e6b34d';
 const GRID_LINE='#1d222c', AXIS_TEXT='#9aa0ab', TITLE_TEXT='#6f7582';
-const mkColor = {entry:UP, exit:DOWN, init:ACCENT};
+const mkColor = {entry:UP, exit:DOWN, init:ACCENT, decision:'#9aa0ab', submission:GOLD, fill:UP, transition:ACCENT};
 const PHASE_STYLE = {
   post_halving:'rgba(38,166,154,0.07)', bull_peak:'rgba(230,179,77,0.08)', bear_onset:'rgba(239,83,80,0.07)',
 };
@@ -143,7 +143,7 @@ function buildView(tf){
   }
   return {dates, candles, equity, bnh, dd};
 }
-function idxOf(d){ let lo=0,hi=V.dates.length-1;
+function idxOf(d){ d=String(d).slice(0,10); let lo=0,hi=V.dates.length-1;
   while(lo<hi){const m=(lo+hi)>>1; if(V.dates[m]<d)lo=m+1; else hi=m;} return lo; }
 function fmtMoney(v){ if(v>=1e6)return '$'+(v/1e6).toFixed(2)+'M';
   if(v>=1e3)return '$'+(v/1e3).toFixed(1)+'k'; return '$'+v.toFixed(0); }
@@ -152,7 +152,7 @@ function mkPoints(){
   return D.markers.map(m => ({
     value:[V.dates[Math.min(idxOf(m.date),V.dates.length-1)], m.price],
     itemStyle:{color:mkColor[m.kind]||GOLD, borderColor:'#0d1017', borderWidth:1},
-    symbol: m.kind==='init' ? 'diamond' : 'triangle',
+    symbol: (m.kind==='init'||m.kind==='transition') ? 'diamond' : (m.kind==='decision' ? 'circle' : 'triangle'),
     symbolRotate: m.kind==='exit' ? 180 : 0, meta:m,
   }));
 }
