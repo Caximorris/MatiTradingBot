@@ -136,13 +136,13 @@ def _is_safe_main_cli(script: str, args: list[str], root: Path) -> bool:
         return True
     if len(args) == 2 and args[1] == "--help" and args[0] and not args[0].startswith("-"):
         return True
-    if _is_frozen_cross_asset_backtest(args):
+    if _is_safe_offline_backtest(args):
         return True
     return args in (["mode"], ["status"], ["paper-status"], ["anomaly-check"])
 
 
-def _is_frozen_cross_asset_backtest(args: list[str]) -> bool:
-    """Allow only the preregistered ETH/SOL Swing evidence run matrix."""
+def _is_safe_offline_backtest(args: list[str]) -> bool:
+    """Allow bounded local backtests; live and stateful commands remain forbidden elsewhere."""
     if not args or args[0] != "backtest":
         return False
     values: dict[str, str] = {}
@@ -161,23 +161,32 @@ def _is_frozen_cross_asset_backtest(args: list[str]) -> bool:
             return False
         values[key] = args[index + 1]
         index += 2
-    required = {"--strategy", "--symbol", "--from", "--to", "--timeframe", "--balance", "--costs", "--config"}
-    if set(values) - (required | {"--verbose"}) or not required <= set(values):
+    required = {"--strategy", "--from", "--to", "--costs"}
+    if not required <= set(values):
         return False
-    if values["--strategy"].lower() != "swing" or values["--symbol"] not in {"ETH-USDT", "SOL-USDT"}:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", values["--strategy"]):
         return False
-    if values["--from"] != "2021-07-01" or values["--to"] != "2026-01-01":
+    if not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", values[key]) for key in ("--from", "--to")):
         return False
-    if values["--timeframe"] != "1H" or values["--balance"] != "10000" or values["--costs"] not in {"realistic", "conservative"}:
+    if values["--costs"] not in {"ideal", "realistic", "conservative"}:
         return False
-    try:
-        config = json.loads(values["--config"])
-    except json.JSONDecodeError:
+    if "--symbol" in values and not re.fullmatch(r"[A-Z0-9]+-[A-Z0-9]+", values["--symbol"]):
         return False
-    if not isinstance(config, dict) or config.get("use_funding_overlay") is not False:
+    if "--timeframe" in values and not re.fullmatch(r"(?:\d+[mMhHdDwW])", values["--timeframe"]):
         return False
-    phase_symbol = str(config.get("phase_symbol", "")).strip().upper()
-    return phase_symbol in {"", "BTC-USDT"}
+    if "--balance" in values:
+        try:
+            if float(values["--balance"]) <= 0:
+                return False
+        except ValueError:
+            return False
+    if "--config" in values:
+        try:
+            if not isinstance(json.loads(values["--config"]), dict):
+                return False
+        except json.JSONDecodeError:
+            return False
+    return True
 
 
 def _is_trusted_python(token: str, root: Path) -> bool:

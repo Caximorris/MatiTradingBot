@@ -135,6 +135,10 @@ writers cannot. A failed hard gate terminates dependent work.
 
 ### Develop a new strategy
 
+For an isolated paper candidate, use the local path in
+`docs/forward-test/candidate-paper-workflow.md`. The sequence below is reserved for broad research
+or a default/promotion decision; it is not an automatic prerequisite for implementation or paper.
+
 1. `hypothesis-researcher` checks prior work and preregisters one mechanism.
 2. `data-integrity-auditor` validates required inputs.
 3. `signal-researcher` tests feature validity without portfolio rules.

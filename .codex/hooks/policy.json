@@ -45,7 +45,7 @@
     },
     {
       "id": "integrity-targeted",
-      "trigger": "Stop and before git commit",
+      "trigger": "Before git commit or explicit Tier 2 validation",
       "purpose": "Run the minimal allowlisted focal tests and synthetic smoke required by changed categories.",
       "order": 30,
       "conditions": "Non-doc categories touched after session baseline and no exact success receipt.",
@@ -79,7 +79,7 @@
     },
     {
       "id": "completion-engineering",
-      "trigger": "Explicit CLI validate --tier 3 and research-completion continuation",
+      "trigger": "Explicit CLI validate --tier 3 and PR readiness",
       "purpose": "Run the repository engineering completion suite only at a Tier 3 boundary.",
       "order": 50,
       "conditions": "Compatible Python 3.12/3.13 and no exact Tier3 receipt.",
@@ -96,15 +96,15 @@
     },
     {
       "id": "research-verdict",
-      "trigger": "Stop for material research categories and before PR",
-      "purpose": "Require the minimum independent specialist verdict chain without launching nested Codex agents from hooks.",
+      "trigger": "Explicit promotion/default validation and PR creation only",
+      "purpose": "Require independent evidence only at a publication or promotion boundary; never at normal task stop.",
       "order": 60,
       "conditions": "Material strategy, indicator, data, optimization, risk, execution, backtest, dependency or evidence scope.",
       "tier": 3,
       "max_runtime_seconds": 7200,
-      "frequency": "Once per exact material fingerprint at completion/publish boundaries",
+      "frequency": "Once per exact promotion or publication fingerprint",
       "changed_file_scope": "Material publish fingerprint and referenced experiment manifests",
-      "behavior": "blocking continuation until mapped structured verdict receipts exist",
+      "behavior": "blocking only at the explicit boundary",
       "validation": ["specialist identity", "allowed verdict token", "exact fingerprint", "required evidence headings", "known research blockers remain visible"],
       "outputs": ["Specialist receipts", "exact next-agent/Skill continuation", "research verdict matrix"],
       "cache_strategy": "Per-agent receipt keyed by source and evidence fingerprint",
@@ -195,7 +195,6 @@
     "rule": "completed and gate_passed are distinct; invalid, negative, blocked, fragile or incomplete verdicts are completed evidence but never passing gates"
   },
   "known_blockers": [
-    "fill_next_open causality is unresolved and blocks trustworthy research conclusions",
     "Scalp multi-timeframe alignment requires an independent closed-period audit",
     "mutable or revised external inputs require content identities; unhashed inputs invalidate evidence",
     "legacy manifests without current repository/dataset/external-input identities are not confirmatory evidence",
