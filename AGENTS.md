@@ -88,6 +88,11 @@ worktree, or commit secrets, runtime state, canonical caches, raw journals, logs
 Creating a commit does not authorize push. If a required decision materially changes risk, scope, or
 production behavior, stop and ask for it; otherwise proceed with the fast lane.
 
+## Long-running tasks
+
+Follow docs/codex/autonomous-continuation.md. Maintain .codex/TASK_STATE.md, resume the first
+incomplete milestone, and do not end on a progress update while recoverable work remains.
+
 ## References on demand
 
 - Current state: `SESSION.md`; historical record: `docs/archive/session-archive.md`.
