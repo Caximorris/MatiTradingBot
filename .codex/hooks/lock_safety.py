@@ -66,9 +66,6 @@ def _read_owner(lock: Path) -> dict[str, Any] | None:
 
 def _pid_alive(pid: int) -> bool | None:
     if os.name == "nt":
-        listed = _windows_tasklist_liveness(pid)
-        if listed is not None:
-            return listed
         try:
             import ctypes
             from ctypes import wintypes
