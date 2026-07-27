@@ -10,11 +10,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from core.v7_certified_paper import PaperSafetyError, make_config
+
 SHADOW_NAME = "swing_cycle_core_v7_btc_usdt_shadow"
 PAPER_NAME = "swing_cycle_core_v7_btc_usdt_paper"
+CERTIFIED_NAME = "swing_cycle_core_v7_certified_isolated_paper"
 
 
-def config_for(mode: str) -> dict:
+def config_for(mode_or_root: str | Path) -> dict:
+    """Return legacy config by mode or the separate certified inactive config by root."""
+    if isinstance(mode_or_root, Path):
+        return make_config(mode_or_root).as_dict()
+    mode = mode_or_root
     if mode not in {"shadow", "paper"}:
         raise ValueError("mode must be shadow or paper")
     instance = f"v7_btc_usdt_{mode}"
@@ -35,6 +42,27 @@ def config_for(mode: str) -> dict:
     }
 
 
+def register_certified(session, *, root: Path = ROOT) -> dict:
+    """Idempotently register a separate inactive certified candidate only."""
+    from core.database import BotState, get_or_create_bot_state
+
+    config = make_config(root)
+    config.validate()
+    existing = session.query(BotState).filter_by(
+        strategy_name=CERTIFIED_NAME, symbol="BTC-USDT"
+    ).first()
+    if existing is not None:
+        if existing.get_config().get("configuration_hash") != config.configuration_hash:
+            raise PaperSafetyError("existing conflicting certified candidate state")
+        if existing.is_active:
+            raise PaperSafetyError("automatic activation is prohibited")
+        return {CERTIFIED_NAME: {"active": False, "idempotent": True, **config.as_dict()}}
+    state = get_or_create_bot_state(session, CERTIFIED_NAME, "BTC-USDT", config=config.as_dict())
+    state.set_config(config.as_dict())
+    state.is_active = False
+    return {CERTIFIED_NAME: {"active": False, "idempotent": False, **config.as_dict()}}
+
+
 def register(session, *, activate_shadow: bool = False, activate_paper: bool = False) -> dict:
     from core.database import get_or_create_bot_state
     result = {}
@@ -52,11 +80,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--activate-shadow", action="store_true")
     parser.add_argument("--activate-paper", action="store_true")
+    parser.add_argument("--create-certified-inactive", action="store_true")
     args = parser.parse_args()
     from core.database import get_session, init_db
     init_db()
     with get_session() as session:
-        result = register(session, activate_shadow=args.activate_shadow, activate_paper=args.activate_paper)
+        if args.create_certified_inactive:
+            if args.activate_shadow or args.activate_paper:
+                parser.error("certified candidate cannot share a legacy activation request")
+            result = register_certified(session)
+        else:
+            result = register(session, activate_shadow=args.activate_shadow, activate_paper=args.activate_paper)
     print(json.dumps(result, sort_keys=True))
     return 0
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=MatiTradingBot certified V7 OKX Demo candidate (inactive by default)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__APP_DIR__/.venv/bin/python tools/v7_certified_demo_service.py --run
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+MemoryMax=350M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+{
+  "schema_version": "v7-frozen-candidate/v1",
+  "strategy_identifier": "swing_cycle_core",
+  "source_commit": "a8d711cd14fae342f6971b1d734392528f1a194a",
+  "phase_days": {"post_halving_end": 180, "bear_onset_start": 540, "accumulation_start": 900},
+  "operational_regimes": {"post_halving": "1", "bull_peak": "1", "bear_onset": "0", "accumulation": "1"},
+  "decision_cadence": {"interval_hours": 4, "schedule": "UTC timestamp hour divisible by four"},
+  "warmup": {"bars": 6000, "interval": "1h", "completed_bars_only": true},
+  "dataset": {"symbol": "BTC-USDT", "interval": "1h", "start": "2014-04-26T00:00:00Z", "end": "2026-01-01T00:00:00Z"},
+  "cost_model": {"fee_rate": "0.001", "slippage_bps": "5"},
+  "precision": {"btc_quantity": "0.00000001", "rounding": "ROUND_DOWN"},
+  "reserve": {"buy_fee_and_slippage_reserved_before_sizing": true},
+  "fill_contract": "completed-bar decision; first subsequent normalized candle open; no same-bar fill",
+  "halving_timestamps": ["2012-11-28T15:24:38Z", "2016-07-09T16:46:13Z", "2020-05-11T19:23:43Z", "2024-04-20T00:09:27Z"],
+  "source_hashes": {
+    "strategies/swing_cycle_core.py": "4ac3d128a223ffb4819d9c27ec0b33bc4a9867071d02be8f69a6b703fc538f0f",
+    "strategies/certified_adapters.py": "f598f1840b3d61623ab66f2bf5ac8386d588376c1e949629bbfdd0e905485d65",
+    "tools/v7_independent_reference.py": "bbd47edc97a035607c817b912f20ee5ae95df06f6a4deb5f40296a0b038072e8",
+    "core/certification.py": "518a1475eaba9dffb5c919e2aa1634d6266ab2c3832dcfd2e299589b35126055"
+  },
+  "raw_cache_sha256": "284b26b68fda8931642a0fd7286a68d806dbf2adcd3d318313a395149d2a073f",
+  "normalization": "collapse exact adjacent duplicates; reject conflicts and non-monotonic timestamps"
+}
