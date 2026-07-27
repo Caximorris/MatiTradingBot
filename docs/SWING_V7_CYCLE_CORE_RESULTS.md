@@ -2,10 +2,18 @@
 
 ## Verdict
 
-`NEEDS_MORE_VALIDATION`.  V7 was implemented and the frozen current-input suite
-completed, but its historical advantage is an in-sample calendar rule with only two
-completed modern cycles.  It cannot replace v6-2 or receive capital without forward
-shadow evidence and explicit approval.
+`CERTIFIED_CAUSAL_CANDIDATE`, inactive. The authoritative V7 result is the immutable
+`StrategySnapshot` → `TargetIntent` execution run: **$52,236,346.57893721564825**
+final capital from $10,000, with six next-open, fee-reserved reconciled intents and a
+`VALID` manifest. The certification source is `codex/universal-certification-gate`
+commit `5452f76`. This is not `ADOPT`, a v6-2 default change, an activation, or
+Demo/live authorization.
+
+The former `$47.863M` table is `INVALID_NON_CAUSAL`: it used the historical
+client-driven runner. The former `$13.723M` causal-runner endpoint, and the other
+$10–14M endpoints, are `INVALID_INCOMPLETE_EXECUTION_PATH`: they stopped after
+`ERROR_LOCKED` at 2018-12-27T00:00Z. They remain forensic evidence only and cannot be
+used as a headline, comparator, or promotion input.
 
 ## Provenance and control
 
@@ -28,7 +36,7 @@ duplicates.  The requested 2015-01-01T00:00Z through 2026-01-01T00:00Z inclusive
 slice contains 96,907 rows; the historical 102,930 versus 102,931 difference is an
 endpoint/observation-count discrepancy, not a cache rewrite.
 
-## A–F, realistic costs
+## Invalid legacy A–F client-runner comparison (forensic only)
 
 | Case | Final capital | CAGR | Max DD | Calmar | Orders | Fees |
 |---|---:|---:|---:|---:|---:|---:|

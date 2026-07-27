@@ -1,4 +1,9 @@
-# V7 Cycle Core — isolated paper readiness
+# V7 Cycle Core — isolated paper readiness (archival package)
+
+> **Superseded result notice:** the `$13.723M` figures below describe the 2026-07-23
+> readiness package only. They are `INVALID_INCOMPLETE_EXECUTION_PATH`: the legacy
+> runner stopped in `ERROR_LOCKED`. The authoritative certified causal result is
+> `$52,236,346.57893721564825` on `codex/universal-certification-gate` commit `5452f76`.
 
 ## Decision
 
@@ -48,7 +53,7 @@ decision uses the prior completed price and the order fills at the following
 bar open. The candidate does not consume external macro, funding, or
 higher-timeframe inputs.
 
-## Fixed results and falsification
+## Archived fixed results and falsification
 
 | Case | Cost | Final capital | Max DD | Orders |
 |---|---:|---:|---:|---:|

@@ -1,8 +1,12 @@
-# Handoff 2026-07-22 — MatiTradingBot
+# Handoff 2026-07-27 — MatiTradingBot
 
 Este archivo es el punto de arranque para continuar desde otro PC.
 
-> **ESTADO ACTUAL:** para retomar el trabajo incompleto descrito abajo, usar la rama
+> **ESTADO ACTUAL:** V7 Cycle Core es `CERTIFIED_CAUSAL_CANDIDATE`, pero sigue
+> inactiva y aislada. No cambia el default v6-2, no autoriza Demo/live y su resultado histórico
+> es frágil por sensibilidad de calendario/delay. Leer primero
+> `docs/SWING_V7_CYCLE_CORE_RESULTS.md` y `SESSION.md`. Para retomar el trabajo
+> incompleto descrito abajo, usar la rama
 > `codex/cross-asset-swing-handoff`. Swing v6-2 es el default congelado; v5 queda como
 > control/rollback historico. El cliente OKX Demo y el fleet de dos bots (v6 + Demo) estan
 > desplegados y verificados en la VM; **Prop/CFT se RETIRO de la fleet activa el 2026-07-14**
@@ -37,6 +41,12 @@ Este archivo es el punto de arranque para continuar desde otro PC.
 - Rama operativa estable: `main`. Rama de research retomable:
   `codex/cross-asset-swing-handoff`.
 - Default de estrategia: **Swing Allocator v6-2**, congelado.
+- **V7 Cycle Core:** candidata paper aislada, `CERTIFIED_CAUSAL_CANDIDATE`, nunca activada.
+  Resultado autoritativo: $52,236,346.57893721564825 desde $10,000, 6 intents next-open con
+  reserva de fee/slippage y manifest `VALID` en `codex/universal-certification-gate` @ `5452f76`.
+  $47.863M es `INVALID_NON_CAUSAL`; $13.723M y los demás $10–14M son
+  `INVALID_INCOMPLETE_EXECUTION_PATH`. Setup, shadow, paper, VM y cualquier cutover requieren
+  aprobación actual explícita.
 - Paper fleet: v6 simulado + v6 OKX Demo, activos en VM GCP `matitrbot`, con Telegram y checks
   diarios; legacy/v5 se retiraron del registro, conservando rollback e historial.
 - **Prop/CFT: RETIRADO de la fleet activa (2026-07-14).** Su promocion a "candidato vivo"

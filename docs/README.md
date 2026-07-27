@@ -1,49 +1,41 @@
-# docs/
+# Documentation index
 
-Deeper documentation for MatiTradingBot. The repo root keeps only the front door (`README.md`), the
-license, the experiment registry (`EXPERIMENTS.md` — accepted/rejected/parked strategy ideas; check
-it before proposing a change), and the AI-agent working files (`CLAUDE.md`, `AGENTS.md`,
-`SESSION.md`) that the harness loads on startup. Everything else — design, audits, ops runbooks,
-forward-test rules, history — lives here.
+The current documentation center is Swing v7 Cycle Core: an isolated,
+paper-only `CERTIFIED_CAUSAL_CANDIDATE` that remains inactive. It does not
+replace the frozen v6-2 default or authorize Demo/live trading.
 
-> Most of these are internal working notes (Spanish, session-driven). They're kept for
-> reproducibility and future iterations, not as polished prose.
+## Swing v7 — current record
 
-## Research system
+| Document | What it establishes |
+|---|---|
+| [V7 paper readiness](forward-test/v7-cycle-core-paper-readiness.md) | Earlier readiness package; its $13.723M result is `INVALID_INCOMPLETE_EXECUTION_PATH` |
+| [V7 Cycle Core plan](SWING_V7_CYCLE_CORE_PLAN.md) | Hypothesis, immutable clock, fail-closed transitions, and preregistered robustness protocol |
+| [V7 results](SWING_V7_CYCLE_CORE_RESULTS.md) | Authoritative $52.236M certified causal result, invalid-result lineage, and limitations |
+| [V7 deployment plan](SWING_V7_PAPER_DEPLOYMENT_PLAN.md) | Isolated VM topology, shadow soak gates, and non-destructive rollback |
+| [V7 deployment results](SWING_V7_PAPER_DEPLOYMENT_RESULTS.md) | Local-only state and the evidence still required for any remote activation claim |
+| [V7 operator runbook](SWING_V7_OPERATOR_RUNBOOK.md) | Status, diagnostics, reconciliation, lock handling, and promotion evidence |
+| [ERROR_LOCKED reconciliation](SWING_V7_ERROR_LOCKED_RECONCILIATION.md) | Fail-closed error semantics and journaled no-order recovery |
+| [V6→V7 Demo cutover](V7_OKX_DEMO_CUTOVER_RUNBOOK.md) | Separate, approval-gated Demo-account ownership transfer procedure |
 
-- [`research/subagent-ecosystem.md`](research/subagent-ecosystem.md) — Codex quantitative-research
-  specialist roster, authority boundaries, collaboration map, and standard workflows.
+## Current controls and comparison sources
 
-## Swing Allocator (the flagship)
+| Document | Role |
+|---|---|
+| [Root README](../README.md) | Current same-window strategy comparator and V7-first overview |
+| [Session state](../SESSION.md) | Frozen v6-2 control, inactive V7 candidate, and operational boundaries |
+| [Experiments](../EXPERIMENTS.md) | Consolidated accepted/rejected/parked research decisions |
+| [Strategy versions](../backtests/STRATEGY_VERSIONS.md) | Historical version chronology; do not treat as a matched comparator |
+| [Candidate paper workflow](forward-test/candidate-paper-workflow.md) | Reusable isolated-paper gate modeled on V7 |
+| [Forward-test contract](forward-test/contract.md) | Locked v6 control-forward-test rules |
 
-- [`swing/plan.md`](swing/plan.md) — design and go/no-go validation plan.
-- [`swing/v6-plan.md`](swing/v6-plan.md) — frozen v6 default (phase-router + funding overlay).
-- [`swing/audits.md`](swing/audits.md) — consolidated quantitative audit: v4 findings, the F1–F19
-  remediation plan, and the v5 post-implementation freeze review.
+## Historical and specialist references
 
-## Prop firm research
-
-- [`prop/hyrotrader-plan.md`](prop/hyrotrader-plan.md) — full HyroTrader / CFT / Bybit challenge
-  research: rule simulators, phase-router, verdicts.
-
-## Forward test
-
-- [`forward-test/contract.md`](forward-test/contract.md) — frozen rules of the paper forward test
-  (start 2026-07-04): strategy-failure vs infra-failure taxonomy.
-- [`forward-test/research-lab-plan.md`](forward-test/research-lab-plan.md) — observability + research
-  lab roadmap.
-
-## Operations
-
-- [`ops/deploy-paper.md`](ops/deploy-paper.md) — cloud paper-trading runbook (GCP VM, systemd,
-  Telegram, daily checks).
-
-## Archive
-
-- [`archive/session-archive.md`](archive/session-archive.md) — full historical session logs, backtest
-  tables, per-module reference (read on demand).
-- [`archive/refactor-backlog.md`](archive/refactor-backlog.md) — deferred code-cleanup backlog.
-
-## Handoff
-
-- [`handoff.md`](handoff.md) — full context to resume work from another machine.
+| Document | Role |
+|---|---|
+| [Swing v6 plan](swing/v6-plan.md) | Frozen default/rollback decision record |
+| [Swing audits](swing/audits.md) | Historical v4/v5 audit and remediation evidence |
+| [Swing design plan](swing/plan.md) | Original design/go-no-go history |
+| [Paper deployment](ops/deploy-paper.md) | Existing v6/demo control-fleet runbook; not a V7 activation guide |
+| [Prop research](prop/hyrotrader-plan.md) | Retired prop-firm research history |
+| [Archive](archive/session-archive.md) | Session history; immutable historical reference |
+| [Handoff](handoff.md) | Cross-machine context, superseded where it conflicts with `SESSION.md` |
