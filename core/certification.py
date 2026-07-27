@@ -116,6 +116,7 @@ class CertifiedEngine:
         self.fee_rate = fee_rate
         self.slippage_bps = slippage_bps
         self.orders: dict[str, CertifiedOrder] = {}
+        self.execution_ledger: list[dict[str, Decimal | datetime | str]] = []
         self._external = tuple(external_events)
 
     @staticmethod
@@ -161,6 +162,9 @@ class CertifiedEngine:
                 external=MappingProxyType(external),
                 cash=self.cash, base_qty=self.base_qty,
             )
+            schedule = getattr(strategy, "should_evaluate", None)
+            if schedule is not None and not bool(schedule(snapshot)):
+                continue
             intent = strategy.decide(snapshot)
             if intent is None:
                 continue
@@ -224,8 +228,17 @@ class CertifiedEngine:
             self.orders[intent.client_order_id] = CertifiedOrder(intent.client_order_id, OrderState.REJECTED, decision_at)
             return
         if delta > 0:
+            cash_before, base_before = self.cash, self.base_qty
             self.cash -= qty * price + fee
         else:
+            cash_before, base_before = self.cash, self.base_qty
             self.cash += qty * price - fee
         self.base_qty += delta
+        self.execution_ledger.append({
+            "client_order_id": intent.client_order_id, "side": "buy" if delta > 0 else "sell",
+            "submitted_at": decision_at, "fill_at": fill_at, "fill_price": price,
+            "quantity": qty, "fee": fee, "cash_before": cash_before,
+            "cash_after": self.cash, "base_before": base_before, "base_after": self.base_qty,
+            "equity_after": self.cash + self.base_qty * next_bar.close,
+        })
         self.orders[intent.client_order_id] = CertifiedOrder(intent.client_order_id, OrderState.RECONCILED, decision_at, fill_at, price, qty, fee)

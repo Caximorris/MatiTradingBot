@@ -22,7 +22,7 @@ class SwingCycleCoreCertifiedAdapter:
     _last_target: Decimal | None = None
     _sequence: int = 0
     history_limit = 1
-    decision_interval_bars = 4
+    decision_interval_bars = 1
 
     def __post_init__(self) -> None:
         self._clock = CyclePhaseClock(
@@ -31,6 +31,11 @@ class SwingCycleCoreCertifiedAdapter:
             bear_onset_start=self.config.phase_bear_start,
             accumulation_start=self.config.phase_accumulation_start,
         )
+
+    def should_evaluate(self, snapshot: StrategySnapshot) -> bool:
+        """Use UTC decision windows, never row count, for V7's 4H cadence."""
+        at = snapshot.decision_at
+        return at.minute == 0 and at.second == 0 and at.microsecond == 0 and at.hour % 4 == 0
 
     def decide(self, snapshot: StrategySnapshot) -> TargetIntent | None:
         block = self._clock.evaluation_block(snapshot.decision_at)

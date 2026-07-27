@@ -42,6 +42,21 @@ def test_conflicting_or_non_monotonic_candles_fail_closed():
         CertifiedEngine([bars[1], bars[0]], initial_cash=Decimal("1"), fee_rate=Decimal("0"), slippage_bps=Decimal("0"))
 
 
+def test_timestamp_schedule_is_unchanged_by_duplicate_or_missing_rows():
+    class FourHour:
+        decision_interval_bars = 1
+        def should_evaluate(self, snapshot):
+            return snapshot.decision_at.hour % 4 == 0
+        def decide(self, snapshot):
+            return TargetIntent(snapshot.decision_at.isoformat(), Decimal("0"))
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    bars = [OHLCVBar(int((start + timedelta(hours=i)).timestamp() * 1000), Decimal("100"), Decimal("100"), Decimal("100"), Decimal("100"), Decimal("1")) for i in range(13)]
+    def decisions(rows):
+        return [order.client_order_id for order in CertifiedEngine(rows, initial_cash=Decimal("1"), fee_rate=Decimal("0"), slippage_bps=Decimal("0")).run(FourHour())]
+    assert decisions(bars) == decisions([bars[0], bars[1], bars[1], *bars[2:]])
+    assert decisions(bars) == decisions([bar for bar in bars if bar.timestamp != bars[5].timestamp])
+
+
 @pytest.mark.parametrize("attack", ["next", "current", "external", "duplicate", "mutate", "bypass"])
 def test_adversarial_strategies_are_rejected(attack):
     class Attack:

@@ -90,7 +90,8 @@ def run(bars: list[Bar], spec: Spec = Spec()) -> tuple[list[dict[str, str]], lis
     equity: list[dict[str, str]] = []
     for index, bar in enumerate(bars[:-1]):
         at = datetime.fromtimestamp(bar.timestamp / 1000, UTC)
-        if index >= spec.warmup_bars and (index - spec.warmup_bars) % spec.decision_interval_hours == 0:
+        if (index >= spec.warmup_bars and at.minute == 0 and at.second == 0
+                and at.microsecond == 0 and at.hour % spec.decision_interval_hours == 0):
             days, phase = _phase(at, spec)
             target = Decimal("0") if phase == "bear_onset" else Decimal("1")
             if last_target is None:
