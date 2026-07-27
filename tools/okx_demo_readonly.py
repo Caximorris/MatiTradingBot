@@ -99,3 +99,15 @@ class OKXDemoReadOnlyClient:
         return self._get(
             f"/api/v5/trade/orders-history?instId={symbol}&limit={min(limit, 100)}"
         )
+
+    def get_fills(self, symbol, limit=20):
+        return self._get(f"/api/v5/trade/fills?instId={symbol}&limit={min(limit, 100)}")
+
+    def get_instrument(self, symbol):
+        rows = self._get(f"/api/v5/public/instruments?instType=SPOT&instId={symbol}")
+        if len(rows) != 1:
+            raise PaperSafetyError("instrument metadata is unavailable or ambiguous")
+        row = rows[0]
+        self.precision = {"tick_size": row.get("tickSz"), "lot_size": row.get("lotSz")}
+        self.minimum_size = {"minimum_size": row.get("minSz")}
+        return row

@@ -258,6 +258,10 @@ def observe_okx_demo_account(
         "open_orders": client.get_open_orders(symbol),
         "positions": client.get_positions(),
         "recent_orders": client.get_order_history(symbol, limit=20),
+        "recent_fills": getattr(client, "get_fills", lambda *_a, **_k: [])(
+            symbol, limit=20
+        ),
+        "fee_metadata": getattr(client, "fee_metadata", {}),
         "unsupported_assets": unsupported,
         "available_balance": str(cash),
         "precision": getattr(client, "precision", {}),
