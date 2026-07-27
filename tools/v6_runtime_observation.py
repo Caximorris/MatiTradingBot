@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import argparse
+import os
 import subprocess
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -400,6 +401,16 @@ def run(
                         "OKX Demo runtime requires runtime configuration"
                     )
                 validate_demo_runtime_config(_json(_path(args.runtime_config)))
+                if client is None:
+                    from tools.okx_demo_readonly import OKXDemoReadOnlyClient
+
+                    runtime = _json(_path(args.runtime_config))
+                    runtime |= {
+                        "demo_api_key": os.getenv("OKX_DEMO_API_KEY"),
+                        "demo_secret": os.getenv("OKX_DEMO_SECRET_KEY"),
+                        "demo_passphrase": os.getenv("OKX_DEMO_PASSPHRASE"),
+                    }
+                    client = OKXDemoReadOnlyClient(runtime)
             if client is None:
                 if not args.mock_input:
                     raise PaperSafetyError(
