@@ -247,6 +247,9 @@ def observe_okx_demo_account(
     account = {
         "schema": "okx-demo-account-observation/v1",
         "observed_at": (now or datetime.now(timezone.utc)).isoformat(),
+        "exchange": "OKX",
+        "environment": "demo",
+        "simulated_trading": True,
         "endpoint": "okx_demo",
         "demo_confirmed": True,
         "fingerprint": hashlib.sha256(

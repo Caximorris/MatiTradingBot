@@ -87,6 +87,8 @@ def test_collect_observe_and_bundle_are_deterministic_and_audit_ready(tmp_path: 
     )
     account = observe_okx_demo_account(Client(), symbol="BTC-USDT", now=NOW)
     manifest = build_v6_audit_inputs(runtime, account, tmp_path / "bundle")
+    assert account["exchange"] == "OKX" and account["environment"] == "demo"
+    assert account["simulated_trading"] is True and account["observation_hash"]
     assert manifest["verdict"] == "PASS" and account["unsupported_assets"] == {
         "ETH": "1"
     }
