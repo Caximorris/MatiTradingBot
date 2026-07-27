@@ -19,7 +19,7 @@ from core.v7_operations import (
     v7_evidence_source_hashes,
 )
 from strategies.swing_cycle_core import SwingCycleCoreBot, SwingCycleCoreConfig
-from tools.v7_paper_setup import PAPER_NAME, SHADOW_NAME, config_for
+from tools.v7_paper_setup import CERTIFIED_NAME, config_for
 from tools.v7_promotion_controller import _shadow_journal_identity, update
 
 
@@ -43,18 +43,15 @@ def _event(*, transition_id: str = "2026-07-22T00:00:00+00:00:decision") -> dict
 
 
 def test_v7_configs_are_separate_and_paper_only():
-    shadow, paper = config_for("shadow"), config_for("paper")
-    assert SHADOW_NAME != PAPER_NAME
-    assert shadow["paper_portfolio_id"] != paper["paper_portfolio_id"]
-    assert shadow["transition_journal_path"] != paper["transition_journal_path"]
-    assert shadow["service_managed"] is paper["service_managed"] is True
-    assert {shadow["execution"], paper["execution"]} == {"v7_shadow", "v7_local_paper"}
-    assert_paper_only(_Settings(True), shadow)
+    paper = config_for()
+    assert CERTIFIED_NAME != "swing_cycle_core_v7_btc_usdt_shadow"
+    assert paper["mode"] == "paper"
+    assert paper["service_managed"] is True and paper["allow_shorts"] is False
     with pytest.raises(RuntimeError, match="paper"):
         assert_paper_only(_Settings(False), paper)
 
 
-def test_v7_setup_registers_both_instances_inactive_by_default(monkeypatch):
+def test_v7_setup_registers_certified_instance_inactive_by_default(monkeypatch):
     from core import database
     from tools.v7_paper_setup import register
 
@@ -73,11 +70,16 @@ def test_v7_setup_registers_both_instances_inactive_by_default(monkeypatch):
         return states[name]
 
     monkeypatch.setattr(database, "get_or_create_bot_state", get_or_create)
-    result = register(object())
+    class Query:
+        def filter_by(self, **_kwargs): return self
+        def first(self): return None
+    class Session:
+        def query(self, _model): return Query()
+    result = register(Session())
 
-    assert set(result) == {SHADOW_NAME, PAPER_NAME}
+    assert set(result) == {CERTIFIED_NAME}
     assert all(state.is_active is False for state in states.values())
-    assert states[SHADOW_NAME].config["paper_portfolio_id"] != states[PAPER_NAME].config["paper_portfolio_id"]
+    assert states[CERTIFIED_NAME].config["mode"] == "paper"
 
 
 def test_controller_accepts_identity_from_real_shadow_bot(tmp_path: Path):

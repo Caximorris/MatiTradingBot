@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # ruff: noqa: E402
-"""Persistent, fail-closed v7 shadow soak and promotion gate evaluator."""
+"""Legacy V7 evidence evaluator; certified paper activation is intentionally absent."""
 from __future__ import annotations
 
 import argparse
@@ -24,20 +24,26 @@ from core.v7_operations import (
     v7_configuration_evidence_hash,
 )
 from strategies.swing_cycle_core import SwingCycleCoreBot, SwingCycleCoreConfig
-from tools.v7_paper_setup import PAPER_NAME, SHADOW_NAME, config_for
+from tools.v7_paper_setup import config_for
 
 STATE_PATH = RUNTIME / "promotion_state.json"
 REPORT_PATH = RUNTIME / "promotion_report.json"
+SHADOW_NAME = "swing_cycle_core_v7_btc_usdt_shadow"
+
+
+def _legacy_shadow_config() -> dict:
+    """Historical evidence identity only; not a setup or activation route."""
+    return config_for("shadow")
 
 
 def _shadow_journal_identity() -> tuple[str, str]:
     """Derive the journal identity from the real shadow bot contract."""
-    config = SwingCycleCoreConfig.from_dict(config_for("shadow"))
+    config = SwingCycleCoreConfig.from_dict(_legacy_shadow_config())
     return SwingCycleCoreBot(None, config).name, config.instance_id
 
 
 def _shadow_configuration_evidence_hash() -> str:
-    return v7_configuration_evidence_hash(config_for("shadow"), root=ROOT)
+    return v7_configuration_evidence_hash(_legacy_shadow_config(), root=ROOT)
 
 
 def _shadow_state() -> dict | None:
@@ -123,28 +129,8 @@ def update(state: PromotionState, *, now: datetime | None = None,
 
 
 def promote_if_eligible(state: PromotionState) -> tuple[bool, list[str]]:
-    state = update(state)
-    allowed, missing = state.eligible()
-    if not allowed:
-        return False, missing
-    from config.settings import load_settings
-    from core.database import get_or_create_bot_state, get_session, init_db
-    from core.v7_operations import assert_paper_only
-    settings = load_settings()
-    config = config_for("paper")
-    assert_paper_only(settings, config)
-    init_db()
-    with get_session() as session:
-        shadow = get_or_create_bot_state(session, SHADOW_NAME, "BTC-USDT")
-        paper = get_or_create_bot_state(session, PAPER_NAME, "BTC-USDT", config=config)
-        if shadow.get_config().get("paper_portfolio_id") == config["paper_portfolio_id"]:
-            raise RuntimeError("v7 shadow and paper wallets are not isolated")
-        paper.set_config(config)
-        paper.is_active = True
-    state.paper_promoted_at = datetime.now(timezone.utc).isoformat()
-    state.soak_completed_at = state.paper_promoted_at
-    state.v7_paper_prerequisite = "PASSED"
-    return True, []
+    del state
+    return False, ["certified_paper_has_no_automatic_promotion_route"]
 
 
 def evaluate(*, promote: bool = False) -> dict:
