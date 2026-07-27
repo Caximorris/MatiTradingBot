@@ -164,6 +164,8 @@ def audit_v6(
         reasons.append("V6 source/configuration identity is not recorded")
     if account.get("open_orders"):
         reasons.append("pending OKX Demo orders exist")
+    if account.get("unsupported_assets"):
+        reasons.append("unsupported assets exist in the OKX Demo account")
     if local_state.get("locked") or local_state.get("state") == "ERROR_LOCKED":
         reasons.append("V6 has an active corruption/circuit-breaker lock")
     if local_state.get("cash") != account.get("cash") or local_state.get(
@@ -313,6 +315,7 @@ def create_v7_inactive(
         audit.get("verdict") != "PASS"
         or evidence.get("audit_hash") != audit.get("audit_hash")
         or stop_record.get("audit_hash") != audit.get("audit_hash")
+        or stop_record.get("evidence_hash") != evidence.get("evidence_hash")
     ):
         raise PaperSafetyError(
             "matching V6 audit, evidence, and guarded stop are required"
@@ -415,6 +418,7 @@ def activate_v7(
         audit.get("verdict") != "PASS"
         or evidence.get("audit_hash") != audit.get("audit_hash")
         or stop_record.get("audit_hash") != audit.get("audit_hash")
+        or stop_record.get("evidence_hash") != evidence.get("evidence_hash")
     ):
         raise PaperSafetyError(
             "matching V6 PASS audit, evidence, and stop proof are required"
