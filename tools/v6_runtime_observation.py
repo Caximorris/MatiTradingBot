@@ -23,6 +23,64 @@ class ReadOnlyService(Protocol):
     def process_identities(self, name: str) -> list[dict[str, Any]]: ...
 
 
+class OKXDemoReadOnlyFacade:
+    """Capability-minimal wrapper; intentionally contains no trading operations."""
+
+    def __init__(
+        self,
+        *,
+        balance,
+        positions,
+        open_orders,
+        order_history,
+        account_id: str = "demo",
+        precision: dict | None = None,
+        minimum_size: dict | None = None,
+    ) -> None:
+        self._balance, self._positions = balance, positions
+        self._open_orders, self._order_history = open_orders, order_history
+        self.account_id, self.precision, self.minimum_size = (
+            account_id,
+            precision or {},
+            minimum_size or {},
+        )
+        self.is_paper, self.endpoint = True, "okx_demo"
+
+    def get_balance(self):
+        return self._balance()
+
+    def get_positions(self):
+        return self._positions()
+
+    def get_open_orders(self, symbol):
+        return self._open_orders(symbol)
+
+    def get_order_history(self, symbol, limit=20):
+        return self._order_history(symbol, limit=limit)
+
+
+def validate_demo_runtime_config(value: dict[str, Any]) -> None:
+    _safe(value)
+    endpoint = str(value.get("okx_demo_domain", ""))
+    if (
+        value.get("trading_mode") != "paper"
+        or value.get("simulated_trading") is not True
+        or value.get("demo_confirmed") is not True
+    ):
+        raise PaperSafetyError("runtime is not explicitly confirmed as OKX Demo")
+    if endpoint not in {"https://www.okx.com", "https://my.okx.com"}:
+        raise PaperSafetyError("unapproved or production OKX endpoint")
+    if not all(
+        value.get(key)
+        for key in (
+            "demo_api_key_present",
+            "demo_secret_present",
+            "demo_passphrase_present",
+        )
+    ):
+        raise PaperSafetyError("required demo credentials are unavailable")
+
+
 class LinuxV6ReadOnlyGateway:
     """Explicit Linux-only, inspection-only systemd adapter for the V6 unit."""
 
@@ -169,10 +227,7 @@ def observe_okx_demo_account(
 ) -> dict[str, Any]:
     """Use only observation methods from the existing OKXDemoClient contract."""
     required = ("get_balance", "get_positions", "get_open_orders", "get_order_history")
-    if (
-        any(not callable(getattr(client, method, None)) for method in required)
-        or callable(getattr(client, "place_order", None)) is False
-    ):
+    if any(not callable(getattr(client, method, None)) for method in required):
         raise PaperSafetyError("incomplete OKX Demo client contract")
     if getattr(client, "is_paper", True) is not True or getattr(
         client, "endpoint", "okx_demo"
@@ -291,6 +346,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-commit")
     parser.add_argument("--mock-input")
     parser.add_argument("--test-mode", action="store_true")
+    parser.add_argument("--okx-demo-runtime", action="store_true")
+    parser.add_argument("--runtime-config")
     return parser
 
 
@@ -331,12 +388,22 @@ def run(
                     json.dumps(result, sort_keys=True, indent=2), encoding="utf-8"
                 )
         elif args.command == "observe-okx-demo-account":
+            if args.test_mode and args.okx_demo_runtime:
+                raise PaperSafetyError(
+                    "test mode and OKX Demo runtime are mutually exclusive"
+                )
             if args.mock_input and not args.test_mode:
                 raise PaperSafetyError("mock input requires explicit test mode")
+            if args.okx_demo_runtime:
+                if not args.runtime_config:
+                    raise PaperSafetyError(
+                        "OKX Demo runtime requires runtime configuration"
+                    )
+                validate_demo_runtime_config(_json(_path(args.runtime_config)))
             if client is None:
                 if not args.mock_input:
                     raise PaperSafetyError(
-                        "authenticated observation requires an injected demo client"
+                        "authenticated observation requires an injected read-only demo facade"
                     )
 
                 class MockClient:
