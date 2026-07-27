@@ -11,8 +11,11 @@ strategy-specific plans.
 - **Pro Trend:** frozen/paused; do not tune its parameters.
 - **Paper fleet:** v6 simulated + v6 OKX Demo only. Prop is retired. `tools/paper_fleet_setup.py`
   reconciles this control fleet and must never register a research candidate.
-- **Candidate V7:** source preserved on branch `codex/v7-paper-operations` in commit `739b202`.
-  Its paper path is isolated and remains inactive until an explicitly approved setup/activation.
+- **Candidate V7:** `CERTIFIED_CAUSAL_CANDIDATE`, isolated and inactive. Its authoritative
+  `$52,236,346.57893721564825` result has a `VALID` manifest on
+  `codex/universal-certification-gate` commit `5452f76`. The prior $10–14M endpoints are
+  incomplete and the first ~$40M client-runner result is non-causal; neither is usable.
+  Setup/activation still require explicit approval. This is not a default, Demo, or live promotion.
 - **Live:** not authorized. Any VM, bot start/stop, demo/live order, Telegram mutation, or deployment
   requires explicit current-task approval.
 
@@ -34,6 +37,8 @@ paper activation require user approval; default/live promotion is a later indepe
 
 - General architecture/commands: `AGENTS.md`.
 - Existing experiment and version records: `EXPERIMENTS.md`, `backtests/STRATEGY_VERSIONS.md`.
-- V7 details: `docs/SWING_V7_CYCLE_CORE_PLAN.md`, `tools/v7_paper_setup.py`,
-  `tools/v7_promotion_controller.py`.
+- V7 details/results: `docs/SWING_V7_CYCLE_CORE_RESULTS.md`,
+  `docs/forward-test/v7-cycle-core-paper-readiness.md` (invalid incomplete archival package),
+  `docs/SWING_V7_CYCLE_CORE_PLAN.md`,
+  `tools/v7_paper_setup.py`, `tools/v7_promotion_controller.py`.
 - Deployment controls: `docs/ops/deploy-paper.md`.

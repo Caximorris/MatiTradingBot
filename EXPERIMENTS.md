@@ -115,6 +115,22 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 
 ## Parqueado — needs more validation / bloqueado en prerequisito
 
+### EXP-018 — Swing v7 Cycle Core: confirmed-halving 100/100/0/100 allocator
+- Fecha: 2026-07-23
+- Estrategia: `swing_cycle_core` (V7 aislada; no modifica Swing v6-2)
+- Hipotesis: mantener 100% BTC en `post_halving`, `bull_peak` y `accumulation`, y 0% en
+  `bear_onset`, con un reloj de halving confirmado y sin señales técnicas, reduce el daño de bear.
+- Ventana de datos: BTC-USDT 1H, UTC 2015-01-01 a 2026-01-01 inclusivo; warmup 250d.
+- Metricas: resultado certificado causal $52,236,346.57893721564825 desde $10,000, 6 intents
+  next-open con reserva de fee/slippage y manifest `VALID` (commit `5452f76`). `$47.863M` es
+  `INVALID_NON_CAUSAL`; $10–14M, incluido $13.723M, es `INVALID_INCOMPLETE_EXECUTION_PATH`.
+- Decision: `CERTIFIED_CAUSAL_CANDIDATE`, no adoptado; inactivo y pendiente de observación forward aislada.
+- Razon: el adaptador causal y la conciliación reserve-safe están certificados; la evidencia histórica
+  no sustituye la necesidad de forward y no permite usar los endpoints invalidados.
+- Permitido en forward-test?: sí, solo tras aprobación explícita de setup/activación de shadow/paper.
+- Referencias: `docs/forward-test/v7-cycle-core-paper-readiness.md`,
+  `docs/SWING_V7_CYCLE_CORE_RESULTS.md`, `docs/SWING_V7_CYCLE_CORE_PLAN.md`.
+
 ### EXP-007 — Swing v6-4/5/6: variantes bear accumulation, bull peak neutral, chop guard
 - Fecha: pendiente
 - Estrategia: swing (v6)
