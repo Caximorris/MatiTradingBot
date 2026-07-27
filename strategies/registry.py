@@ -29,6 +29,9 @@ class StrategyMeta:
     output:            str                # "trade" | "allocator"
     aliases:           tuple[str, ...] = field(default_factory=tuple)
     pi_cycle_btc_only: bool            = False  # deshabilitar pi_cycle en activos no-BTC
+    # New candidates must provide a separate snapshot/intents adapter. Historical
+    # client-driven bots intentionally have no value here and cannot certify.
+    certified_factory: Any | None       = None
 
     # ------------------------------------------------------------------
     # Helpers de instanciación (importación diferida — no carga módulos al arrancar)
@@ -68,6 +71,7 @@ _REGISTRY: list[StrategyMeta] = [
         bot_cls="AdaptiveTrendBot", config_cls="AdaptiveTrendConfig",
         warmup_days=240, output="trade",
         aliases=("adaptive", "trend"),
+        certified_factory="strategies.certified_adapters:adaptive_trend_factory",
     ),
     StrategyMeta(
         name="pro_trend",        display_name="Pro Trend",
@@ -135,6 +139,7 @@ _REGISTRY: list[StrategyMeta] = [
         # Keep every CLI/report path on that same evidence contract.
         warmup_days=250, output="allocator",
         aliases=("cycle_core",),
+        certified_factory="strategies.certified_adapters:swing_cycle_core_factory",
     ),
 ]
 

@@ -148,7 +148,15 @@ def main() -> int:
     ap.add_argument("--fill-next-open", action="store_true",
                     help="Usa fills en la apertura de la vela siguiente (contrato causal v7).")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--certification-manifest", type=Path)
+    ap.add_argument("--certified-headline", action="store_true",
+                    help="Refuse output unless a complete VALID certification manifest is supplied.")
     args = ap.parse_args()
+    if args.certified_headline:
+        if args.certification_manifest is None:
+            raise SystemExit("certified headline requires --certification-manifest")
+        from core.certification_gate import require_certified_candidate
+        require_certified_candidate(args.certification_manifest)
 
     strategy, config = resolve_config(args.config, args.strategy)
     if args.strategy and not (args.config or "").startswith("@"):

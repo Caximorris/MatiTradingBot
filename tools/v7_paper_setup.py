@@ -35,7 +35,13 @@ def config_for(mode: str) -> dict:
     }
 
 
-def register(session, *, activate_shadow: bool = False, activate_paper: bool = False) -> dict:
+def register(session, *, activate_shadow: bool = False, activate_paper: bool = False,
+             certification_manifest: Path | None = None) -> dict:
+    if activate_shadow or activate_paper:
+        if certification_manifest is None:
+            raise RuntimeError("shadow/paper registration requires a VALID certification manifest")
+        from core.certification_gate import require_certified_candidate
+        require_certified_candidate(certification_manifest)
     from core.database import get_or_create_bot_state
     result = {}
     for name, mode, active in ((SHADOW_NAME, "shadow", activate_shadow),
@@ -52,11 +58,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--activate-shadow", action="store_true")
     parser.add_argument("--activate-paper", action="store_true")
+    parser.add_argument("--certification-manifest", type=Path)
     args = parser.parse_args()
     from core.database import get_session, init_db
     init_db()
     with get_session() as session:
-        result = register(session, activate_shadow=args.activate_shadow, activate_paper=args.activate_paper)
+        result = register(session, activate_shadow=args.activate_shadow, activate_paper=args.activate_paper,
+                          certification_manifest=args.certification_manifest)
     print(json.dumps(result, sort_keys=True))
     return 0
 
