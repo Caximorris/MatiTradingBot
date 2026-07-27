@@ -7,6 +7,9 @@
 *.py text
 *.md text
 *.json text
+# Generated visual/report artifacts: retain in Git, exclude from GitHub language statistics.
+graphify-out/** linguist-generated=true
+reporting/btc_cycle_phase_audit.html linguist-generated=true
 # Binarios
 *.xlsx binary
 *.db binary
