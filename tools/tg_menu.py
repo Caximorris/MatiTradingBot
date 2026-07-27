@@ -5,17 +5,15 @@ import json
 
 
 MENU_ACTIONS = {
+    "🧪 V7 certificado": "/v7_status",
+    "📜 Logs V7": "/v7_logs",
     "📊 Resumen": "/status",
-    "🟢 V6 sim": "/status_v6",
-    "🟠 OKX demo": "/status_demo",
-    "🏁 Prop firm": "/prop",
     "🚨 Auditoría": "/audit",
     "🩺 Salud VM": "/health",
-    "📋 Report v6": "/report_v6",
-    "📋 Report demo": "/report_demo",
-    "📋 Report prop": "/prop_report",
-    "📈 Equity v6": "/equity_v6",
-    "📈 Equity demo": "/equity_demo",
+    "📋 Report v6": "/report v6",
+    "📋 Report demo": "/report demo",
+    "📈 Equity v6": "/equity v6 30",
+    "📈 Equity demo": "/equity demo 30",
     "🕯 BTC 30d": "/chart 30",
     "🧭 Señales": "/signals",
     "⚖️ Paridad": "/parity",
@@ -23,11 +21,11 @@ MENU_ACTIONS = {
 }
 
 _KEYBOARD = [
-    ["📊 Resumen", "🟢 V6 sim", "🟠 OKX demo"],
-    ["🏁 Prop firm", "🚨 Auditoría", "🩺 Salud VM"],
-    ["📋 Report v6", "📋 Report demo", "📋 Report prop"],
-    ["📈 Equity v6", "📈 Equity demo", "🕯 BTC 30d"],
-    ["🧭 Señales", "⚖️ Paridad", "❓ Ayuda"],
+    ["🧪 V7 certificado", "📜 Logs V7", "📊 Resumen"],
+    ["🚨 Auditoría", "🩺 Salud VM", "📋 Report v6"],
+    ["📋 Report demo", "📈 Equity v6", "📈 Equity demo"],
+    ["🕯 BTC 30d", "🧭 Señales", "⚖️ Paridad"],
+    ["❓ Ayuda"],
 ]
 
 
