@@ -156,13 +156,25 @@ python tools/v6_v7_demo_cutover.py activate-v7 \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --audit v6-audit.json --evidence v6-evidence/v6_demo_evidence.json \
   --stop-record v6-stop.json --inactive v7-inactive.json --preflight v7-preflight.json \
-  --ack-fragile --ack-not-live-ready --ack-sole-owner --output v7-activation.json
+  --ack-fragile --ack-not-live-ready --ack-sole-owner \
+  --output data/runtime/v7_certified/control/activation.json
 ```
 
 Activation requires the reviewed audit/export/stop/lease/preflight hash chain.
 V7 performance begins from `activation_baseline`; prior account performance belongs
 to V6. Activation may produce no immediate order when inherited exposure already
 matches the V7 target.
+
+### Telegram operations after activation
+
+The existing Telegram remote service exposes the isolated candidate without adding an
+activation path: `/v7_status`, `/v7_logs [n]`, `/v7_pause <hash12> CONFIRM`,
+`/v7_resume <hash12> CONFIRM`, and `/v7_deactivate <hash12> CONFIRM`. Before using
+a lifecycle command, store the reviewed lifecycle records under
+`data/runtime/v7_certified/control/` as `activation.json`, then `pause.json`,
+`resume.json`, and `deactivate.json`. `/v7_status` displays the required 12-character
+activation-hash prefix. Telegram applies the same hash-chain checks as this runbook;
+it cannot activate V7 or liquidate the account.
 
 ## 8. Verify activation and the 30-day run (read-only)
 
@@ -186,7 +198,8 @@ Pause is STATE-CHANGING and prevents new V7 intents:
 ```bash
 python tools/v6_v7_demo_cutover.py pause-v7 \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
-  --activation v7-activation.json --activation-hash <ACTIVATION_HASH> --output v7-pause.json
+  --activation data/runtime/v7_certified/control/activation.json --activation-hash <ACTIVATION_HASH> \
+  --output data/runtime/v7_certified/control/pause.json
 ```
 
 Resume only after reviewed health evidence (STATE-CHANGING):
@@ -194,8 +207,9 @@ Resume only after reviewed health evidence (STATE-CHANGING):
 ```bash
 python tools/v6_v7_demo_cutover.py resume-v7 \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
-  --activation v7-activation.json --activation-hash <ACTIVATION_HASH> \
-  --transition v7-pause.json --transition-hash <PAUSE_TRANSITION_HASH> --output v7-resume.json
+  --activation data/runtime/v7_certified/control/activation.json --activation-hash <ACTIVATION_HASH> \
+  --transition data/runtime/v7_certified/control/pause.json --transition-hash <PAUSE_TRANSITION_HASH> \
+  --output data/runtime/v7_certified/control/resume.json
 ```
 
 Deactivation is STATE-CHANGING, releases only the V7 lease, preserves balances and
@@ -204,8 +218,9 @@ evidence, and never liquidates automatically:
 ```bash
 python tools/v6_v7_demo_cutover.py deactivate-v7 \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
-  --activation v7-activation.json --activation-hash <ACTIVATION_HASH> \
-  --transition v7-resume.json --transition-hash <RESUME_TRANSITION_HASH> --output v7-deactivate.json
+  --activation data/runtime/v7_certified/control/activation.json --activation-hash <ACTIVATION_HASH> \
+  --transition data/runtime/v7_certified/control/resume.json --transition-hash <RESUME_TRANSITION_HASH> \
+  --output data/runtime/v7_certified/control/deactivate.json
 ```
 
 ## 10. Final evidence export (STATE-CHANGING: copies candidate-owned evidence only)

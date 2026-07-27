@@ -10,8 +10,6 @@ from tools.telegram_remote import (
     format_report,
     format_status,
     handle_command,
-    prop_bot_rows,
-    set_prop_active,
     set_swing_active,
     swing_bot_rows,
 )
@@ -67,22 +65,6 @@ def test_pause_and_resume_commands_flip_is_active(db_session):
     assert swing_bot_rows(db_session)[0].is_active is True
 
 
-def test_prop_pause_and_resume_only_touch_prop(db_session):
-    _add_bot(db_session, "prop_swing_btc_usdt", active=True)
-    _add_bot(db_session, "prop_swing", active=False)
-    _add_bot(db_session, "swing_allocator_btc_usdt", active=True)
-
-    @contextmanager
-    def get_session():
-        yield db_session
-
-    assert set_prop_active(db_session, False) == ["prop_swing_btc_usdt"]
-    assert prop_bot_rows(db_session)[0].is_active is False
-    assert swing_bot_rows(db_session)[0].is_active is True
-    assert "PROP REANUDADO" in handle_command("/prop_resume", get_session)
-    assert prop_bot_rows(db_session)[0].is_active is True
-
-
 def test_unknown_command_returns_help(db_session):
     @contextmanager
     def get_session():
@@ -91,7 +73,28 @@ def test_unknown_command_returns_help(db_session):
     assert "/status" in handle_command("/loquesea", get_session)
 
 
-def test_menu_labels_and_shortcuts_expand_without_manual_arguments(monkeypatch, db_session):
+def test_v7_commands_are_isolated_and_require_explicit_confirmation(monkeypatch, db_session):
+    import tools.telegram_remote as tr
+
+    @contextmanager
+    def get_session():
+        yield db_session
+
+    monkeypatch.setattr(tr, "v7_status", lambda: {"candidate": "v7"})
+    monkeypatch.setattr(tr, "format_v7_status", lambda value: f"V7 {value['candidate']}")
+    monkeypatch.setattr(tr, "v7_logs", lambda n: f"V7 logs {n}")
+    called = []
+    monkeypatch.setattr(tr, "v7_transition", lambda action, prefix: called.append((action, prefix)) or {"transition_hash": "a" * 64})
+
+    assert tr.handle_command("/v7_status", get_session) == "V7 v7"
+    assert tr.handle_command("/v7_logs 50", get_session) == "V7 logs 50"
+    assert "Primero usa /v7_status" in tr.handle_command("/v7_pause", get_session)
+    assert "registrado" in tr.handle_command("/v7_pause abcdef123456 CONFIRM", get_session)
+    assert called == [("pause", "abcdef123456")]
+    assert "/prop_pause" not in tr.handle_command("/help", get_session)
+
+
+def test_menu_labels_use_canonical_commands(monkeypatch, db_session):
     from decimal import Decimal
     import tools.telegram_remote as tr
     snaps = [_snap_full("v6"), _snap_full("demo")]
@@ -102,8 +105,8 @@ def test_menu_labels_and_shortcuts_expand_without_manual_arguments(monkeypatch, 
     def get_session():
         yield db_session
 
-    assert "SWING v6" in tr.handle_command("🟢 V6 sim", get_session)
-    assert "SWING demo" in tr.handle_command("/status_demo", get_session)
+    assert "SWING v6" in tr.handle_command("/status v6", get_session)
+    assert "SWING demo" in tr.handle_command("/status demo", get_session)
     assert "REPORT [v6]" in tr.handle_command("📋 Report v6", get_session)
     assert "Panel listo" in tr.handle_command("/menu", get_session)
 
@@ -115,7 +118,8 @@ def test_main_menu_markup_is_persistent_and_read_only():
     menu = json.loads(main_menu_markup())
     labels = {label for row in menu["keyboard"] for label in row}
     assert menu["is_persistent"] is True
-    assert {"📊 Resumen", "🟢 V6 sim", "🟠 OKX demo", "🏁 Prop firm"} <= labels
+    assert {"📊 Resumen", "🧪 V7 certificado", "📜 Logs V7"} <= labels
+    assert not any("Prop" in label for label in labels)
     assert not any("Pausar" in label or "Reiniciar" in label for label in labels)
 
 
@@ -274,7 +278,8 @@ def test_reconcile_is_reported_as_audit_not_strategy_rebalance():
 
 
 def test_parse_daily_checks_and_streak():
-    from tools.telegram_remote import format_parity, parse_daily_checks, parity_streak
+    from tools.telegram_remote import format_parity, parse_daily_checks
+    from tools.tg_views import parity_streak
     log = (
         "===== daily_checks 2026-07-05T12:10:00Z =====\n"
         "timestamp,2026-07-05T12:00:00+00:00\n"
@@ -333,7 +338,6 @@ def test_format_anomalies_empty_and_populated():
 def test_build_equity_series_reconstructs_holdings():
     from tools.tg_charts import build_equity_series, equity_summary
     h = 3_600_000
-    t0 = 1_751_600_000_000
     rebalances = [
         {"timestamp": "2026-07-04T08:00:00+00:00", "direction": "INIT",
          "btc_pct_after": 0.6, "price": 100.0, "portfolio_usdt": 1000.0},

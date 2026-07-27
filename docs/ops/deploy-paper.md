@@ -131,10 +131,6 @@ evitar pulsaciones accidentales y siguen disponibles en el menu de comandos de T
 | Actualizar codigo sin SSH | Telegram `/update` (git pull --ff-only + restart) |
 | Pausar a distancia | Telegram `/pause` (proceso sigue; no decide) |
 | Reanudar | Telegram `/resume` |
-| Estado Prop/CFT | Telegram `/prop` |
-| Eventos PropSwing | Telegram `/prop_report` o `/prop_report 50` |
-| Pausar PropSwing | Telegram `/prop_pause` |
-| Reanudar PropSwing | Telegram `/prop_resume` |
 | Aviso de cada rebalanceo | Automatico (alerta Telegram) |
 | Caida del proceso (sin tick >10 min) | Automatico (watchdog Telegram, alerta y recuperacion) |
 | "Sigue vivo?" sin preguntar | Automatico (heartbeat diario 08:00 UTC) |

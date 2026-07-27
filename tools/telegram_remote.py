@@ -19,6 +19,7 @@ Sin red o con la API caida, reintenta indefinidamente — apto para systemd.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import shutil
@@ -42,7 +43,6 @@ from tools.tg_menu import main_menu_markup, resolve_menu_text
 from tools.tg_send import tg_api, tg_credentials, tg_send, tg_send_document, tg_send_photo
 from tools.tg_views import (
     LIVENESS_MAX_AGE_MIN,
-    PARITY_TARGET_DAYS,
     _bot_row,
     _esc,
     format_anomalies,
@@ -53,7 +53,13 @@ from tools.tg_views import (
     format_status,
     format_status_summary,
     parse_daily_checks,
-    parity_streak,
+)
+from tools.v7_telegram import (  # noqa: E402
+    PaperSafetyError as V7TelegramSafetyError,
+    format_status as format_v7_status,
+    logs as v7_logs,
+    status as v7_status,
+    transition as v7_transition,
 )
 
 RUNTIME = ROOT / "data" / "runtime"
@@ -82,26 +88,8 @@ def swing_bot_rows(session) -> list:
     ]
 
 
-def prop_bot_rows(session) -> list:
-    from core.database import BotState
-    from tools.paper_bots import is_operable_bot_name
-    return [
-        r for r in session.query(BotState)
-        .filter(BotState.strategy_name.like("prop_swing%")).all()
-        if is_operable_bot_name(r.strategy_name, r.symbol)
-    ]
-
-
 def set_swing_active(session, active: bool) -> list[str]:
     rows = swing_bot_rows(session)
-    for r in rows:
-        r.is_active = active
-    session.flush()
-    return [r.strategy_name for r in rows]
-
-
-def set_prop_active(session, active: bool) -> list[str]:
-    rows = prop_bot_rows(session)
     for r in rows:
         r.is_active = active
     session.flush()
@@ -406,11 +394,16 @@ def _save_tg_state(state: dict) -> None:
 HELP_TEXT = (
     "\U0001F916 <b>Comandos</b>\n"
     "Usa el panel inferior: las acciones habituales ya no requieren argumentos.\n"
-    "\n<b>Estado</b> (bot = v6/demo; /bots para la lista)\n"
+    "\n<b>V7 certificado</b>\n"
+    "/v7_status — servicio, lease, wallet, lock, pending y parity\n"
+    "/v7_logs [n] — journal del servicio V7\n"
+    "/v7_pause &lt;hash12&gt; CONFIRM — pausa sin liberar lease\n"
+    "/v7_resume &lt;hash12&gt; CONFIRM — reanuda desde la pausa registrada\n"
+    "/v7_deactivate &lt;hash12&gt; CONFIRM — para y libera lease; no liquida\n"
+    "Activación inicial permanece exclusivamente en el runbook revisado.\n"
+    "\n<b>Fleet V6 durante el corte</b> (bot = v6/demo; /bots para la lista)\n"
     "/status [bot] — resumen de todos, o detalle de uno\n"
     "/bots — bots swing registrados y su cartera\n"
-    "/prop — estado Prop/CFT y ultimos eventos\n"
-    "/prop_report [n] — ultimos eventos PropSwing\n"
     "/report [bot] [n] — ultimos n rebalanceos de un bot\n"
     "/signals — target y senales actuales (v6 default, calculo live)\n"
     "/parity — paridad F15: ultimo check y racha /30\n"
@@ -427,26 +420,21 @@ HELP_TEXT = (
     "\n<b>Control</b>\n"
     "/pause — pausar el Swing (el proceso sigue; no decide)\n"
     "/resume — reanudar\n"
-    "/prop_pause — pausar PropSwing\n"
-    "/prop_resume — reanudar PropSwing\n"
     "\nAutomatico: alerta de rebalanceo, watchdog sin-tick, heartbeat diario "
     "08:00 UTC, backup semanal. /menu vuelve a mostrar el panel."
 )
 
 BOT_COMMANDS = [
     ("menu", "Mostrar panel de botones"),
+    ("v7_status", "Estado certificado V7"),
+    ("v7_logs", "Journal del servicio V7"),
+    ("v7_pause", "Pausar V7 (requiere confirmación)"),
+    ("v7_resume", "Reanudar V7 (requiere confirmación)"),
+    ("v7_deactivate", "Desactivar V7 (requiere confirmación)"),
     ("status", "Resumen de bots, o /status <bot>"),
-    ("status_v6", "Detalle V6 simulado"),
-    ("status_demo", "Detalle OKX Demo"),
     ("bots", "Bots swing registrados"),
-    ("prop", "Estado Prop/CFT"),
-    ("prop_report", "Eventos PropSwing"),
     ("report", "Ultimos rebalanceos"),
-    ("report_v6", "Rebalanceos V6"),
-    ("report_demo", "Rebalanceos OKX Demo"),
     ("equity", "Grafico equity vs B&H"),
-    ("equity_v6", "Equity V6 30 dias"),
-    ("equity_demo", "Equity Demo 30 dias"),
     ("chart", "Grafico precio + rebalanceos"),
     ("signals", "Target y senales actuales"),
     ("parity", "Paridad F15 y racha"),
@@ -456,8 +444,6 @@ BOT_COMMANDS = [
     ("backup", "Backup de DB y estado"),
     ("pause", "Pausar el Swing"),
     ("resume", "Reanudar el Swing"),
-    ("prop_pause", "Pausar PropSwing"),
-    ("prop_resume", "Reanudar PropSwing"),
     ("restart", "Reiniciar matibot"),
     ("update", "git pull + restart"),
     ("help", "Ayuda"),
@@ -518,17 +504,6 @@ def handle_command(text: str, get_session) -> str | None:
     """Devuelve la respuesta de texto, o None si el comando ya envio lo suyo
     (fotos, documentos, o el /update que se reinicia a si mismo)."""
     text = resolve_menu_text(text)
-    shortcut = {
-        "/status_v6": "/status v6",
-        "/status_demo": "/status demo",
-        "/report_v6": "/report v6",
-        "/report_demo": "/report demo",
-        "/equity_v6": "/equity v6 30",
-        "/equity_demo": "/equity demo 30",
-    }
-    first = text.strip().split(maxsplit=1)[0].lower().split("@")[0] if text.strip() else ""
-    if first in shortcut:
-        text = shortcut[first]
     parts = text.strip().split()
     if not parts:
         return HELP_TEXT
@@ -536,6 +511,20 @@ def handle_command(text: str, get_session) -> str | None:
 
     if cmd == "/menu":
         return "\U0001F5B2 Panel listo. Elige una accion abajo."
+    if cmd == "/v7_status":
+        return format_v7_status(v7_status())
+    if cmd == "/v7_logs":
+        n = max(5, min(int(parts[1]), 200)) if len(parts) > 1 and parts[1].isdigit() else 30
+        return v7_logs(n)
+    if cmd in {"/v7_pause", "/v7_resume", "/v7_deactivate"}:
+        if len(parts) != 3 or parts[2] != "CONFIRM":
+            return "Primero usa /v7_status; después ejecuta " + cmd + " &lt;hash12&gt; CONFIRM."
+        action = cmd.removeprefix("/v7_")
+        try:
+            record = v7_transition(action, parts[1])
+        except V7TelegramSafetyError as exc:
+            return f"⚠️ V7 {html.escape(action)} bloqueado: {html.escape(str(exc))}"
+        return f"✅ V7 {html.escape(action)} registrado: <code>{record['transition_hash'][:12]}</code>"
     if cmd == "/status":
         now = datetime.now(timezone.utc)
         price = fetch_price()
@@ -552,16 +541,6 @@ def handle_command(text: str, get_session) -> str | None:
                              performance_comparable=bot.get("execution") != "okx_demo")
     if cmd == "/bots":
         return format_bots(_load_snapshots(get_session))
-    if cmd == "/prop":
-        from tools.prop_telegram import format_prop_status
-        with get_session() as s:
-            return format_prop_status(prop_bot_rows(s), LIVENESS_MAX_AGE_MIN)
-    if cmd == "/prop_report":
-        from tools.prop_telegram import format_prop_report
-        n = 20
-        if len(parts) > 1 and parts[1].isdigit():
-            n = max(1, min(int(parts[1]), 100))
-        return format_prop_report(n)
     if cmd == "/report":
         token, n = _split_bot_num(parts, 10, 1, 100)
         bot = _pick_single(_load_snapshots(get_session), token, "/report &lt;bot&gt; [n]")
@@ -618,14 +597,6 @@ def handle_command(text: str, get_session) -> str | None:
         with get_session() as s:
             names = set_swing_active(s, True)
         return f"▶️ REANUDADO: {_esc(', '.join(names)) or 'nada que reanudar'}"
-    if cmd == "/prop_pause":
-        with get_session() as s:
-            names = set_prop_active(s, False)
-        return f"⏸ PROP PAUSADO: {_esc(', '.join(names)) or 'nada que pausar'}"
-    if cmd == "/prop_resume":
-        with get_session() as s:
-            names = set_prop_active(s, True)
-        return f"▶️ PROP REANUDADO: {_esc(', '.join(names)) or 'nada que reanudar'}"
     return HELP_TEXT
 
 
