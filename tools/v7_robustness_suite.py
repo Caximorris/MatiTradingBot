@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.v7_independent_reference import Bar, Spec, load_canonical, run  # noqa: E402
+from tools.v7_independent_reference import Bar, Spec, frozen_spec, load_canonical, run  # noqa: E402
 
 UTC = timezone.utc
 OUT = ROOT / ".v7-corrected-robustness"
@@ -65,7 +65,7 @@ def _bootstrap_sample(bars: list[Bar], block: int, stationary: bool, seed: int) 
 
 
 def cases() -> list[tuple[str, Spec]]:
-    base = Spec()
+    base = frozen_spec()
     items = [("v7_realistic", base), ("v7_bear_20pct", replace(base, bear_onset_btc_pct="0.2")),
              ("cost_conservative", replace(base, slippage_bps="15")),
              ("cost_twice_conservative", replace(base, fee_rate="0.002", slippage_bps="30"))]
@@ -95,13 +95,13 @@ def execute() -> dict[str, object]:
         name = f"rolling_start_{year}"
         if name not in state["cases"]:
             sliced = [bar for bar in bars if bar.timestamp >= int(datetime(year, 1, 1, tzinfo=UTC).timestamp() * 1000)]
-            state["cases"][name] = _case(name, sliced, Spec())
+            state["cases"][name] = _case(name, sliced, frozen_spec())
             state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     for year in (2018, 2020, 2022):
         name = f"pseudo_oos_from_{year}"
         if name not in state["cases"]:
             sliced = [bar for bar in bars if bar.timestamp >= int(datetime(year, 1, 1, tzinfo=UTC).timestamp() * 1000)]
-            state["cases"][name] = _case(name, sliced, Spec())
+            state["cases"][name] = _case(name, sliced, frozen_spec())
             state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     bootstrap = state.setdefault("bootstrap", {})
     for stationary in (False, True):

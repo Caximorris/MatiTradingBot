@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 
+from core.frozen_candidate import load_frozen_candidate
+
 UTC = timezone.utc
 QTY = Decimal("0.00000001")
 
@@ -43,6 +45,24 @@ class Spec:
     halvings: tuple[str, ...] = (
         "2012-11-28T15:24:38Z", "2016-07-09T16:46:13Z",
         "2020-05-11T19:23:43Z", "2024-04-20T00:09:27Z",
+    )
+
+
+def frozen_spec(overrides: dict[str, object] | None = None) -> Spec:
+    """Build the only V7 spec allowed to call itself the frozen candidate."""
+    candidate = load_frozen_candidate()
+    candidate.verify_overrides(overrides)
+    values = dict(overrides or {})
+    return Spec(
+        warmup_bars=int(candidate.payload["warmup"]["bars"]),
+        decision_interval_hours=int(candidate.payload["decision_cadence"]["interval_hours"]),
+        fee_rate=str(candidate.payload["cost_model"]["fee_rate"]),
+        slippage_bps=str(candidate.payload["cost_model"]["slippage_bps"]),
+        phase_post_end=int(candidate.payload["phase_days"]["post_halving_end"]),
+        phase_bear_start=candidate.bear_onset,
+        phase_accumulation_start=candidate.accumulation,
+        halvings=tuple(candidate.payload["halving_timestamps"]),
+        **{key: value for key, value in values.items() if key in {"bear_onset_btc_pct", "transition_delay_hours"}},
     )
 
 
@@ -142,7 +162,7 @@ def run(bars: list[Bar], spec: Spec = Spec()) -> tuple[list[dict[str, str]], lis
 
 def export_package(cache: Path, out: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     start, end = datetime(2014, 4, 26, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC)
-    bars, spec = load_canonical(cache, start, end), Spec()
+    bars, spec = load_canonical(cache, start, end), frozen_spec()
     trades, equity = run(bars, spec)
     out.mkdir(parents=True, exist_ok=True)
     with (out / "candles.csv").open("w", newline="", encoding="utf-8") as handle:

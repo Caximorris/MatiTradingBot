@@ -1,28 +1,18 @@
-# V7 independent integrity and robustness audit
+# Universal V7 certification gate
 
-Objective: independently audit normal Swing V7, fail closed on any causal or
-accounting discrepancy, and generate reproducible reconciliation evidence.
+Classification: research-only. Candidate V7 is frozen at bear-onset 540 days and
+accumulation 900 days. No production, paper, shadow, VM, exchange, cache, journal,
+or frozen-V6 mutation is authorized.
 
-1. Completed: read the certification commits, manifest, V7 results, and live
-   project state; baseline result is invalidated by timestamp-duplicate cadence.
-2. Completed: normalize exact duplicate candles and schedule V7 from UTC
-   four-hour timestamps; duplicate, missing-row, conflict, and ordering tests
-   pass. The timestamp cadence preserves the provisional $54.002M result.
-3. Completed: certified and independent ledgers reconcile exactly for all six
-   operations; `.v7-operation-audit/reconciliation.json` is PASS.
-4. Completed with limitations: corrected robustness checkpoint includes temporal
-   reslices and 24/72/168/720h moving/stationary block samples; definitive HTML
-   and render PNG are in `.v7-final-report`. Frozen V6 has no certified adapter
-   (`strategies.registry.get('swing_allocator').certified_factory is None`), so
-   no causal V6 result may be substituted.
-5. Completed: 521 tests, Ruff ratchet, compileall, build, diff check, visual
-   HTML render, source secret scan, and status review passed. Generated evidence
-   remains untracked by policy; canonical cache and frozen V6 source were not
-   modified.
+Current milestone: 2 — frozen V6 causal comparator.
+Active case: establish whether a snapshot-only wrapper can reproduce frozen V6-2.
+Next action: preserve the unavailable protected funding input as a fail-closed comparator
+blocker and prevent all certification/shadow claims from treating the fallback as V6-2.
 
-Current evidence: raw certified input produces $52,236,346.57893721564825;
-stable exact-timestamp normalization produces $54,002,022.18728089349690 and
-changes five fill timestamps.  The current manifest cannot remain authoritative.
+Hypothesis: V7's historical result survives a causal, timestamp-normalized execution
+contract and independent robustness diagnostics; failure includes any causal mismatch,
+comparator mismatch, or material sensitivity. Run budget: fixed 4,000 primary
+bootstrap cases only; no parameter search.
 
-Next action: audit complete; do not promote or activate V7. Statistical evidence
-is explicitly fragile and V6 causal comparison remains unavailable.
+Rollback: remove only new research-only certification files; do not alter V7, V6,
+canonical cache, or runtime state.

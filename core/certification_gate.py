@@ -20,14 +20,16 @@ class CertificationGateError(RuntimeError):
 
 
 def manifest_fingerprint(document: dict[str, Any]) -> str:
-    return hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    canonical = {key: value for key, value in document.items()
+                 if key not in {"manifest_sha256", "record_id"}}
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
 def validate_manifest(document: dict[str, Any]) -> None:
     required = {"status", "manifest_complete", "execution_integrity_passed",
                 "required_robustness_completed", "execution_contract", "dataset",
                 "strategy_source_sha256", "resolved_config_sha256", "code_commit",
-                "working_tree_fingerprint", "cases"}
+                "working_tree_fingerprint", "cases", "manifest_sha256", "record_id"}
     missing = sorted(required - set(document))
     if missing:
         raise CertificationGateError(f"certification manifest missing: {', '.join(missing)}")
@@ -35,6 +37,9 @@ def validate_manifest(document: dict[str, Any]) -> None:
         "manifest_complete", "execution_integrity_passed", "required_robustness_completed"
     )):
         raise CertificationGateError("candidate certification is not valid")
+    fingerprint = manifest_fingerprint(document)
+    if document["manifest_sha256"] != fingerprint or document["record_id"] != fingerprint:
+        raise CertificationGateError("certification manifest fingerprint mismatch")
     cases = document["cases"]
     for name in REQUIRED_CASES:
         value = cases.get(name)
@@ -50,6 +55,8 @@ def load_valid_manifest(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as exc:
         raise CertificationGateError("certification manifest unreadable") from exc
     validate_manifest(document)
+    if path.stem != document["record_id"]:
+        raise CertificationGateError("certification manifest filename identity mismatch")
     return document
 
 

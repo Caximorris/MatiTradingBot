@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from tools.v7_independent_reference import Bar, Spec, normalize, run
+import pytest
+
+from core.frozen_candidate import FrozenCandidateError
+from tools.v7_independent_reference import Bar, Spec, frozen_spec, normalize, run
 
 
 def test_reference_collapses_only_identical_duplicates_and_next_open_fills():
@@ -16,6 +19,11 @@ def test_reference_collapses_only_identical_duplicates_and_next_open_fills():
 def test_reference_rejects_conflicting_duplicate():
     bar = Bar(1, Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"))
     bad = Bar(1, Decimal("2"), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"))
-    import pytest
     with pytest.raises(ValueError, match="conflicting"):
         normalize([bar, bad])
+
+
+def test_frozen_reference_spec_rejects_parameter_relabeling():
+    assert frozen_spec().phase_bear_start == 540
+    with pytest.raises(FrozenCandidateError):
+        frozen_spec({"phase_accumulation_start": 960})

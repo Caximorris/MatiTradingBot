@@ -18,10 +18,10 @@ from core.certification_profiles import run_profile
 
 def _record(path: Path, payload: dict) -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    identity = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    identity = manifest_fingerprint(payload)
     destination = path / f"{identity}.json"
     if not destination.exists():
-        destination.write_text(json.dumps(payload | {"record_id": identity}, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        destination.write_text(json.dumps(payload | {"manifest_sha256": identity, "record_id": identity}, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return destination
 
 
@@ -93,6 +93,7 @@ def certify_candidate(
         "random_seeds": [0], "orders": len(orders), "final_capital": str(final), "cases": cases,
     }
     payload["manifest_sha256"] = manifest_fingerprint(payload)
+    payload["record_id"] = payload["manifest_sha256"]
     validate_manifest(payload)
     record = _record(out, payload)
     console.print(f"[green]VALID[/green] {meta.name}: complete causal certification. Evidence: {record}")
