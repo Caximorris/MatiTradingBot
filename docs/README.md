@@ -8,9 +8,9 @@ replace the frozen v6-2 default or authorize Demo/live trading.
 
 | Document | What it establishes |
 |---|---|
-| [V7 paper readiness](forward-test/v7-cycle-core-paper-readiness.md) | Earlier readiness package; its $13.723M result is `INVALID_INCOMPLETE_EXECUTION_PATH` |
+| [V7 paper readiness](forward-test/v7-cycle-core-paper-readiness.md) | Current candidate contract and approval-gated isolated-paper boundary |
 | [V7 Cycle Core plan](SWING_V7_CYCLE_CORE_PLAN.md) | Hypothesis, immutable clock, fail-closed transitions, and preregistered robustness protocol |
-| [V7 results](SWING_V7_CYCLE_CORE_RESULTS.md) | Authoritative $52.236M certified causal result, invalid-result lineage, and limitations |
+| [V7 results](SWING_V7_CYCLE_CORE_RESULTS.md) | Authoritative $54.002M causal result, matched BTC buy-and-hold control, and limitations |
 | [V7 deployment plan](SWING_V7_PAPER_DEPLOYMENT_PLAN.md) | Isolated VM topology, shadow soak gates, and non-destructive rollback |
 | [V7 deployment results](SWING_V7_PAPER_DEPLOYMENT_RESULTS.md) | Local-only state and the evidence still required for any remote activation claim |
 | [V7 operator runbook](SWING_V7_OPERATOR_RUNBOOK.md) | Status, diagnostics, reconciliation, lock handling, and promotion evidence |

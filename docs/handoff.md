@@ -42,11 +42,10 @@ Este archivo es el punto de arranque para continuar desde otro PC.
   `codex/cross-asset-swing-handoff`.
 - Default de estrategia: **Swing Allocator v6-2**, congelado.
 - **V7 Cycle Core:** candidata paper aislada, `CERTIFIED_CAUSAL_CANDIDATE`, nunca activada.
-  Resultado autoritativo: $52,236,346.57893721564825 desde $10,000, 6 intents next-open con
-  reserva de fee/slippage y manifest `VALID` en `codex/universal-certification-gate` @ `5452f76`.
-  $47.863M es `INVALID_NON_CAUSAL`; $13.723M y los demás $10–14M son
-  `INVALID_INCOMPLETE_EXECUTION_PATH`. Setup, shadow, paper, VM y cualquier cutover requieren
-  aprobación actual explícita.
+  Resultado autoritativo normalizado: $54,002,022.18728089349690 desde $10,000, seis operaciones
+  timestamp-based next-open con reserva de fee/slippage y reconciliación `PASS` en
+  `codex/universal-certification-gate` @ `98fb5ca`. Setup, shadow, paper, VM y cualquier cutover
+  requieren aprobación actual explícita.
 - Paper fleet: v6 simulado + v6 OKX Demo, activos en VM GCP `matitrbot`, con Telegram y checks
   diarios; legacy/v5 se retiraron del registro, conservando rollback e historial.
 - **Prop/CFT: RETIRADO de la fleet activa (2026-07-14).** Su promocion a "candidato vivo"

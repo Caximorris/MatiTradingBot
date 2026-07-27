@@ -28,40 +28,33 @@ The historical hypothesis is fragile: only two modern cycles are complete, fixed
 boundary/delay checks vary materially, and history is in-sample. That is precisely why
 the outcome is isolated forward-paper observation—not adoption.
 
-### V7 frozen paper-readiness evidence
+### Certified V7 evidence
 
 | Contract | Value |
 |---|---|
 | Status | `CERTIFIED_CAUSAL_CANDIDATE`; inactive pending human setup/activation approval |
 | Authoritative execution | Immutable `StrategySnapshot` → `TargetIntent`; next-open, fee-reserved reconciled intents |
-| Authoritative result | **$52,236,346.57893721564825** final capital from $10,000; 6 intents; manifest `VALID` |
-| Certification source | `codex/universal-certification-gate` commit `5452f76` |
-| Invalid results | `$47.863M` is `INVALID_NON_CAUSAL`; `$13.723M` is `INVALID_INCOMPLETE_EXECUTION_PATH` |
-| Causal correction | A fully filled reserve-safe maximum buy is reconciled as complete; partial/rejected/ambiguous fills remain fail-closed |
+| Authoritative result | **$54,002,022.18728089349690** final capital from $10,000; 6 timestamp-based next-open operations; reconciliation `PASS` |
+| Dataset treatment | Exact duplicate candles are collapsed; conflicting or out-of-order candles fail closed |
+| Execution | Completed UTC 4H decisions; 0.10% fee plus 5 bps slippage; fee-reserved fills |
+| Certification source | `codex/universal-certification-gate` commit `98fb5ca` and the corrected certified reference |
 | Rollback | deactivate only the isolated instance; preserve wallet, transition journal, and evidence |
 
 ### Same-window strategy comparator
 
-This is a reporting comparator, not a ranking or promotion table. Rows are shown on
-the 2015-01-01 to 2026-01-01 BTC 1H calendar only when that strategy has evidence for
-that window. A shared dataset identity and execution manifest are required before a
-new row can be called a matched comparison.
+Only valid results are shown. V7 and BTC buy-and-hold share the same normalized BTC
+1H bars, 250-day warmup, UTC 2015-01-01 to 2026-01-01 window, and 0.10% fee + 5 bps
+slippage contract. V6 remains useful operational context, but uses protected
+historical inputs and is not a matched causal benchmark.
 
-| Strategy / version | Window | Cost model | Final capital | CAGR | Max DD | Status / comparability |
-|---|---|---|---:|---:|---:|---|
-| Swing v7 Cycle Core (certified causal) | Full certified interval | Certified causal contract | **$52.236M** | — | — | `VALID` manifest; historical only |
-| BTC buy & hold | — | — | — | — | — | Add only from the same certified manifest family |
-| Swing v6-2 frozen default | 2015-2026 | realistic | $9.505M | +86.51% | -52.73% | Archival protected-input reference; **not** a matched V7 rerun |
-| V7 legacy client-runner suite | 2015-2026 | realistic | $47.863M | +116.04% | -70.43% | `INVALID_NON_CAUSAL`; forensic only |
-| V7 early causal-runner endpoint | 2015-2026 | realistic | $13.723M | — | -77.14% | `INVALID_INCOMPLETE_EXECUTION_PATH`; stopped in `ERROR_LOCKED` |
-| Pro Trend v13 | — | — | — | — | — | Frozen/paused; no current matched row |
-| Funding Extreme | 2020-06 to 2026-01 | bybit | — | +12.8% | -15.22% | Rejected; different window/execution |
-| Prop Swing / CFT | — | — | — | — | — | Retired; not comparable |
-| Other legacy strategies | — | — | — | — | — | Dormant; add only after a fixed matched run |
+| Strategy | Valid contract | Final capital | CAGR | Max drawdown | Calmar | At-a-glance takeaway |
+|---|---|---:|---:|---:|---:|---|
+| **Swing v7 Cycle Core** | Certified causal, normalized BTC 1H | **$54.002M** | **118.42%** | -70.49% | **1.68** | 6 phase transitions; 19.77× the matched BTC buy-and-hold final capital |
+| **BTC buy & hold** | Same bars, window, warmup, fees, and slippage | $2.731M | 66.61% | -83.77% | 0.80 | Exact matched control; V7 reduced drawdown by 13.28 percentage points |
+| **Swing v6-2 default** | Archived protected-input reference, realistic costs | $9.505M | 86.51% | **-52.73%** | 1.64 | Lower historical drawdown; not a causal V7 head-to-head because inputs/cadence differ |
 
-Neither the prior $10–14M results nor the first $40M-ish client-runner results are
-eligible for a headline, comparison, or promotion decision. The certified causal
-manifest is the only V7 source allowed in the comparator.
+V7’s historical advantage over matched buy-and-hold is descriptive, not forward or
+out-of-sample evidence. It must not be read as authorization to change the v6 default.
 
 ## Research controls
 

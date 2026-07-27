@@ -121,9 +121,9 @@ descartado como default por BTC final), **caps globales de `max_btc_pct`** (mata
 - Hipotesis: mantener 100% BTC en `post_halving`, `bull_peak` y `accumulation`, y 0% en
   `bear_onset`, con un reloj de halving confirmado y sin señales técnicas, reduce el daño de bear.
 - Ventana de datos: BTC-USDT 1H, UTC 2015-01-01 a 2026-01-01 inclusivo; warmup 250d.
-- Metricas: resultado certificado causal $52,236,346.57893721564825 desde $10,000, 6 intents
-  next-open con reserva de fee/slippage y manifest `VALID` (commit `5452f76`). `$47.863M` es
-  `INVALID_NON_CAUSAL`; $10–14M, incluido $13.723M, es `INVALID_INCOMPLETE_EXECUTION_PATH`.
+- Metricas: resultado certificado causal normalizado $54,002,022.18728089349690 desde $10,000,
+  seis operaciones timestamp-based next-open con reserva de fee/slippage y reconciliación `PASS`
+  (commit `98fb5ca`). Control BTC B&H con el mismo contrato: $2,731,291.11, CAGR 66.61%, DD -83.77%.
 - Decision: `CERTIFIED_CAUSAL_CANDIDATE`, no adoptado; inactivo y pendiente de observación forward aislada.
 - Razon: el adaptador causal y la conciliación reserve-safe están certificados; la evidencia histórica
   no sustituye la necesidad de forward y no permite usar los endpoints invalidados.
