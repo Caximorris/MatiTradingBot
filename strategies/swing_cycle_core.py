@@ -258,8 +258,13 @@ class SwingCycleCoreBot:
             current = self._current_btc_pct()
             desired = self._desired_state(target, current)
             if desired not in (CycleState.BEAR_CASH, CycleState.STABLE_RISK_ON):
-                self._lock("filled_order_target_unreached")
-                return
+                if not self._reserve_safe_buy_reached_target(target, observed):
+                    self._lock("filled_order_target_unreached")
+                    return
+                # A complete reserve-safe fill *is* the maximum executable
+                # target.  Do not turn the fee residual into a redundant
+                # intra-phase reconciliation order.
+                desired = CycleState.STABLE_RISK_ON
             self._state.update(state=desired, order_id=None, pending_order=None)
             self._record_event("fill", target, current, "filled", "causal_fill_reconciled", context,
                                observed)
@@ -281,6 +286,10 @@ class SwingCycleCoreBot:
         self._state.update(state=submitted, order_id=client_order_id,
                            pending_order={"client_order_id": client_order_id, "side": side,
                                           "requested_qty": str(qty),
+                                          # A 100% buy is bounded by the declared reserve and lot
+                                          # precision.  Persist that executable maximum so a complete
+                                          # causal fill is not later compared to an impossible 100%.
+                                          "reserve_safe_max_qty": str(qty) if side == "buy" and target == 1 else None,
                                           "decision_timestamp": self._utc_now().isoformat(),
                                           "earliest_fill_timestamp": self._earliest_fill_timestamp().isoformat()})
         if not self._save_state():
@@ -296,7 +305,11 @@ class SwingCycleCoreBot:
             self._lock(f"order_exception:{exc}")
             return
         self._state["order_id"] = getattr(result, "order_id", None) or client_order_id
-        self._state["pending_order"] = self._order_observation(result)
+        # Preserve the pre-submit executable-target contract when enriching it
+        # with the adapter's immediate order observation.
+        pending = self._state.get("pending_order")
+        self._state["pending_order"] = ((pending if isinstance(pending, dict) else {})
+                                        | self._order_observation(result))
         status = getattr(result, "status", "rejected")
         transition = {
             "timestamp": self._utc_now().isoformat(), "phase": self._state.get("phase"),
@@ -323,6 +336,27 @@ class SwingCycleCoreBot:
         self._state["pending_order"] = None
         self._state["state"] = self._desired_state(target, current_after)
         self._save_state()
+
+    def _reserve_safe_buy_reached_target(self, target: Decimal, result: Any) -> bool:
+        """Accept only a complete, predeclared reserve-safe 100% buy.
+
+        The residual quote cash is intentionally retained for fees/slippage and
+        cannot be converted into base without violating the execution reserve.
+        This is a fill-accounting reconciliation, never an additional order.
+        """
+        pending = self._state.get("pending_order")
+        if target != 1 or not isinstance(pending, dict) or pending.get("side") != "buy":
+            return False
+        maximum = pending.get("reserve_safe_max_qty")
+        if maximum is None:
+            return False
+        try:
+            expected = Decimal(str(maximum))
+            filled = Decimal(str(getattr(result, "filled_qty", Decimal("0"))))
+        except Exception:
+            return False
+        lot = Decimal("0.000001")
+        return expected > 0 and filled >= expected - lot
 
     def _order_quantity(self, target: Decimal, current: Decimal, side: str) -> Decimal:
         balance = self._client.get_balance()

@@ -2,12 +2,29 @@
 
 ## Verdict
 
-`NEEDS_MORE_VALIDATION`.  V7 was implemented and the frozen current-input suite
-completed, but its historical advantage is an in-sample calendar rule with only two
-completed modern cycles.  It cannot replace v6-2 or receive capital without forward
-shadow evidence and explicit approval.
+`CERTIFIED_CAUSAL_CANDIDATE`. The authoritative V7 result is the immutable
+`StrategySnapshot` to `TargetIntent` execution run over the full data interval:
+`$52,236,346.57893721564825` final capital from `$10,000`, with six next-open,
+fee-reserved reconciled intents. Its manifest is `VALID`.
+
+The prior `$47.863M` table is `INVALID_NON_CAUSAL`; it used the historical
+client-driven runner. The prior `$13.723M` causal-runner endpoint is
+`INVALID_INCOMPLETE_EXECUTION_PATH`; it stopped after `ERROR_LOCKED` at
+2018-12-27T00:00Z. Both remain archival forensic evidence only and cannot be used
+as a headline, comparator, or promotion input.
 
 ## Provenance and control
+
+## Certified causal reconciliation
+
+At 2018-12-26T20:00Z, `v720181226502` requested the predeclared fee/slippage
+reserve-safe maximum buy. It filled, but the legacy reconciliation compared its
+98.8096% executable exposure with an impossible 100% mathematical target and
+raised `filled_order_target_unreached` at 2018-12-27T00:00Z. The corrected path
+persists the reserve-safe maximum and accepts only a complete fill of that quantity;
+it then clears `pending_order`, transitions to `STABLE_RISK_ON`, and does not submit
+a redundant intra-phase order. Partial, rejected, or ambiguous fills still fail
+closed.
 
 The historical $9,505,067.92 v6-2 result is
 `ARCHIVAL_NON_REPRODUCIBLE_REFERENCE`: no exact funding snapshot plus manifest/slice

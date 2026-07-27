@@ -154,6 +154,36 @@ def test_accumulation_transition_buys_and_bypasses_normal_threshold():
     assert bot._state["state"] == CycleState.STABLE_RISK_ON
 
 
+def test_complete_reserve_safe_buy_reconciles_without_error_lock():
+    client = CycleClient(_at(901), btc="0", usdt="1000")
+    def submitted(*args, **kwargs):
+        return OrderResult("reserve-1", args[0], args[1], args[2], args[3], None, None,
+                           Decimal("0"), Decimal("0"), "USDT", "open", True,
+                           kwargs["strategy"], client.now)
+    client.place_order = submitted
+    bot = SwingCycleCoreBot(client, SwingCycleCoreConfig())
+    bot.run()
+    # The client reports the reserve-capped quantity as filled; 100% of total
+    # value is mathematically unavailable once fee/slippage cash is reserved.
+    submitted = bot._state["pending_order"]
+    result = OrderResult("reserve-1", "BTC-USDT", "buy", "market", Decimal(submitted["requested_qty"]),
+                         None, Decimal("100"), Decimal(submitted["requested_qty"]), Decimal("1"), "USDT",
+                         "filled", True, "", client.now)
+    bot._state.update(state=CycleState.ENTRY_ORDER_SUBMITTED, order_id="reserve-1")
+    client.balances = {"BTC": Decimal(submitted["requested_qty"]), "USDT": Decimal("1")}
+    client.get_order_status = lambda _symbol, _order_id: result
+    client.now += timedelta(hours=4)
+    client.bar_time = client.now
+    bot.run()
+    assert bot._state["state"] == CycleState.STABLE_RISK_ON
+    assert bot._state["pending_order"] is None
+    assert bot._state["error"] is None
+    client.now += timedelta(hours=4)
+    client.bar_time = client.now
+    bot.run()
+    assert bot._state["state"] == CycleState.STABLE_RISK_ON
+
+
 def test_stale_ticker_bar_and_unknown_pre_halving_fail_closed_without_order():
     client = CycleClient(_at(600), btc="10", usdt="0")
     client.bar_time = client.now - timedelta(hours=6)
