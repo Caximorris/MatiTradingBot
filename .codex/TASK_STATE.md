@@ -1,6 +1,6 @@
 # V7 OKX Demo cutover
 
-Current milestone: implement and locally test the V6-to-V7 shared-demo-account cutover.
+Current milestone: VM-facing command wrappers and dedicated V7 service.
 
 Completed:
 
@@ -8,6 +8,7 @@ Completed:
 - Added a hash-chained, exclusive OKX Demo ownership lease.
 - Added mocked V6 audit/evidence/guarded-stop and V7 preflight/activation contracts.
 - Added a V7-specific demo execution adapter that rejects any non-demo client.
+- Completed CLI-CUTOVER: deterministic, hash-chained, dependency-injected local cutover commands with mocked tests.
 
 Next:
 
