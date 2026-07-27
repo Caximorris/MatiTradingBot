@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import argparse
+import subprocess
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -19,6 +21,44 @@ _SECRET = ("secret", "password", "passphrase", "api_key", "private_key", "access
 class ReadOnlyService(Protocol):
     def inspect(self, name: str) -> dict[str, Any]: ...
     def process_identities(self, name: str) -> list[dict[str, Any]]: ...
+
+
+class LinuxV6ReadOnlyGateway:
+    """Explicit Linux-only, inspection-only systemd adapter for the V6 unit."""
+
+    def __init__(self, runner=subprocess.run, timeout: float = 15.0) -> None:
+        self.runner, self.timeout = runner, timeout
+
+    def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            return self.runner(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                shell=False,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise PaperSafetyError("systemd inspection timed out") from exc
+
+    def inspect(self, name: str) -> dict[str, Any]:
+        if name != V6_SERVICE:
+            raise PaperSafetyError("unknown V6 service identity")
+        active = self._run(["systemctl", "is-active", name])
+        enabled = self._run(["systemctl", "is-enabled", name])
+        return {
+            "known": active.returncode != 4 and enabled.returncode != 4,
+            "active": active.returncode == 0,
+            "enabled": enabled.returncode == 0,
+        }
+
+    def process_identities(self, name: str) -> list[dict[str, Any]]:
+        if name != V6_SERVICE:
+            raise PaperSafetyError("unknown V6 service identity")
+        result = self._run(["systemctl", "show", "--property=MainPID", "--value", name])
+        pid = result.stdout.strip()
+        return [] if not pid or pid == "0" else [{"pid": pid}]
 
 
 def _safe(value: object) -> None:
@@ -210,3 +250,143 @@ def build_v6_audit_inputs(
         json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8"
     )
     return manifest
+
+
+def _emit(value: dict[str, Any], as_json: bool) -> None:
+    print(
+        json.dumps(value, sort_keys=True)
+        if as_json
+        else json.dumps(value, indent=2, sort_keys=True)
+    )
+
+
+def _path(value: str) -> Path:
+    if "\\" in value:
+        raise PaperSafetyError("Windows paths are prohibited")
+    return Path(value)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "command",
+        choices=(
+            "collect-v6-runtime",
+            "observe-okx-demo-account",
+            "build-v6-audit-inputs",
+        ),
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--linux-runtime", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--service-name", default=V6_SERVICE)
+    parser.add_argument("--repository-path")
+    parser.add_argument("--config-path")
+    parser.add_argument("--state-path")
+    parser.add_argument("--journal-path")
+    parser.add_argument("--runtime-observation")
+    parser.add_argument("--account-observation")
+    parser.add_argument("--output")
+    parser.add_argument("--symbol", default="BTC-USDT")
+    parser.add_argument("--source-commit")
+    parser.add_argument("--mock-input")
+    parser.add_argument("--test-mode", action="store_true")
+    return parser
+
+
+def run(
+    argv: list[str] | None = None,
+    *,
+    service: ReadOnlyService | None = None,
+    client: Any = None,
+) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "collect-v6-runtime":
+            if args.service_name != V6_SERVICE or not all(
+                (
+                    args.repository_path,
+                    args.config_path,
+                    args.state_path,
+                    args.journal_path,
+                    args.output,
+                    args.source_commit,
+                )
+            ):
+                raise PaperSafetyError(
+                    "collect-v6-runtime requires the dedicated V6 service and explicit paths"
+                )
+            if not args.linux_runtime and service is None:
+                raise PaperSafetyError("Linux runtime must be explicitly requested")
+            gateway = service or LinuxV6ReadOnlyGateway()
+            result = collect_v6_runtime(
+                config_path=_path(args.config_path),
+                state_path=_path(args.state_path),
+                journal_path=_path(args.journal_path),
+                service=gateway,
+                source_commit=args.source_commit,
+            )
+            if not args.dry_run:
+                _path(args.output).write_text(
+                    json.dumps(result, sort_keys=True, indent=2), encoding="utf-8"
+                )
+        elif args.command == "observe-okx-demo-account":
+            if args.mock_input and not args.test_mode:
+                raise PaperSafetyError("mock input requires explicit test mode")
+            if client is None:
+                if not args.mock_input:
+                    raise PaperSafetyError(
+                        "authenticated observation requires an injected demo client"
+                    )
+
+                class MockClient:
+                    is_paper, endpoint = True, "okx_demo"
+
+                    def __init__(self, value):
+                        self.value = value
+
+                    def get_balance(self):
+                        return {
+                            k: Decimal(str(v))
+                            for k, v in self.value["balances"].items()
+                        }
+
+                    def get_positions(self):
+                        return self.value.get("positions", [])
+
+                    def get_open_orders(self, _):
+                        return self.value.get("open_orders", [])
+
+                    def get_order_history(self, _, limit=20):
+                        return self.value.get("recent_orders", [])[:limit]
+
+                    def place_order(self, *_a, **_k):
+                        raise AssertionError("forbidden")
+
+                client = MockClient(_json(_path(args.mock_input)))
+            if not args.output:
+                raise PaperSafetyError("observation requires --output")
+            result = observe_okx_demo_account(client, symbol=args.symbol)
+            if not args.dry_run:
+                _path(args.output).write_text(
+                    json.dumps(result, sort_keys=True, indent=2), encoding="utf-8"
+                )
+        else:
+            if not all(
+                (args.runtime_observation, args.account_observation, args.output)
+            ):
+                raise PaperSafetyError("bundle requires both observations and output")
+            result = build_v6_audit_inputs(
+                _json(_path(args.runtime_observation)),
+                _json(_path(args.account_observation)),
+                _path(args.output),
+            )
+        _emit(result, args.json)
+        return 0
+    except (PaperSafetyError, OSError, ValueError) as exc:
+        _emit({"status": "BLOCKED", "error": str(exc)}, True)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())
