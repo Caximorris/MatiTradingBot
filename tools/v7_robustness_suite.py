@@ -188,6 +188,8 @@ if __name__ == "__main__":
     parser.add_argument("--status", action="store_true", help="print read-only per-family checkpoint status")
     parser.add_argument("--check-complete", action="store_true", help="exit 0 only when all 4,000 cases are terminal")
     args = parser.parse_args()
+    if args.replications != REPLICATIONS:
+        parser.error("the frozen primary bootstrap requires exactly 500 replications per family/block")
     if args.status or args.check_complete:
         summary = completion_summary(load_checkpoint())
         print(json.dumps(summary, indent=2))
