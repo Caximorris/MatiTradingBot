@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import sys
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.v7_independent_reference import Spec, load_canonical, run  # noqa: E402
+from tools.v7_independent_reference import Bar, Spec, load_canonical, run  # noqa: E402
 
 UTC = timezone.utc
 OUT = ROOT / ".v7-corrected-robustness"
@@ -44,6 +45,23 @@ def _case(name: str, bars, spec: Spec) -> dict[str, object]:
 
 def _shifted_halvings(days: int) -> tuple[str, ...]:
     return tuple((datetime.fromisoformat(item.replace("Z", "+00:00")) + timedelta(days=days)).isoformat().replace("+00:00", "Z") for item in Spec().halvings)
+
+
+def _bootstrap_sample(bars: list[Bar], block: int, stationary: bool, seed: int) -> list[Bar]:
+    """Moving/stationary contiguous blocks; timestamps are rebased solely for the clock."""
+    rng, selected = random.Random(seed), []
+    index = rng.randrange(len(bars))
+    while len(selected) < len(bars):
+        length = max(1, int(rng.expovariate(1 / block))) if stationary else block
+        for _ in range(length):
+            selected.append(bars[index % len(bars)])
+            index += 1
+            if len(selected) == len(bars):
+                break
+        index = rng.randrange(len(bars))
+    start = bars[0].timestamp
+    return [Bar(start + offset * 3_600_000, row.open, row.high, row.low, row.close, row.volume)
+            for offset, row in enumerate(selected)]
 
 
 def cases() -> list[tuple[str, Spec]]:
@@ -84,6 +102,18 @@ def execute() -> dict[str, object]:
         if name not in state["cases"]:
             sliced = [bar for bar in bars if bar.timestamp >= int(datetime(year, 1, 1, tzinfo=UTC).timestamp() * 1000)]
             state["cases"][name] = _case(name, sliced, Spec())
+            state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    bootstrap = state.setdefault("bootstrap", {})
+    for stationary in (False, True):
+        family = "stationary" if stationary else "moving"
+        for block in (24, 72, 168, 720):
+            key = f"{family}_{block}h"
+            if key in bootstrap:
+                continue
+            rows = [_case(f"{key}_seed{seed}", _bootstrap_sample(bars, block, stationary, seed), Spec())
+                    for seed in range(3)]
+            bootstrap[key] = {"block_hours": block, "method": family, "replications": rows,
+                              "loss_frequency": sum(Decimal(row["final_capital"]) < Decimal("10000") for row in rows) / len(rows)}
             state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     state["status"] = "COMPLETE_CORE_MATRIX"
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
