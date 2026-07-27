@@ -10,7 +10,7 @@ import csv
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
 
@@ -35,6 +35,8 @@ class Spec:
     slippage_bps: str = "5"
     warmup_bars: int = 6000
     decision_interval_hours: int = 4
+    transition_delay_hours: int = 0
+    bear_onset_btc_pct: str = "0"
     phase_post_end: int = 180
     phase_bear_start: int = 540
     phase_accumulation_start: int = 900
@@ -92,8 +94,8 @@ def run(bars: list[Bar], spec: Spec = Spec()) -> tuple[list[dict[str, str]], lis
         at = datetime.fromtimestamp(bar.timestamp / 1000, UTC)
         if (index >= spec.warmup_bars and at.minute == 0 and at.second == 0
                 and at.microsecond == 0 and at.hour % spec.decision_interval_hours == 0):
-            days, phase = _phase(at, spec)
-            target = Decimal("0") if phase == "bear_onset" else Decimal("1")
+            days, phase = _phase(at - timedelta(hours=spec.transition_delay_hours), spec)
+            target = Decimal(spec.bear_onset_btc_pct) if phase == "bear_onset" else Decimal("1")
             if last_target is None:
                 last_target = target
             elif target != last_target:
