@@ -15,10 +15,14 @@ accounting discrepancy, and generate reproducible reconciliation evidence.
    and render PNG are in `.v7-final-report`. Frozen V6 has no certified adapter
    (`strategies.registry.get('swing_allocator').certified_factory is None`), so
    no causal V6 result may be substituted.
-5. In progress: full validation, diff/status/secret/hash review.
+5. Completed: 521 tests, Ruff ratchet, compileall, build, diff check, visual
+   HTML render, source secret scan, and status review passed. Generated evidence
+   remains untracked by policy; canonical cache and frozen V6 source were not
+   modified.
 
 Current evidence: raw certified input produces $52,236,346.57893721564825;
 stable exact-timestamp normalization produces $54,002,022.18728089349690 and
 changes five fill timestamps.  The current manifest cannot remain authoritative.
 
-Next action: run final repository validation and commit report/suite sources.
+Next action: audit complete; do not promote or activate V7. Statistical evidence
+is explicitly fragile and V6 causal comparison remains unavailable.
