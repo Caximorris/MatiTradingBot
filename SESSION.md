@@ -12,9 +12,8 @@ strategy-specific plans.
 - **Paper fleet:** v6 simulated + v6 OKX Demo only. Prop is retired. `tools/paper_fleet_setup.py`
   reconciles this control fleet and must never register a research candidate.
 - **Candidate V7:** `CERTIFIED_CAUSAL_CANDIDATE`, isolated and inactive. Its authoritative
-  `$52,236,346.57893721564825` result has a `VALID` manifest on
-  `codex/universal-certification-gate` commit `5452f76`. The prior $10–14M endpoints are
-  incomplete and the first ~$40M client-runner result is non-causal; neither is usable.
+  normalized causal replay is `$54,002,022.18728089349690`, with six timestamp-based next-open
+  operations and reconciliation `PASS`, on `codex/universal-certification-gate` commit `98fb5ca`.
   Setup/activation still require explicit approval. This is not a default, Demo, or live promotion.
 - **Live:** not authorized. Any VM, bot start/stop, demo/live order, Telegram mutation, or deployment
   requires explicit current-task approval.
