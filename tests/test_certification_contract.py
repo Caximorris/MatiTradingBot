@@ -26,6 +26,22 @@ def test_certified_engine_only_fills_at_next_open_and_reserves_fee():
     assert engine.cash >= 0
 
 
+def test_identical_duplicate_candles_cannot_shift_decision_cadence():
+    bars = _bars()
+    duplicate = [bars[0], bars[1], bars[1], bars[2], bars[3]]
+    engine = CertifiedEngine(duplicate, initial_cash=Decimal("102"), fee_rate=Decimal(".001"), slippage_bps=Decimal("0"))
+    assert len(engine._bars) == len(bars)
+
+
+def test_conflicting_or_non_monotonic_candles_fail_closed():
+    bars = _bars()
+    conflicting = bars[:1] + [OHLCVBar(bars[0].timestamp, Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"), Decimal("1"))]
+    with pytest.raises(CertificationError, match="conflicting duplicate"):
+        CertifiedEngine(conflicting, initial_cash=Decimal("1"), fee_rate=Decimal("0"), slippage_bps=Decimal("0"))
+    with pytest.raises(CertificationError, match="non-monotonic"):
+        CertifiedEngine([bars[1], bars[0]], initial_cash=Decimal("1"), fee_rate=Decimal("0"), slippage_bps=Decimal("0"))
+
+
 @pytest.mark.parametrize("attack", ["next", "current", "external", "duplicate", "mutate", "bypass"])
 def test_adversarial_strategies_are_rejected(attack):
     class Attack:

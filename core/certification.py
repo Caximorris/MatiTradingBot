@@ -103,7 +103,11 @@ class CertifiedEngine:
     def __init__(self, bars: Iterable[OHLCVBar], *, initial_cash: Decimal,
                  fee_rate: Decimal, slippage_bps: Decimal,
                  external_events: Iterable[tuple[str, datetime, object]] = ()) -> None:
-        self._bars = tuple(bars)
+        # The protected canonical cache intentionally retains known identical
+        # duplicate observations.  A row-count cadence would make a 4H decision
+        # schedule depend on those storage duplicates.  Collapse *only* exact
+        # duplicates and reject conflicting or non-monotonic timestamps.
+        self._bars = self._normalize_bars(bars)
         if len(self._bars) < 2:
             raise CertificationError("at least two bars are required for causal fills")
         self._raw_hash = self._hash_bars(self._bars)
@@ -113,6 +117,19 @@ class CertifiedEngine:
         self.slippage_bps = slippage_bps
         self.orders: dict[str, CertifiedOrder] = {}
         self._external = tuple(external_events)
+
+    @staticmethod
+    def _normalize_bars(bars: Iterable[OHLCVBar]) -> tuple[OHLCVBar, ...]:
+        normalized: list[OHLCVBar] = []
+        for bar in bars:
+            if normalized and bar.timestamp == normalized[-1].timestamp:
+                if bar != normalized[-1]:
+                    raise CertificationError("conflicting duplicate candle")
+                continue
+            if normalized and bar.timestamp < normalized[-1].timestamp:
+                raise CertificationError("non-monotonic candle timestamp")
+            normalized.append(bar)
+        return tuple(normalized)
 
     @staticmethod
     def _hash_bars(bars: Iterable[OHLCVBar]) -> str:
