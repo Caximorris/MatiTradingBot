@@ -9,6 +9,39 @@ changes. Do not put credentials in arguments, JSON, journals, service units, or
 terminal output. Values in angle brackets come only from the preceding command
 output and must be reviewed before use.
 
+## Validated Linux CLI sequence
+
+`STATISTICAL_ROBUSTNESS = FRAGILE`; `LIVE_READINESS = NOT_READY`. This is paper-only.
+Stopping or deactivating never liquidates BTC automatically. V7 inherits the actual OKX Demo
+cash/BTC balance, and V7 performance starts from the activation baseline.
+
+### READ-ONLY
+
+```bash
+git status --short
+git branch --show-current
+systemctl is-active matibot-v6-paper.service
+systemctl is-active matibot-v7-certified-okx-demo.service
+git pull --ff-only origin main
+python tools/v6_runtime_observation.py collect-v6-runtime --linux-runtime --service-name matibot-v6-paper.service --repository-path /srv/matibot --config-path /srv/matibot/data/runtime/v6/config.json --state-path /srv/matibot/data/runtime/v6/state.json --journal-path /srv/matibot/data/runtime/v6/journal.jsonl --source-commit "$(git rev-parse HEAD)" --output /srv/matibot/v6-runtime.json --json
+python tools/v6_runtime_observation.py observe-okx-demo-account --okx-demo-runtime --runtime-config /srv/matibot/data/runtime/v6/okx-demo-runtime.json --output /srv/matibot/account-observation.json --json
+python tools/v6_runtime_observation.py build-v6-audit-inputs --runtime-observation /srv/matibot/v6-runtime.json --account-observation /srv/matibot/account-observation.json --output /srv/matibot/v6-runtime-observation --json
+python tools/v6_v7_demo_cutover.py audit-v6 --lease /srv/matibot/data/runtime/v7_certified/account_ownership.jsonl --v6-config /srv/matibot/v6-runtime-observation/v6-config.json --v6-state /srv/matibot/v6-runtime-observation/v6-state.json --v6-journal /srv/matibot/data/runtime/v6/journal.jsonl --account /srv/matibot/v6-runtime-observation/account-observation.json --account-fingerprint "<account-observation.json:fingerprint>"
+```
+
+Record `<AUDIT_HASH>` from `audit-v6` field `audit_hash`. Review `verdict=PASS` before continuing.
+
+### STATE-CHANGING
+
+```bash
+python tools/v6_v7_demo_cutover.py export-v6-evidence --lease /srv/matibot/data/runtime/v7_certified/account_ownership.jsonl --audit /srv/matibot/v6-audit.json --v6-journal /srv/matibot/data/runtime/v6/journal.jsonl --output /srv/matibot/v6-evidence
+python tools/v6_v7_demo_cutover.py stop-v6 --lease /srv/matibot/data/runtime/v7_certified/account_ownership.jsonl --audit /srv/matibot/v6-audit.json --audit-hash "<v6-audit.json:audit_hash>" --evidence /srv/matibot/v6-evidence/v6_demo_evidence.json --instance-id "<v6-runtime-observation/manifest.json:instance_id>" --account-fingerprint "<account-observation.json:fingerprint>" --output /srv/matibot/v6-stop.json
+```
+
+**V6 stops at the preceding command.** Verify `systemctl is-active matibot-v6-paper.service`, empty account `open_orders`, and released lease.
+
+Render/install V7 inactive with `render` then `install-inactive`; run `preflight-v7`, then `activate-v7` (**V7 activates here**) for 30 days. Use `status` to inspect reports, orders, fills, parity, and circuit breaker; use `pause-v7`, `resume-v7`, and `deactivate-v7` for lifecycle control. Export the final evidence package only after the reviewed window.
+
 ## 1. Inspect before pull (read-only)
 
 ```bash
