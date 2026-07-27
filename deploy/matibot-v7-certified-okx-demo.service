@@ -7,8 +7,9 @@ Wants=network-online.target
 Type=simple
 User=__RUN_USER__
 WorkingDirectory=__APP_DIR__
+EnvironmentFile=__ENV_FILE__
 Environment=PYTHONUNBUFFERED=1
-ExecStart=__APP_DIR__/.venv/bin/python tools/v7_certified_demo_service.py --run
+ExecStart=__PYTHON__ __APP_DIR__/tools/v7_certified_demo_service.py --run --config __CONFIG_PATH__ --state __STATE_PATH__ --journal __JOURNAL_PATH__ --evidence __EVIDENCE_PATH__ --reports __REPORT_PATH__
 Restart=on-failure
 RestartSec=15
 NoNewPrivileges=true

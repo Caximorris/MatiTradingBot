@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import argparse
+import re
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
-from core.demo_account_lease import DemoAccountLease
+from core.demo_account_lease import DemoAccountLease, DemoLeaseError
 from core.v7_certified_paper import PaperSafetyError, make_config
 from core.v7_okx_demo import V7OKXDemoRunner
 from tools.v6_v7_demo_cutover import ServiceGateway
@@ -31,6 +35,32 @@ _FORBIDDEN_UNIT_TEXT = (
     "private_key",
     "access_token",
 )
+_PLACEHOLDER = re.compile(r"__[A-Z0-9_]+__")
+_LINUX_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+_LIVE_MARKERS = ("live", "production", "prod", "mainnet")
+_REQUIRED_V7_MARKER = "v7_certified"
+_MAX_STATUS_BYTES = 16_384
+
+
+@dataclass(frozen=True)
+class RenderedUnit:
+    """Validated unit content, suitable for an explicitly requested write/install."""
+
+    text: str
+    content_hash: str
+
+
+@dataclass(frozen=True)
+class UnitRenderInputs:
+    run_user: str
+    app_dir: str
+    python_path: str
+    environment_file: str
+    config_path: str
+    state_path: str
+    journal_path: str
+    evidence_path: str
+    report_path: str
 
 
 def canonical_hash(value: object) -> str:
@@ -46,43 +76,168 @@ def _verify_hash(record: dict[str, Any], field: str) -> None:
         raise PaperSafetyError(f"tampered or incomplete {field} record")
 
 
-def _linux_path(value: str) -> str:
+def _linux_path(value: str, *, label: str) -> str:
     path = PurePosixPath(value)
-    if not path.is_absolute() or "\\" in value or "\r" in value or "\n" in value:
+    lowered = value.lower()
+    if (
+        not value
+        or not path.is_absolute()
+        or "\\" in value
+        or "\r" in value
+        or "\n" in value
+        or any(char.isspace() or char in "[]=;\"'" for char in value)
+        or any(marker in lowered for marker in _FORBIDDEN_UNIT_TEXT + _LIVE_MARKERS)
+    ):
         raise PaperSafetyError(
-            "systemd definition requires an absolute Linux application path"
+            f"systemd definition requires a safe absolute Linux {label}"
         )
     return str(path)
 
 
-def render_service_definition(*, app_dir: str, run_user: str) -> str:
-    """Generate a credential-free, disabled-by-default dedicated systemd unit."""
-    app_dir = _linux_path(app_dir)
-    if not run_user or any(char.isspace() for char in run_user):
-        raise PaperSafetyError("systemd definition requires a simple run user")
-    unit = f"""[Unit]
-Description=MatiTradingBot certified V7 OKX Demo candidate (inactive by default)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User={run_user}
-WorkingDirectory={app_dir}
-Environment=PYTHONUNBUFFERED=1
-ExecStart={app_dir}/.venv/bin/python tools/v7_certified_demo_service.py --run
-Restart=on-failure
-RestartSec=15
-NoNewPrivileges=true
-PrivateTmp=true
-MemoryMax=350M
-
-[Install]
-WantedBy=multi-user.target
-"""
+def render_service_unit(inputs: UnitRenderInputs) -> RenderedUnit:
+    """Render the tracked template without accepting systemd or secret injection."""
+    if not _LINUX_USER.fullmatch(inputs.run_user):
+        raise PaperSafetyError("systemd definition requires a simple Linux run user")
+    values = {
+        "__RUN_USER__": inputs.run_user,
+        "__APP_DIR__": _linux_path(inputs.app_dir, label="repository path"),
+        "__PYTHON__": _linux_path(inputs.python_path, label="Python executable"),
+        "__ENV_FILE__": _linux_path(inputs.environment_file, label="environment file"),
+        "__CONFIG_PATH__": _linux_path(inputs.config_path, label="configuration path"),
+        "__STATE_PATH__": _linux_path(inputs.state_path, label="state path"),
+        "__JOURNAL_PATH__": _linux_path(inputs.journal_path, label="journal path"),
+        "__EVIDENCE_PATH__": _linux_path(inputs.evidence_path, label="evidence path"),
+        "__REPORT_PATH__": _linux_path(inputs.report_path, label="report path"),
+    }
+    isolated = (
+        values["__STATE_PATH__"], values["__JOURNAL_PATH__"],
+        values["__EVIDENCE_PATH__"], values["__REPORT_PATH__"],
+    )
+    if len(set(isolated)) != len(isolated) or any(_REQUIRED_V7_MARKER not in item for item in isolated):
+        raise PaperSafetyError("V7 state, journal, evidence, and report paths must be unique and isolated")
+    template = (Path(__file__).parents[1] / "deploy" / SERVICE_NAME).read_text(encoding="utf-8")
+    unit = template
+    for placeholder, value in values.items():
+        unit = unit.replace(placeholder, value)
+    if _PLACEHOLDER.search(unit):
+        raise PaperSafetyError("systemd definition contains unresolved placeholders")
     if any(marker in unit.lower() for marker in _FORBIDDEN_UNIT_TEXT):
         raise PaperSafetyError("credentials are forbidden in systemd definitions")
-    return unit
+    if "--run" not in unit or "v7_certified_demo_service.py" not in unit or "okx demo" not in unit.lower():
+        raise PaperSafetyError("systemd definition is not the dedicated V7 OKX Demo runner")
+    return RenderedUnit(text=unit, content_hash=hashlib.sha256(unit.encode()).hexdigest())
+
+
+def render_service_definition(**kwargs: str) -> str:
+    """Compatibility wrapper for callers that only need unit text."""
+    return render_service_unit(UnitRenderInputs(**kwargs)).text
+
+
+class LinuxSystemdGateway:
+    """Narrow subprocess boundary for the one certified candidate service."""
+
+    def __init__(self, *, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run, timeout: float = 15.0) -> None:
+        self._runner = runner
+        self._timeout = timeout
+
+    @staticmethod
+    def _service(name: str) -> str:
+        if name != SERVICE_NAME:
+            raise PaperSafetyError("only the certified V7 service is permitted")
+        return name
+
+    def _run(self, args: Sequence[str], *, allowed: set[tuple[str, ...]], check: bool = True) -> subprocess.CompletedProcess[str]:
+        command = tuple(args)
+        if command not in allowed:
+            raise PaperSafetyError("systemd command is not allowlisted")
+        try:
+            result = self._runner(list(command), capture_output=True, text=True, timeout=self._timeout, shell=False, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise PaperSafetyError("systemd command timed out") from exc
+        if check and result.returncode != 0:
+            raise PaperSafetyError("systemd command failed")
+        return result
+
+    def inspect(self, service_name: str) -> dict[str, Any]:
+        name = self._service(service_name)
+        enabled = self._run(("systemctl", "is-enabled", name), allowed={("systemctl", "is-enabled", name)}, check=False)
+        active = self._run(("systemctl", "is-active", name), allowed={("systemctl", "is-active", name)}, check=False)
+        known = active.returncode != 4 and enabled.returncode != 4
+        return {"known": known, "enabled": enabled.returncode == 0, "active": active.returncode == 0}
+
+    def install_rendered_unit(self, source: Path, content_hash: str, *, dry_run: bool = False) -> dict[str, Any]:
+        if not source.is_absolute() or not source.is_file():
+            raise PaperSafetyError("rendered unit must be an existing absolute path")
+        content = source.read_text(encoding="utf-8")
+        if hashlib.sha256(content.encode()).hexdigest() != content_hash or _PLACEHOLDER.search(content):
+            raise PaperSafetyError("rendered unit hash or placeholders are invalid")
+        target = f"/etc/systemd/system/{SERVICE_NAME}"
+        command = ("install", "-m", "0644", str(source), target)
+        if dry_run:
+            return {"planned": True, "command": list(command)}
+        self._run(command, allowed={command})
+        return {"installed": True, "service": SERVICE_NAME}
+
+    def install_unit(self, service_name: str, unit_text: str) -> None:
+        """Protocol adapter; CLI installation additionally binds an operator hash."""
+        self._service(service_name)
+        if _PLACEHOLDER.search(unit_text) or any(marker in unit_text.lower() for marker in _FORBIDDEN_UNIT_TEXT):
+            raise PaperSafetyError("unresolved placeholders cannot be installed")
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".service", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(unit_text)
+        try:
+            self.install_rendered_unit(temporary, hashlib.sha256(unit_text.encode()).hexdigest())
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def daemon_reload(self, *, dry_run: bool = False) -> dict[str, Any]:
+        command = ("systemctl", "daemon-reload")
+        if dry_run:
+            return {"planned": True, "command": list(command)}
+        self._run(command, allowed={command})
+        return {"reloaded": True}
+
+    def disable(self, service_name: str, *, dry_run: bool = False) -> dict[str, Any]:
+        name = self._service(service_name)
+        command = ("systemctl", "disable", name)
+        if dry_run:
+            return {"planned": True, "command": list(command)}
+        self._run(command, allowed={command})
+        return {"disabled": True, "service": name}
+
+    def start(self, service_name: str, *, dry_run: bool = False) -> dict[str, Any]:
+        name = self._service(service_name)
+        command = ("systemctl", "start", name)
+        if dry_run:
+            return {"planned": True, "command": list(command)}
+        self._run(command, allowed={command})
+        return {"started": True, "service": name}
+
+    def stop(self, service_name: str, *, dry_run: bool = False) -> dict[str, Any]:
+        name = self._service(service_name)
+        command = ("systemctl", "stop", name)
+        if dry_run:
+            return {"planned": True, "command": list(command)}
+        self._run(command, allowed={command})
+        return {"stopped": True, "service": name}
+
+    def process_identities(self, service_name: str) -> list[dict[str, Any]]:
+        name = self._service(service_name)
+        result = self._run(("systemctl", "show", "--property=MainPID", "--value", name), allowed={("systemctl", "show", "--property=MainPID", "--value", name)}, check=False)
+        main_pid = result.stdout.strip()
+        pattern = "tools/v7_certified_demo_service.py --run"
+        matches = self._run(("pgrep", "-f", pattern), allowed={("pgrep", "-f", pattern)}, check=False)
+        pids = [pid for pid in matches.stdout.splitlines() if pid.isdecimal()]
+        if main_pid and main_pid != "0" and main_pid not in pids:
+            raise PaperSafetyError("systemd main process identity does not match certified runner")
+        return [{"pid": pid, "instance_id": SERVICE_INSTANCE_ID} for pid in pids]
+
+    def health(self, service_name: str) -> dict[str, Any]:
+        name = self._service(service_name)
+        result = self._run(("systemctl", "status", "--no-pager", "--lines=20", name), allowed={("systemctl", "status", "--no-pager", "--lines=20", name)}, check=False)
+        output = (result.stdout + result.stderr)[:_MAX_STATUS_BYTES]
+        return {"returncode": result.returncode, "status": output}
 
 
 class LinuxServiceInterface(Protocol):
@@ -223,11 +378,32 @@ class CertifiedV7DemoServiceManager:
             "health": health,
         }
 
-    def install_inactive(self, *, app_dir: str, run_user: str) -> dict[str, Any]:
+    def install_inactive(
+        self,
+        *,
+        render_inputs: UnitRenderInputs | None = None,
+        app_dir: str | None = None,
+        run_user: str | None = None,
+    ) -> dict[str, Any]:
         state = self.linux.inspect(SERVICE_NAME)
         if state.get("active") is True:
             raise PaperSafetyError("refuse to replace an active certified V7 service")
-        unit = render_service_definition(app_dir=app_dir, run_user=run_user)
+        if render_inputs is None:
+            if not app_dir or not run_user:
+                raise PaperSafetyError("installation requires explicit render inputs")
+            runtime = f"{app_dir}/data/runtime/v7_certified"
+            render_inputs = UnitRenderInputs(
+                run_user=run_user,
+                app_dir=app_dir,
+                python_path=f"{app_dir}/.venv/bin/python",
+                environment_file="/etc/matibot/v7-demo.env",
+                config_path=f"{runtime}/config.json",
+                state_path=f"{runtime}/state.json",
+                journal_path=f"{runtime}/journal.jsonl",
+                evidence_path=f"{runtime}/evidence",
+                report_path=f"{runtime}/reports",
+            )
+        unit = render_service_unit(render_inputs).text
         self.linux.install_unit(SERVICE_NAME, unit)
         self.linux.daemon_reload()
         self.linux.disable(SERVICE_NAME)
@@ -292,9 +468,106 @@ def cutover_gateway(manager: CertifiedV7DemoServiceManager) -> ServiceGateway:
     )
 
 
+def _read_record(path: Path) -> dict[str, Any]:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PaperSafetyError("required record is unavailable or invalid") from exc
+    if not isinstance(record, dict):
+        raise PaperSafetyError("required record is not an object")
+    return record
+
+
+def _write_rendered(path: Path, rendered: RenderedUnit) -> None:
+    if not path.is_absolute():
+        raise PaperSafetyError("render output path must be absolute")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rendered.text, encoding="utf-8", newline="\n")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("render", "install-inactive", "inspect", "start", "stop"))
+    parser.add_argument("--linux-systemd", action="store_true", help="explicitly permit the Linux systemd gateway")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--unit", type=Path)
+    parser.add_argument("--unit-hash")
+    parser.add_argument("--activation", type=Path)
+    parser.add_argument("--activation-hash")
+    parser.add_argument("--lease", type=Path)
+    for name in ("run-user", "app-dir", "python-path", "environment-file", "config-path", "state-path", "journal-path", "evidence-path", "report-path"):
+        parser.add_argument(f"--{name}")
+    return parser
+
+
+def _emit(value: dict[str, Any]) -> None:
+    print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def _gateway(args: Any, injected: LinuxSystemdGateway | None) -> LinuxSystemdGateway:
+    if not args.linux_systemd:
+        raise PaperSafetyError("Linux systemd mode must be explicitly requested")
+    return injected or LinuxSystemdGateway()
+
+
+def _require_activation_and_lease(args: Any) -> None:
+    if not args.activation or not args.activation_hash or not args.lease:
+        raise PaperSafetyError("start requires activation, activation hash, and account lease")
+    activation = _read_record(args.activation)
+    _verify_hash(activation, "activation_hash")
+    if activation["activation_hash"] != args.activation_hash or not activation.get("active") or activation.get("paused"):
+        raise PaperSafetyError("activation record is not valid for service start")
+    lease = DemoAccountLease(args.lease).current()
+    if not lease or lease.get("owner_strategy_id") != SERVICE_STRATEGY or lease.get("owner_instance_id") != SERVICE_INSTANCE_ID:
+        raise PaperSafetyError("account lease is not owned by the certified V7 service")
+    if activation.get("lease_hash") != lease.get("record_hash"):
+        raise PaperSafetyError("activation record is not bound to the account lease")
+
+
+def run(argv: Sequence[str] | None = None, *, gateway: LinuxSystemdGateway | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        if args.command == "render":
+            if not args.output:
+                raise PaperSafetyError("render requires an explicit output path")
+            values = {field: getattr(args, field) for field in UnitRenderInputs.__dataclass_fields__}
+            if any(value is None for value in values.values()):
+                raise PaperSafetyError("render requires all unit runtime inputs")
+            rendered = render_service_unit(UnitRenderInputs(**values))
+            if args.dry_run:
+                _emit({"command": "render", "content_hash": rendered.content_hash, "planned": True})
+            else:
+                _write_rendered(args.output, rendered)
+                _emit({"command": "render", "content_hash": rendered.content_hash, "output": str(args.output)})
+            return 0
+        linux = _gateway(args, gateway)
+        if args.command == "inspect":
+            _emit({"service": SERVICE_NAME, "state": linux.inspect(SERVICE_NAME), "processes": linux.process_identities(SERVICE_NAME), "health": linux.health(SERVICE_NAME)})
+            return 0
+        if args.command == "install-inactive":
+            if not args.unit or not args.unit_hash:
+                raise PaperSafetyError("install-inactive requires unit and rendered-unit hash")
+            result = linux.install_rendered_unit(args.unit, args.unit_hash, dry_run=args.dry_run)
+            if not args.dry_run:
+                linux.daemon_reload()
+                linux.disable(SERVICE_NAME)
+            _emit({"command": args.command, "service": SERVICE_NAME, "result": result, "disabled": True, "active": False})
+            return 0
+        if args.command == "start":
+            _require_activation_and_lease(args)
+            _emit({"command": "start", "service": SERVICE_NAME, "result": linux.start(SERVICE_NAME, dry_run=args.dry_run)})
+            return 0
+        _emit({"command": "stop", "service": SERVICE_NAME, "result": linux.stop(SERVICE_NAME, dry_run=args.dry_run)})
+        return 0
+    except (PaperSafetyError, DemoLeaseError) as exc:
+        _emit({"command": args.command, "error": str(exc), "status": "BLOCKED"})
+        return 2
+
+
 def main() -> int:
-    raise SystemExit("blocked: certified V7 service dependencies must be injected")
+    return run()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
