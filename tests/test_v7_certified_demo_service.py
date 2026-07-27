@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -9,15 +10,18 @@ from core.demo_account_lease import DemoAccountLease
 from core.v7_certified_paper import PaperSafetyError, make_config
 from core.v7_okx_demo import V7OKXDemoRunner
 from tools.v7_certified_demo_service import (
+    LinuxSystemdGateway,
     SERVICE_INSTANCE_ID,
     SERVICE_NAME,
     SERVICE_STRATEGY,
     CertifiedV7DemoServiceManager,
     CertifiedV7DemoServiceRunner,
     StartupInputs,
+    UnitRenderInputs,
     canonical_hash,
     cutover_gateway,
-    render_service_definition,
+    render_service_unit,
+    run,
 )
 
 
@@ -131,18 +135,20 @@ def _startup(
 
 
 def test_unit_is_linux_only_credential_free_and_inactive_by_default():
-    unit = render_service_definition(app_dir="/srv/matibot", run_user="trader")
-    template = (Path(__file__).parents[1] / "deploy" / SERVICE_NAME).read_text()
-    assert SERVICE_NAME not in unit and "enable" not in unit and "C:\\" not in unit
-    assert "v7_certified_demo_service.py --run" in unit and "secret" not in unit.lower()
-    assert (
-        template.replace("__APP_DIR__", "/srv/matibot").replace(
-            "__RUN_USER__", "trader"
-        )
-        == unit
+    inputs = UnitRenderInputs(
+        run_user="trader", app_dir="/srv/matibot", python_path="/srv/matibot/.venv/bin/python",
+        environment_file="/etc/matibot/v7-demo.env", config_path="/srv/matibot/data/runtime/v7_certified/config.json",
+        state_path="/srv/matibot/data/runtime/v7_certified/state.json", journal_path="/srv/matibot/data/runtime/v7_certified/journal.jsonl",
+        evidence_path="/srv/matibot/data/runtime/v7_certified/evidence", report_path="/srv/matibot/data/runtime/v7_certified/reports",
     )
+    rendered = render_service_unit(inputs)
+    unit = rendered.text
+    template = (Path(__file__).parents[1] / "deploy" / SERVICE_NAME).read_text()
+    assert SERVICE_NAME not in unit and "enable" not in unit and "C:\\" not in unit and len(rendered.content_hash) == 64
+    assert "v7_certified_demo_service.py --run" in unit and "secret" not in unit.lower()
+    assert "__" not in unit and template != unit
     with pytest.raises(PaperSafetyError):
-        render_service_definition(app_dir="C:\\bot", run_user="trader")
+        render_service_unit(UnitRenderInputs(**{**inputs.__dict__, "app_dir": "C:\\bot"}))
 
 
 def test_install_is_idempotent_inactive_and_inspection_does_not_mutate():
@@ -152,8 +158,14 @@ def test_install_is_idempotent_inactive_and_inspection_does_not_mutate():
     assert before["state"]["active"] is False and not any(
         call[0] in {"install", "start", "stop", "disable"} for call in linux.calls
     )
-    first = manager.install_inactive(app_dir="/srv/matibot", run_user="trader")
-    second = manager.install_inactive(app_dir="/srv/matibot", run_user="trader")
+    inputs = UnitRenderInputs(
+        run_user="trader", app_dir="/srv/matibot", python_path="/srv/matibot/.venv/bin/python",
+        environment_file="/etc/matibot/v7-demo.env", config_path="/srv/matibot/data/runtime/v7_certified/config.json",
+        state_path="/srv/matibot/data/runtime/v7_certified/state.json", journal_path="/srv/matibot/data/runtime/v7_certified/journal.jsonl",
+        evidence_path="/srv/matibot/data/runtime/v7_certified/evidence", report_path="/srv/matibot/data/runtime/v7_certified/reports",
+    )
+    first = manager.install_inactive(render_inputs=inputs)
+    second = manager.install_inactive(render_inputs=inputs)
     assert (
         first
         == second
@@ -233,3 +245,58 @@ def test_cutover_gateway_only_exposes_dedicated_service():
     gateway = cutover_gateway(CertifiedV7DemoServiceManager(linux))
     assert gateway.status(SERVICE_NAME)["known"] is True
     assert gateway.status("matibot-v6-paper.service")["known"] is False
+
+
+def test_renderer_rejects_injection_credentials_and_non_isolated_paths():
+    base = dict(
+        run_user="trader", app_dir="/srv/matibot", python_path="/srv/matibot/.venv/bin/python",
+        environment_file="/etc/matibot/v7-demo.env", config_path="/srv/matibot/data/runtime/v7_certified/config.json",
+        state_path="/srv/matibot/data/runtime/v7_certified/state.json", journal_path="/srv/matibot/data/runtime/v7_certified/journal.jsonl",
+        evidence_path="/srv/matibot/data/runtime/v7_certified/evidence", report_path="/srv/matibot/data/runtime/v7_certified/reports",
+    )
+    for changed in (
+        {"run_user": "trader\nExecStart=/bin/sh"}, {"config_path": "relative.json"},
+        {"environment_file": "/etc/matibot/api_key.env"}, {"config_path": "/srv/live/config.json"},
+        {"report_path": base["evidence_path"]},
+    ):
+        with pytest.raises(PaperSafetyError):
+            render_service_unit(UnitRenderInputs(**(base | changed)))
+
+
+def test_gateway_is_allowlisted_and_detects_identity_mismatch_timeout_and_duplicates(tmp_path: Path):
+    calls: list[list[str]] = []
+    responses = iter((
+        subprocess.CompletedProcess([], 0, "17\n", ""),
+        subprocess.CompletedProcess([], 0, "17\n18\n", ""),
+    ))
+
+    def runner(args, **_kwargs):
+        calls.append(args)
+        return next(responses)
+
+    gateway = LinuxSystemdGateway(runner=runner)
+    identities = gateway.process_identities(SERVICE_NAME)
+    assert len(identities) == 2 and calls[0][0] == "systemctl" and calls[1][0] == "pgrep"
+    with pytest.raises(PaperSafetyError):
+        gateway.start("matibot-v6-paper.service")
+    with pytest.raises(PaperSafetyError):
+        LinuxSystemdGateway(runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired("systemctl", 1))).stop(SERVICE_NAME)
+    with pytest.raises(PaperSafetyError):
+        LinuxSystemdGateway(runner=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1, "", "failure")).start(SERVICE_NAME)
+
+
+def test_cli_render_is_deterministic_and_never_uses_linux_gateway(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    output = tmp_path / "unit.service"
+    args = [
+        "render", "--output", str(output), "--run-user", "trader", "--app-dir", "/srv/matibot",
+        "--python-path", "/srv/matibot/.venv/bin/python", "--environment-file", "/etc/matibot/v7.env",
+        "--config-path", "/srv/matibot/data/runtime/v7_certified/config.json",
+        "--state-path", "/srv/matibot/data/runtime/v7_certified/state.json",
+        "--journal-path", "/srv/matibot/data/runtime/v7_certified/journal.jsonl",
+        "--evidence-path", "/srv/matibot/data/runtime/v7_certified/evidence",
+        "--report-path", "/srv/matibot/data/runtime/v7_certified/reports",
+    ]
+    assert run(args) == 0 and output.is_file()
+    first = capsys.readouterr().out
+    assert run(args) == 0 and capsys.readouterr().out == first
+    assert run(["start", "--linux-systemd", "--dry-run"]) == 2
