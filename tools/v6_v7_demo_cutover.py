@@ -25,6 +25,7 @@ from core.v7_certified_paper import PaperSafetyError, make_config  # noqa: E402
 
 V6_NAME = "swing_allocator_demo_btc_usdt"
 V7_NAME = "swing_cycle_core_v7_certified_okx_demo"
+V7_SERVICE_NAME = "matibot-v7-certified-okx-demo.service"
 
 
 def canonical_hash(value: object) -> str:
@@ -330,6 +331,7 @@ def create_v7_inactive(
         "candidate_hash": config.candidate_hash,
         "configuration_hash": config.configuration_hash,
         "source_hash": config.source_hash,
+        "execution_contract_hash": config.source_hash,
     }
     record["inactive_hash"] = canonical_hash(record)
     return record
@@ -793,8 +795,8 @@ def run(
                 },
                 lease=lease,
                 root=args.root,
-                start_service=lambda: gateway.start("matibot-v7-paper.service"),
-                service_status=lambda: gateway.status("matibot-v7-paper.service"),
+                start_service=lambda: gateway.start(V7_SERVICE_NAME),
+                service_status=lambda: gateway.status(V7_SERVICE_NAME),
                 now=now,
             )
             _write_json(args.output, manifest)
@@ -804,7 +806,7 @@ def run(
             status = {
                 "schema": "v7-demo-status/v1",
                 "v6_service": gateway.status("matibot-v6-paper.service"),
-                "v7_service": gateway.status("matibot-v7-paper.service"),
+                "v7_service": gateway.status(V7_SERVICE_NAME),
                 "lease": lease.current(),
             }
             if args.activation:
@@ -832,8 +834,8 @@ def run(
             activation=activation,
             expected_hash=args.activation_hash,
             lease=lease,
-            service_action=lambda: operation("matibot-v7-paper.service"),
-            service_status=lambda: gateway.status("matibot-v7-paper.service"),
+            service_action=lambda: operation(V7_SERVICE_NAME),
+            service_status=lambda: gateway.status(V7_SERVICE_NAME),
             predecessor=_read_json(args.transition) if args.transition else None,
             predecessor_hash=args.transition_hash,
             now=now,

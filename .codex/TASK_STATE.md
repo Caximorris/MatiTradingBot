@@ -1,6 +1,6 @@
 # V7 OKX Demo cutover
 
-Current milestone: VM-facing command wrappers and dedicated V7 service.
+Current milestone: operator runbook expansion and mocked end-to-end tests.
 
 Completed:
 
@@ -9,6 +9,7 @@ Completed:
 - Added mocked V6 audit/evidence/guarded-stop and V7 preflight/activation contracts.
 - Added a V7-specific demo execution adapter that rejects any non-demo client.
 - Completed CLI-CUTOVER: deterministic, hash-chained, dependency-injected local cutover commands with mocked tests.
+- Completed V7-DEMO-SERVICE: isolated certified-demo systemd definition, runner validation, and injected VM service wrappers.
 
 Next:
 
