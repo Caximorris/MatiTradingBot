@@ -1,6 +1,6 @@
 import pytest
 
-from core.certification_gate import CertificationGateError, manifest_fingerprint, validate_manifest
+from core.certification_gate import CertificationGateError, manifest_fingerprint, require_paper_or_live_candidate, validate_manifest
 
 
 def _valid_manifest():
@@ -33,4 +33,25 @@ def test_manifest_rejects_tampering(field):
     document = _valid_manifest()
     document[field] = "tampered"
     with pytest.raises(CertificationGateError, match="fingerprint mismatch"):
+        validate_manifest(document)
+
+
+def test_missing_v6_blocks_only_comparator_dependent_claims(tmp_path):
+    document = _valid_manifest() | {"strategy": "swing_cycle_core", "comparator_integrity": "BLOCKED_UNAVAILABLE_EVIDENCE"}
+    document["cases"]["frozen_reference"] = {"status": "UNAVAILABLE", "reason": "protected frozen-V6 funding snapshot unavailable"}
+    document["manifest_sha256"] = manifest_fingerprint(document)
+    document["record_id"] = document["manifest_sha256"]
+    validate_manifest(document)  # execution/replication self-certification remains evaluable
+    path = tmp_path / f"{document['record_id']}.json"
+    path.write_text(__import__("json").dumps(document), encoding="utf-8")
+    with pytest.raises(CertificationGateError, match="paper/live readiness blocked"):
+        require_paper_or_live_candidate(path)
+
+
+def test_unavailable_v6_cannot_be_relabeled_as_passing_statistics():
+    document = _valid_manifest() | {"strategy": "swing_cycle_core", "comparator_integrity": "BLOCKED_UNAVAILABLE_EVIDENCE", "underperformance_vs_v6": "0.1"}
+    document["cases"]["frozen_reference"] = {"status": "UNAVAILABLE", "reason": "protected frozen-V6 funding snapshot unavailable"}
+    document["manifest_sha256"] = manifest_fingerprint(document)
+    document["record_id"] = document["manifest_sha256"]
+    with pytest.raises(CertificationGateError, match="V6-relative statistic"):
         validate_manifest(document)

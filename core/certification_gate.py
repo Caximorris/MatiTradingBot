@@ -43,12 +43,20 @@ def validate_manifest(document: dict[str, Any]) -> None:
     cases = document["cases"]
     for name in REQUIRED_CASES:
         value = cases.get(name)
-        if not isinstance(value, dict) or value.get("status") not in {"PASS", "NOT_APPLICABLE"}:
+        if not isinstance(value, dict) or value.get("status") not in {"PASS", "NOT_APPLICABLE", "UNAVAILABLE", "BLOCKED"}:
             raise CertificationGateError(f"required certification case incomplete: {name}")
-        if value["status"] == "NOT_APPLICABLE" and not value.get("reason"):
+        if value["status"] in {"NOT_APPLICABLE", "UNAVAILABLE", "BLOCKED"} and not value.get("reason"):
             raise CertificationGateError(f"inapplicable case lacks reason: {name}")
-    if document.get("strategy") == "swing_cycle_core" and cases["frozen_reference"]["status"] != "PASS":
-        raise CertificationGateError("V7 cannot be certified without a causal frozen-V6 comparator")
+    if document.get("strategy") == "swing_cycle_core":
+        comparator = cases["frozen_reference"]
+        if comparator["status"] != "PASS":
+            if comparator["status"] not in {"UNAVAILABLE", "BLOCKED"}:
+                raise CertificationGateError("V7 comparator must pass or be explicitly unavailable")
+            if document.get("comparator_integrity") != "BLOCKED_UNAVAILABLE_EVIDENCE":
+                raise CertificationGateError("V7 unavailable comparator lacks blocked verdict")
+            for key in ("underperformance_vs_v6", "v6_final_capital", "v6_relative_metrics"):
+                if key in document:
+                    raise CertificationGateError("V6-relative statistic cannot be populated without protected evidence")
 
 
 def load_valid_manifest(path: Path) -> dict[str, Any]:
@@ -65,3 +73,11 @@ def load_valid_manifest(path: Path) -> dict[str, Any]:
 def require_certified_candidate(path: Path) -> dict[str, Any]:
     """Common gate for reports, shadow, paper, and live dry-run registration."""
     return load_valid_manifest(path)
+
+
+def require_paper_or_live_candidate(path: Path) -> dict[str, Any]:
+    """Paper/live readiness cannot waive an unavailable causal comparator."""
+    document = load_valid_manifest(path)
+    if document.get("comparator_integrity") != "PASS":
+        raise CertificationGateError("paper/live readiness blocked by unavailable comparator evidence")
+    return document
