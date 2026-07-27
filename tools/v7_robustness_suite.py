@@ -27,6 +27,38 @@ BLOCKS = (24, 72, 168, 720)
 REPLICATIONS = 500
 
 
+def load_checkpoint(path: Path | None = None) -> dict[str, object]:
+    source = path or OUT / "checkpoint.json"
+    return json.loads(source.read_text(encoding="utf-8"))
+
+
+def bootstrap_status(state: dict[str, object]) -> list[dict[str, int | str]]:
+    """Return terminal/pending counts without altering the checkpoint."""
+    bootstrap = state.get("bootstrap", {})
+    result: list[dict[str, int | str]] = []
+    for family in ("moving", "stationary"):
+        for block in BLOCKS:
+            key = f"{family}_{block}h"
+            entry = bootstrap.get(key, {})
+            replications = entry.get("replications", {}) if isinstance(entry, dict) else {}
+            completed = len(replications.get("completed", {})) if isinstance(replications, dict) else 0
+            failed = len(replications.get("failed", {})) if isinstance(replications, dict) else 0
+            invalid = len(replications.get("invalid", {})) if isinstance(replications, dict) else 0
+            terminal = completed + failed + invalid
+            result.append({"family": family, "block_hours": block, "completed": completed,
+                           "failed": failed, "invalid": invalid, "pending": max(0, REPLICATIONS - terminal),
+                           "total": REPLICATIONS})
+    return result
+
+
+def completion_summary(state: dict[str, object]) -> dict[str, object]:
+    rows = bootstrap_status(state)
+    terminal = sum(int(row["completed"]) + int(row["failed"]) + int(row["invalid"]) for row in rows)
+    total = len(rows) * REPLICATIONS
+    return {"terminal": terminal, "total": total, "pending": total - terminal,
+            "complete": terminal == total, "families": rows}
+
+
 def _metrics(curve: list[dict[str, str]]) -> dict[str, str]:
     initial, final = Decimal(curve[0]["equity"]), Decimal(curve[-1]["equity"])
     peak, max_dd = initial, Decimal("0")
@@ -153,5 +185,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--replications", type=int, default=REPLICATIONS)
     parser.add_argument("--max-cases", type=int)
+    parser.add_argument("--status", action="store_true", help="print read-only per-family checkpoint status")
+    parser.add_argument("--check-complete", action="store_true", help="exit 0 only when all 4,000 cases are terminal")
     args = parser.parse_args()
-    print(json.dumps(execute(replications=args.replications, max_cases=args.max_cases), indent=2))
+    if args.status or args.check_complete:
+        summary = completion_summary(load_checkpoint())
+        print(json.dumps(summary, indent=2))
+        if args.check_complete and not summary["complete"]:
+            raise SystemExit(2)
+    else:
+        try:
+            state = execute(replications=args.replications, max_cases=args.max_cases)
+        except Exception as exc:
+            print(f"BOOTSTRAP_FATAL: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        summary = completion_summary(state)
+        print(f"BOOTSTRAP_COMPLETE={str(summary['complete']).lower()} TERMINAL={summary['terminal']}/{summary['total']} PENDING={summary['pending']}")
