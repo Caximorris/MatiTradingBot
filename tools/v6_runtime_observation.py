@@ -1,0 +1,212 @@
+"""Read-only, injectable V6 runtime and OKX Demo observation adapters."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Protocol
+
+from core.v7_certified_paper import PaperSafetyError
+from tools.v6_v7_demo_cutover import V6_NAME, canonical_hash
+
+V6_SERVICE = "matibot-v6-paper.service"
+_SECRET = ("secret", "password", "passphrase", "api_key", "private_key", "access_token")
+
+
+class ReadOnlyService(Protocol):
+    def inspect(self, name: str) -> dict[str, Any]: ...
+    def process_identities(self, name: str) -> list[dict[str, Any]]: ...
+
+
+def _safe(value: object) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if any(word in str(key).lower() for word in _SECRET):
+                raise PaperSafetyError("credential-shaped output is prohibited")
+            _safe(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _safe(child)
+
+
+def _json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise PaperSafetyError(
+            "required runtime JSON is unavailable or invalid"
+        ) from exc
+    if not isinstance(value, dict):
+        raise PaperSafetyError("required runtime JSON must be an object")
+    _safe(value)
+    return value
+
+
+def _summary(path: Path) -> dict[str, Any]:
+    """Integrity-only JSONL summary; never returns raw journal rows."""
+    if not path.is_file():
+        raise PaperSafetyError("V6 journal is unavailable")
+    digest, rows, unresolved = hashlib.sha256(), 0, False
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise ValueError
+            _safe(row)
+            rows += 1
+            digest.update(line.encode())
+            unresolved |= row.get("status") in {"pending", "ambiguous", "unreconciled"}
+    except ValueError as exc:
+        raise PaperSafetyError("V6 journal is corrupt") from exc
+    return {
+        "path": str(path),
+        "row_count": rows,
+        "sha256": digest.hexdigest(),
+        "unresolved": unresolved,
+    }
+
+
+def collect_v6_runtime(
+    *,
+    config_path: Path,
+    state_path: Path,
+    journal_path: Path,
+    service: ReadOnlyService,
+    source_commit: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    config, state = _json(config_path), _json(state_path)
+    if config.get("execution") != "okx_demo" or config.get("mode") not in {
+        "paper",
+        "okx_demo",
+        None,
+    }:
+        raise PaperSafetyError("V6 configuration is not confirmed OKX Demo paper mode")
+    if config.get("strategy") not in {None, V6_NAME} or config.get("instance_id") in (
+        None,
+        "",
+    ):
+        raise PaperSafetyError("V6 configuration identity is missing or ambiguous")
+    status = service.inspect(V6_SERVICE)
+    identities = service.process_identities(V6_SERVICE)
+    if not status.get("known") or status.get("active") is not True:
+        raise PaperSafetyError("V6 service is unknown or inactive")
+    if len(identities) != 1 or identities[0].get("instance_id") not in {
+        None,
+        config["instance_id"],
+    }:
+        raise PaperSafetyError("V6 process identity is ambiguous")
+    if (
+        state.get("pending")
+        or state.get("pending_order")
+        or state.get("state") == "ERROR_LOCKED"
+        or state.get("locked")
+    ):
+        raise PaperSafetyError("V6 runtime has pending or locked state")
+    candle = state.get("last_completed_candle")
+    if not candle or state.get("data_fresh") is False:
+        raise PaperSafetyError("V6 completed-candle freshness is unavailable")
+    runtime = {
+        "schema": "v6-runtime-observation/v1",
+        "collected_at": (now or datetime.now(timezone.utc)).isoformat(),
+        "service": {**status, "name": V6_SERVICE, "process": identities[0]},
+        "source_commit": source_commit,
+        "config": config,
+        "state": state,
+        "journal": _summary(journal_path),
+    }
+    runtime["content_hash"] = canonical_hash(runtime)
+    return runtime
+
+
+def observe_okx_demo_account(
+    client: Any, *, symbol: str, now: datetime | None = None
+) -> dict[str, Any]:
+    """Use only observation methods from the existing OKXDemoClient contract."""
+    required = ("get_balance", "get_positions", "get_open_orders", "get_order_history")
+    if (
+        any(not callable(getattr(client, method, None)) for method in required)
+        or callable(getattr(client, "place_order", None)) is False
+    ):
+        raise PaperSafetyError("incomplete OKX Demo client contract")
+    if getattr(client, "is_paper", True) is not True or getattr(
+        client, "endpoint", "okx_demo"
+    ) not in {"okx_demo", "demo"}:
+        raise PaperSafetyError("production endpoint is prohibited")
+    balances = client.get_balance()
+    if not isinstance(balances, dict) or not balances:
+        raise PaperSafetyError("OKX Demo balances are unavailable or ambiguous")
+    _safe(balances)
+    cash, btc = balances.get("USDT", Decimal("0")), balances.get("BTC", Decimal("0"))
+    unsupported = {
+        key: str(value)
+        for key, value in balances.items()
+        if key not in {"USDT", "BTC"} and Decimal(str(value)) != 0
+    }
+    account = {
+        "schema": "okx-demo-account-observation/v1",
+        "observed_at": (now or datetime.now(timezone.utc)).isoformat(),
+        "endpoint": "okx_demo",
+        "demo_confirmed": True,
+        "fingerprint": hashlib.sha256(
+            (str(getattr(client, "account_id", "demo")) + symbol).encode()
+        ).hexdigest()[:16],
+        "cash": str(cash),
+        "btc": str(btc),
+        "target": str(btc),
+        "open_orders": client.get_open_orders(symbol),
+        "positions": client.get_positions(),
+        "recent_orders": client.get_order_history(symbol, limit=20),
+        "unsupported_assets": unsupported,
+        "available_balance": str(cash),
+        "precision": getattr(client, "precision", {}),
+        "minimum_size": getattr(client, "minimum_size", {}),
+    }
+    _safe(account)
+    account["observation_hash"] = canonical_hash(account)
+    return account
+
+
+def build_v6_audit_inputs(
+    runtime: dict[str, Any], account: dict[str, Any], destination: Path
+) -> dict[str, Any]:
+    _safe((runtime, account))
+    if runtime.get("content_hash") != canonical_hash(
+        {key: value for key, value in runtime.items() if key != "content_hash"}
+    ) or account.get("observation_hash") != canonical_hash(
+        {key: value for key, value in account.items() if key != "observation_hash"}
+    ):
+        raise PaperSafetyError("runtime or account observation hash is invalid")
+    destination.mkdir(parents=True, exist_ok=True)
+    config, state = runtime["config"], runtime["state"]
+    files = {
+        "v6-config.json": config,
+        "v6-state.json": state,
+        "account-observation.json": account,
+    }
+    hashes = {}
+    for name, value in files.items():
+        text = json.dumps(value, sort_keys=True, indent=2)
+        (destination / name).write_text(text, encoding="utf-8")
+        hashes[name] = hashlib.sha256(text.encode()).hexdigest()
+    manifest = {
+        "schema": "v6-audit-inputs/v1",
+        "files": hashes,
+        "source_commit": runtime["source_commit"],
+        "instance_id": config["instance_id"],
+        "service_identity": runtime["service"],
+        "account_fingerprint": account["fingerprint"],
+        "collection_timestamp": runtime["collected_at"],
+        "demo_confirmed": account["demo_confirmed"],
+        "verdict": "PASS",
+    }
+    manifest["manifest_hash"] = canonical_hash(manifest)
+    (destination / "manifest.json").write_text(
+        json.dumps(manifest, sort_keys=True, indent=2), encoding="utf-8"
+    )
+    return manifest
