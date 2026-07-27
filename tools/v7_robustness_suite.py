@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import sys
+import argparse
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,6 +22,9 @@ OUT = ROOT / ".v7-corrected-robustness"
 CACHE = ROOT / "data" / "cache" / "BTC-USDT_1H.json"
 START = datetime(2014, 4, 26, tzinfo=UTC)
 END = datetime(2026, 1, 1, tzinfo=UTC)
+MASTER_SEED = 20260727
+BLOCKS = (24, 72, 168, 720)
+REPLICATIONS = 500
 
 
 def _metrics(curve: list[dict[str, str]]) -> dict[str, str]:
@@ -81,11 +85,18 @@ def cases() -> list[tuple[str, Spec]]:
     return items
 
 
-def execute() -> dict[str, object]:
+def _case_seed(method: str, block: int, replication: int) -> int:
+    material = f"{MASTER_SEED}:{method}:{block}:{replication}".encode()
+    return int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
+
+
+def execute(*, replications: int = REPLICATIONS, max_cases: int | None = None) -> dict[str, object]:
     bars = load_canonical(CACHE, START, END)
     state_path = OUT / "checkpoint.json"
     OUT.mkdir(parents=True, exist_ok=True)
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {"dataset_sha256": hashlib.sha256(CACHE.read_bytes()).hexdigest(), "cases": {}}
+    state["bootstrap_contract"] = {"master_seed": MASTER_SEED, "replications_per_method_block": replications,
+                                   "checkpoint_interval": 25, "method_limit": "calendar schedule fixed while sampled OHLC paths are rebased; stress diagnostic only"}
     for name, spec in cases():
         if name not in state["cases"]:
             state["cases"][name] = _case(name, bars, spec)
@@ -106,19 +117,41 @@ def execute() -> dict[str, object]:
     bootstrap = state.setdefault("bootstrap", {})
     for stationary in (False, True):
         family = "stationary" if stationary else "moving"
-        for block in (24, 72, 168, 720):
+        for block in BLOCKS:
             key = f"{family}_{block}h"
-            if key in bootstrap:
-                continue
-            rows = [_case(f"{key}_seed{seed}", _bootstrap_sample(bars, block, stationary, seed), Spec())
-                    for seed in range(3)]
-            bootstrap[key] = {"block_hours": block, "method": family, "replications": rows,
-                              "loss_frequency": sum(Decimal(row["final_capital"]) < Decimal("10000") for row in rows) / len(rows)}
-            state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    state["status"] = "COMPLETE_CORE_MATRIX"
+            entry = bootstrap.setdefault(key, {"block_hours": block, "method": family, "replications": {"completed": {}, "failed": {}}})
+            if isinstance(entry.get("replications"), list):
+                # Legacy n=3 checkpoint is retained but cannot count toward the
+                # fixed master-seed primary suite.
+                entry["legacy_replications"] = entry["replications"]
+                entry["replications"] = {"completed": {}, "failed": {}}
+            cases_done = 0
+            for replication in range(replications):
+                label = str(replication)
+                if label in entry["replications"]["completed"] or label in entry["replications"]["failed"]:
+                    continue
+                seed = _case_seed(family, block, replication)
+                try:
+                    entry["replications"]["completed"][label] = _case(f"{key}_seed{seed}", _bootstrap_sample(bars, block, stationary, seed), frozen_spec()) | {"seed": seed}
+                except Exception as exc:  # preserve failed seed; never replace it
+                    entry["replications"]["failed"][label] = {"seed": seed, "error": repr(exc)}
+                cases_done += 1
+                if cases_done % 25 == 0 or (max_cases is not None and cases_done >= max_cases):
+                    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+                if max_cases is not None and cases_done >= max_cases:
+                    state["status"] = "IN_PROGRESS"
+                    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+                    return state
+    state["status"] = "COMPLETE_PRIMARY_BOOTSTRAP" if all(
+        len(item["replications"]["completed"]) + len(item["replications"]["failed"]) >= replications
+        for item in bootstrap.values()) else "IN_PROGRESS"
     state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
     return state
 
 
 if __name__ == "__main__":
-    print(json.dumps(execute(), indent=2))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--replications", type=int, default=REPLICATIONS)
+    parser.add_argument("--max-cases", type=int)
+    args = parser.parse_args()
+    print(json.dumps(execute(replications=args.replications, max_cases=args.max_cases), indent=2))
