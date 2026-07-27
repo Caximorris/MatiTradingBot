@@ -47,6 +47,8 @@ def validate_manifest(document: dict[str, Any]) -> None:
             raise CertificationGateError(f"required certification case incomplete: {name}")
         if value["status"] == "NOT_APPLICABLE" and not value.get("reason"):
             raise CertificationGateError(f"inapplicable case lacks reason: {name}")
+    if document.get("strategy") == "swing_cycle_core" and cases["frozen_reference"]["status"] != "PASS":
+        raise CertificationGateError("V7 cannot be certified without a causal frozen-V6 comparator")
 
 
 def load_valid_manifest(path: Path) -> dict[str, Any]:
