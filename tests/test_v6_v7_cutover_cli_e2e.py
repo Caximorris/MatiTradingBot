@@ -9,6 +9,7 @@ from tools import v6_runtime_observation as observation
 from tools import v6_v7_demo_cutover as cutover
 from tools.v6_v7_demo_cutover import ServiceGateway
 from core.demo_account_lease import DemoAccountLease
+from tools.v7_certified_demo_service import run as service_run
 
 
 NOW = datetime(2026, 7, 27, 6, tzinfo=timezone.utc)
@@ -60,5 +61,8 @@ def test_full_v6_cli_artifact_chain_is_parser_driven_and_secret_free(tmp_path: P
     stopped = tmp_path / "stopped.json"
     assert cutover.run(["stop-v6", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--audit-hash", json.loads(audit.read_text())["audit_hash"], "--evidence", str(evidence / "v6_demo_evidence.json"), "--instance-id", "v6", "--account-fingerprint", json.loads(account.read_text())["fingerprint"], "--output", str(stopped)], gateway=gateway, now=NOW) == 0
     assert active["value"] is False and lease.current() is None
+    called = []
+    assert service_run(["--run"], service_factory=lambda parsed: called.append(parsed.run)) == 0
+    assert called == [True]
     assert json.loads(audit.read_text())["verdict"] == "PASS"
     assert all("secret" not in path.read_text().lower() for path in tmp_path.rglob("*.json"))

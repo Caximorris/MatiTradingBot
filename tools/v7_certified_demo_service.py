@@ -617,13 +617,14 @@ def _require_activation_and_lease(args: Any) -> None:
         raise PaperSafetyError("activation record is not bound to the account lease")
 
 
-def run(argv: Sequence[str] | None = None, *, gateway: LinuxSystemdGateway | None = None) -> int:
+def run(argv: Sequence[str] | None = None, *, gateway: LinuxSystemdGateway | None = None,
+        service_factory: Callable[[Any], None] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.run:
             if args.command is not None:
                 raise PaperSafetyError("--run cannot be combined with a service management command")
-            _run_service(args)
+            (service_factory or _run_service)(args)
             return 0
         if args.command is None:
             raise PaperSafetyError("a service management command is required")
