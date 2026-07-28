@@ -8,6 +8,7 @@ from pathlib import Path
 from tools import v6_runtime_observation as observation
 from tools import v6_v7_demo_cutover as cutover
 from tools.v6_v7_demo_cutover import ServiceGateway
+from core.demo_account_lease import DemoAccountLease
 
 
 NOW = datetime(2026, 7, 27, 6, tzinfo=timezone.utc)
@@ -54,5 +55,10 @@ def test_full_v6_cli_artifact_chain_is_parser_driven_and_secret_free(tmp_path: P
     assert cutover.run(["show-audit", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit)], gateway=gateway) == 0
     evidence = tmp_path / "evidence"
     assert cutover.run(["export-v6-evidence", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--v6-journal", str(journal), "--output", str(evidence)], gateway=gateway, now=NOW) == 0
+    lease = DemoAccountLease(tmp_path / "lease.jsonl")
+    lease.acquire(fingerprint=json.loads(account.read_text())["fingerprint"], owner_strategy_id=cutover.V6_NAME, owner_instance_id="v6", source_commit="sha", configuration_hash="cfg", now=NOW)
+    stopped = tmp_path / "stopped.json"
+    assert cutover.run(["stop-v6", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--audit-hash", json.loads(audit.read_text())["audit_hash"], "--evidence", str(evidence / "v6_demo_evidence.json"), "--instance-id", "v6", "--account-fingerprint", json.loads(account.read_text())["fingerprint"], "--output", str(stopped)], gateway=gateway, now=NOW) == 0
+    assert active["value"] is False and lease.current() is None
     assert json.loads(audit.read_text())["verdict"] == "PASS"
     assert all("secret" not in path.read_text().lower() for path in tmp_path.rglob("*.json"))
