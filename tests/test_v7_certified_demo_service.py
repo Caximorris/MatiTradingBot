@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 import subprocess
 
@@ -9,6 +10,7 @@ import pytest
 from core.demo_account_lease import DemoAccountLease
 from core.v7_certified_paper import PaperSafetyError, make_config
 from core.v7_okx_demo import V7OKXDemoRunner
+from data.market_data import OHLCVBar
 from tools.v7_certified_demo_service import (
     LinuxSystemdGateway,
     SERVICE_INSTANCE_ID,
@@ -18,6 +20,7 @@ from tools.v7_certified_demo_service import (
     CertifiedV7DemoServiceRunner,
     StartupInputs,
     UnitRenderInputs,
+    V7RuntimeLoop,
     canonical_hash,
     cutover_gateway,
     render_service_unit,
@@ -300,3 +303,61 @@ def test_cli_render_is_deterministic_and_never_uses_linux_gateway(tmp_path: Path
     first = capsys.readouterr().out
     assert run(args) == 0 and capsys.readouterr().out == first
     assert run(["start", "--linux-systemd", "--dry-run"]) == 2
+
+
+class _Startup:
+    def __init__(self, error: Exception | None = None):
+        self.error = error
+
+    def validate_startup(self):
+        if self.error:
+            raise self.error
+
+
+class _Runner:
+    def __init__(self, cash="100", btc="1", error: Exception | None = None):
+        self.client = type("Client", (), {"get_balance": lambda s: {"USDT": Decimal(cash), "BTC": Decimal(btc)}})()
+        self.calls = []
+        self.error = error
+
+    def submit_transition(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        return {"status": "reconciled", "fill_id": "fill-1"}
+
+
+def _bars(hour=4):
+    return [OHLCVBar(int(datetime(2026, 7, 27, hour, tzinfo=timezone.utc).timestamp() * 1000), Decimal("100"), Decimal("101"), Decimal("99"), Decimal("100"), Decimal("1"))]
+
+
+def _loop(tmp_path, runner, *, bars=None, now=datetime(2026, 7, 27, 6, tzinfo=timezone.utc), v6=False, target=None):
+    return V7RuntimeLoop(startup=_Startup(), runner=runner, candles=lambda: bars or _bars(),
+        v6_status=lambda: {"active": v6}, state_path=tmp_path / "state.json", now=lambda: now,
+        target_for=target or (lambda _at, _cash, btc, _price: btc))
+
+
+def test_runtime_cycle_no_order_heartbeat_and_restart_idempotency(tmp_path: Path):
+    runner = _Runner()
+    loop = _loop(tmp_path, runner)
+    first = loop.cycle()
+    assert first["order"] == "not_required" and first["heartbeat_at"] and not runner.calls
+    assert _loop(tmp_path, runner).cycle()["last_cycle"] == "duplicate" and not runner.calls
+
+
+def test_runtime_cycle_submits_exactly_one_reconciled_transition(tmp_path: Path):
+    runner = _Runner(btc="1")
+    result = _loop(tmp_path, runner, target=lambda *_: Decimal("0")).cycle()
+    assert len(runner.calls) == 1 and result["order"]["fill_id"] == "fill-1"
+
+
+@pytest.mark.parametrize("bars,now", [(_bars(4), datetime(2026, 7, 27, 4, 30, tzinfo=timezone.utc)), (_bars(4) + _bars(4), NOW)])
+def test_runtime_rejects_incomplete_or_duplicate_candles(tmp_path: Path, bars, now):
+    with pytest.raises(PaperSafetyError):
+        _loop(tmp_path, _Runner(), bars=bars, now=now).cycle()
+
+
+@pytest.mark.parametrize("runner,v6,now", [(_Runner(error=PaperSafetyError("fill failed")), False, datetime(2026, 7, 27, 6, tzinfo=timezone.utc)), (_Runner(), True, NOW), (_Runner(), False, datetime(2026, 7, 28, 12, tzinfo=timezone.utc))])
+def test_runtime_fails_closed_for_fill_v6_or_stale_data(tmp_path: Path, runner, v6, now):
+    with pytest.raises(PaperSafetyError):
+        _loop(tmp_path, runner, v6=v6, now=now, target=lambda *_: Decimal("0")).cycle()
