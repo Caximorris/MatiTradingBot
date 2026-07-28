@@ -10,6 +10,8 @@ from tools import v6_v7_demo_cutover as cutover
 from tools.v6_v7_demo_cutover import ServiceGateway
 from core.demo_account_lease import DemoAccountLease
 from tools.v7_certified_demo_service import run as service_run
+from tools.v7_certified_demo_service import V7RuntimeLoop
+from data.market_data import OHLCVBar
 
 
 NOW = datetime(2026, 7, 27, 6, tzinfo=timezone.utc)
@@ -72,6 +74,32 @@ def test_full_v6_cli_artifact_chain_is_parser_driven_and_secret_free(tmp_path: P
     assert cutover.run(["activate-v7", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--evidence", str(evidence / "v6_demo_evidence.json"), "--stop-record", str(stopped), "--inactive", str(inactive), "--preflight", str(preflight), "--ack-fragile", "--ack-not-live-ready", "--ack-sole-owner", "--output", str(activation)], gateway=gateway, now=NOW) == 0
     assert starts == [True] and json.loads(activation.read_text())["active"] is True
     assert cutover.run(["status", "--lease", str(tmp_path / "lease.jsonl"), "--activation", str(activation)], gateway=gateway) == 0
+    class Startup:
+        def validate_startup(self):
+            return None
+    class Runner:
+        def __init__(self):
+            self.client = type("Client", (), {"get_balance": lambda _: {"USDT": Decimal("0"), "BTC": Decimal("1")}})()
+            self.calls = []
+        def submit_transition(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"status": "reconciled", "fill_id": "fake-fill"}
+    runner = Runner()
+    bar = OHLCVBar(int(datetime(2026, 7, 27, 4, tzinfo=timezone.utc).timestamp() * 1000), Decimal("100"), Decimal("100"), Decimal("100"), Decimal("100"), Decimal("1"))
+    bar2 = OHLCVBar(int(datetime(2026, 7, 27, 8, tzinfo=timezone.utc).timestamp() * 1000), Decimal("100"), Decimal("100"), Decimal("100"), Decimal("100"), Decimal("1"))
+    bars = [bar]
+    ran = []
+    def factory(parsed):
+        assert parsed.run and not active["value"] is False
+        loop = V7RuntimeLoop(startup=Startup(), runner=runner, candles=lambda: bars, v6_status=lambda: {"active": False}, state_path=tmp_path / "v7-state.json", now=lambda: datetime(2026, 7, 27, 8, 30, tzinfo=timezone.utc), target_for=lambda _a, _c, btc, _p: btc)
+        assert loop.cycle()["order"] == "not_required"
+        loop.target_for = lambda *_: Decimal("0")
+        bars[:] = [bar, bar2]
+        loop.now = lambda: datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+        assert loop.cycle()["order"]["fill_id"] == "fake-fill"
+        assert loop.cycle()["last_cycle"] == "duplicate"
+        ran.append(True)
+    assert service_run(["--run"], service_factory=factory) == 0 and ran == [True] and len(runner.calls) == 1
     called = []
     assert service_run(["--run"], service_factory=lambda parsed: called.append(parsed.run)) == 0
     assert called == [True]
