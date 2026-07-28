@@ -21,10 +21,13 @@ from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Protocol, Sequence
 
+from data.market_data import OHLCVBar
 from core.demo_account_lease import DemoAccountLease, DemoLeaseError
 from core.v7_certified_paper import PaperSafetyError, make_config
 from core.v7_okx_demo import V7OKXDemoRunner
 from tools.v6_v7_demo_cutover import ServiceGateway
+from strategies.cycle_phase_clock import CyclePhaseClock
+from strategies.swing_cycle_core import SwingCycleCoreBot, SwingCycleCoreConfig
 
 
 SERVICE_NAME = "matibot-v7-certified-okx-demo.service"
@@ -362,6 +365,90 @@ class CertifiedV7DemoServiceRunner:
         }
 
 
+class V7RuntimeLoop:
+    """One closed-candle V7 cycle; dependencies are explicit for offline tests."""
+
+    def __init__(
+        self, *, startup: CertifiedV7DemoServiceRunner, runner: V7OKXDemoRunner,
+        candles: Callable[[], list[OHLCVBar]], v6_status: Callable[[], dict[str, Any]],
+        state_path: Path, now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        target_for: Callable[[datetime, Decimal, Decimal, Decimal], Decimal] | None = None,
+    ) -> None:
+        self.startup, self.runner, self.candles, self.v6_status = startup, runner, candles, v6_status
+        self.state_path, self.now = state_path, now
+        self.target_for = target_for or self._certified_target
+
+    @staticmethod
+    def _certified_target(at: datetime, cash: Decimal, btc: Decimal, price: Decimal) -> Decimal:
+        # Reuse the frozen V7 phase target implementation; sizing is operational,
+        # not a strategy rule, and uses only the completed decision price.
+        phase = CyclePhaseClock().phase_at(at)[1]
+        strategy = object.__new__(SwingCycleCoreBot)
+        strategy._cfg = SwingCycleCoreConfig(operational_mode="paper")
+        pct = strategy.target_for_phase(phase)
+        return Decimal("0") if pct == 0 else (cash / price + btc)
+
+    def _read_state(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+    def _write_state(self, state: dict[str, Any]) -> None:
+        state["heartbeat_at"] = self.now().astimezone(timezone.utc).isoformat()
+        _write_rendered_json(self.state_path, state)
+
+    def cycle(self) -> dict[str, Any]:
+        self.startup.validate_startup()
+        if self.v6_status().get("active") is not False:
+            raise PaperSafetyError("V6 became active while certified V7 was running")
+        now = self.now().astimezone(timezone.utc)
+        bars = self.candles()
+        if not bars:
+            raise PaperSafetyError("completed V7 candles are unavailable")
+        if any(bar.timestamp >= int(now.timestamp() * 1000) - 3_600_000 for bar in bars):
+            raise PaperSafetyError("incomplete candle is prohibited")
+        if any(right.timestamp <= left.timestamp for left, right in zip(bars, bars[1:])):
+            raise PaperSafetyError("duplicate or non-monotonic candle is prohibited")
+        decision = datetime.fromtimestamp(bars[-1].timestamp / 1000, tz=timezone.utc)
+        state = self._read_state()
+        if decision.hour % 4:
+            state.update(last_cycle="skipped_cadence", last_candle=decision.isoformat())
+            self._write_state(state)
+            return state
+        if state.get("last_processed_candle") == decision.isoformat():
+            state.update(last_cycle="duplicate", last_candle=decision.isoformat())
+            self._write_state(state)
+            return state
+        age = (now - decision).total_seconds()
+        if age > 5 * 3600:
+            raise PaperSafetyError("stale completed candle")
+        balances = self.runner.client.get_balance()
+        cash, btc = Decimal(balances.get("USDT", "0")), Decimal(balances.get("BTC", "0"))
+        target = self.target_for(decision, cash, btc, bars[-1].close)
+        result: dict[str, Any] = {"last_candle": decision.isoformat(), "target_btc": str(target)}
+        if target == btc:
+            result["order"] = "not_required"
+        else:
+            intent = f"v7-{decision.strftime('%Y%m%dT%H%M%SZ')}"
+            result["order"] = self.runner.submit_transition(
+                intent_id=intent, target_btc=target, decision_at=decision,
+                execution_at=now,
+            )
+        result.update(last_processed_candle=decision.isoformat(), last_cycle="reconciled")
+        state.update(result)
+        self._write_state(state)
+        return state
+
+
+def _write_rendered_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
+
+
 class CertifiedV7DemoServiceManager:
     """Narrow wrapper around a Linux service interface for this unit only."""
 
@@ -607,10 +694,14 @@ def _run_service(args: Any) -> None:
     )
     guarded.validate_startup()
     runner.adopt_account(target_btc=Decimal(str(account["btc"])), now=datetime.now(timezone.utc))
+    loop = V7RuntimeLoop(
+        startup=guarded, runner=runner,
+        candles=lambda: client.get_ohlcv("BTC-USDT", timeframe="1H", limit=6000),
+        v6_status=lambda: systemd.status("matibot-v6-paper.service"),
+        state_path=Path(args.state_path),
+    )
     while True:
-        runner._require_owner()
-        if systemd.status("matibot-v6-paper.service").get("active") is not False:
-            raise PaperSafetyError("V6 became active while certified V7 was running")
+        loop.cycle()
         time.sleep(30)
 
 
