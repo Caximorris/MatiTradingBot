@@ -302,7 +302,7 @@ def build_v6_audit_inputs(
     hashes = {}
     for name, value in files.items():
         text = json.dumps(value, sort_keys=True, indent=2)
-        (destination / name).write_text(text, encoding="utf-8")
+        (destination / name).write_text(text, encoding="utf-8", newline="\n")
         hashes[name] = hashlib.sha256(text.encode()).hexdigest()
     manifest = {
         "schema": "v6-audit-inputs/v1",
@@ -331,8 +331,6 @@ def _emit(value: dict[str, Any], as_json: bool) -> None:
 
 
 def _path(value: str) -> Path:
-    if "\\" in value:
-        raise PaperSafetyError("Windows paths are prohibited")
     return Path(value)
 
 
