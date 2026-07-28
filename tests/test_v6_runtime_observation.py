@@ -12,6 +12,7 @@ from tools.v6_runtime_observation import (
     build_v6_audit_inputs,
     collect_v6_runtime,
     observe_okx_demo_account,
+    validate_demo_runtime_config,
 )
 
 NOW = datetime(2026, 7, 27, tzinfo=timezone.utc)
@@ -47,6 +48,20 @@ class Client:
 
     def get_order_history(self, _, limit=20):
         return []
+
+    def get_fills(self, _, limit=20):
+        return []
+
+    def get_instrument(self, _):
+        if hasattr(self, "precision"):
+            return self.precision
+        return {"tickSz": "0.1", "lotSz": "0.0001", "minSz": "0.0001"}
+
+    def get_position_mode(self):
+        return {"position_mode": "net_mode"}
+
+    def get_fee_metadata(self, _):
+        return {"maker": "-0.001", "taker": "-0.001"}
 
     def place_order(self, *_a, **_k):
         raise AssertionError("must never submit")
@@ -147,3 +162,19 @@ def test_observer_rejects_live_and_secret_fields():
     client.precision = {"api_key": "no"}
     with pytest.raises(PaperSafetyError):
         observe_okx_demo_account(client, symbol="BTC-USDT", now=NOW)
+
+
+def test_runtime_config_allows_only_boolean_secret_presence_markers():
+    base = {
+        "trading_mode": "paper", "simulated_trading": True, "demo_confirmed": True,
+        "okx_demo_domain": "https://www.okx.com", "demo_api_key_present": True,
+        "demo_secret_present": True, "demo_passphrase_present": True,
+    }
+    validate_demo_runtime_config(base)
+    for key, value in (("demo_secret_present", "true"), ("demo_api_key_present", 1), ("demo_passphrase_present", False)):
+        bad = base | {key: value}
+        with pytest.raises(PaperSafetyError):
+            validate_demo_runtime_config(bad)
+    for key in ("demo_api_key", "demo_secret", "demo_passphrase", "credential_value"):
+        with pytest.raises(PaperSafetyError):
+            validate_demo_runtime_config(base | {key: "not-a-real-secret"})

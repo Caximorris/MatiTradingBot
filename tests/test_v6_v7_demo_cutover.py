@@ -262,7 +262,7 @@ def test_cli_dry_runs_do_not_mutate_and_default_gateway_fails_closed(tmp_path: P
 def test_cli_audit_is_read_only_with_injected_service(tmp_path: Path):
     config = tmp_path / "config.json"
     config.write_text(
-        '{"execution":"okx_demo","mode":"paper","configuration_hash":"cfg","source_commit":"sha"}'
+        '{"execution":"okx_demo","mode":"paper","configuration_hash":"cfg","instance_id":"v6-instance"}'
     )
     state = tmp_path / "state.json"
     state.write_text(
@@ -274,6 +274,20 @@ def test_cli_audit_is_read_only_with_injected_service(tmp_path: Path):
     )
     account = tmp_path / "account.json"
     account.write_text(__import__("json").dumps(_account()))
+    import hashlib
+    files = {"v6-config.json": config, "v6-state.json": state, "account-observation.json": account}
+    manifest = {
+        "schema": "v6-audit-inputs/v1",
+        "files": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()},
+        "source_commit": "sha", "instance_id": "v6-instance",
+        "service_identity": {"name": "matibot-v6-paper.service"},
+        "account_fingerprint": "fp", "collection_timestamp": "2026-07-27T00:00:00+00:00",
+        "demo_confirmed": True, "verdict": "PASS",
+    }
+    manifest["manifest_hash"] = canonical_hash(manifest)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(__import__("json").dumps(manifest))
+    output = tmp_path / "audit.json"
     gateway = ServiceGateway(
         identity=lambda _name: {"known": True, "active": True},
         status=lambda _name: {"active": False},
@@ -297,12 +311,14 @@ def test_cli_audit_is_read_only_with_injected_service(tmp_path: Path):
                 str(account),
                 "--account-fingerprint",
                 "fp",
+                "--manifest", str(manifest_path), "--output", str(output),
             ],
             gateway=gateway,
             now=NOW,
         )
         == 0
     )
+    assert output.is_file()
     assert not lease_path.exists()
 
 

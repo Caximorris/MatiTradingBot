@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -136,6 +137,78 @@ def unavailable_gateway() -> ServiceGateway:
     return ServiceGateway(unavailable, unavailable, mutate, mutate)
 
 
+class LinuxCutoverGateway:
+    """The only concrete systemd boundary exposed by this CLI.
+
+    The allowlist deliberately contains the retiring V6 unit and the dedicated
+    V7 unit only.  V6 can never be started from this boundary.
+    """
+
+    _SERVICES = frozenset({"matibot-v6-paper.service", V7_SERVICE_NAME})
+
+    def __init__(self, runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run, timeout: float = 15.0) -> None:
+        self.runner, self.timeout = runner, timeout
+
+    def _service(self, name: str) -> str:
+        if name not in self._SERVICES:
+            raise PaperSafetyError("unknown service identity")
+        return name
+
+    def _run(self, args: list[str], *, check: bool = False) -> subprocess.CompletedProcess[str]:
+        try:
+            result = self.runner(args, capture_output=True, text=True, timeout=self.timeout, shell=False, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise PaperSafetyError("systemd operation timed out") from exc
+        if check and result.returncode:
+            raise PaperSafetyError("systemd operation failed")
+        return result
+
+    def identity(self, name: str) -> dict[str, Any]:
+        name = self._service(name)
+        status = self.status(name)
+        if not status["known"]:
+            return status
+        main = self._run(["systemctl", "show", "--property=MainPID", "--value", name])
+        pid = main.stdout.strip()
+        if status["active"] and (not pid.isdecimal() or pid == "0"):
+            raise PaperSafetyError("systemd process identity is ambiguous")
+        if not status["active"]:
+            return {**status, "main_pid": None}
+        pattern = (
+            "tools/v7_certified_demo_service.py --run"
+            if name == V7_SERVICE_NAME else "main.py start"
+        )
+        matches = self._run(["pgrep", "-f", pattern])
+        pids = [value for value in matches.stdout.splitlines() if value.isdecimal()]
+        if pid not in pids or len(pids) != 1:
+            raise PaperSafetyError("systemd process identity is ambiguous")
+        return {**status, "main_pid": pid, "process": {"pid": pid, "pattern": pattern}}
+
+    def status(self, name: str) -> dict[str, Any]:
+        name = self._service(name)
+        result = self._run(["systemctl", "is-active", name])
+        if result.returncode == 4:
+            return {"known": False, "active": None}
+        if result.returncode not in (0, 3):
+            raise PaperSafetyError("systemd service state is ambiguous")
+        return {"known": True, "active": result.returncode == 0}
+
+    def stop(self, name: str) -> None:
+        name = self._service(name)
+        self._run(["systemctl", "stop", name], check=True)
+
+    def start(self, name: str) -> None:
+        name = self._service(name)
+        if name != V7_SERVICE_NAME:
+            raise PaperSafetyError("starting V6 is prohibited")
+        self._run(["systemctl", "start", name], check=True)
+
+
+def linux_systemd_gateway() -> ServiceGateway:
+    gateway = LinuxCutoverGateway()
+    return ServiceGateway(gateway.identity, gateway.status, gateway.stop, gateway.start)
+
+
 def audit_v6(
     *,
     service: dict[str, Any],
@@ -150,7 +223,7 @@ def audit_v6(
     """Build a deterministic, read-only V6 audit report from observed state."""
     _assert_no_secrets((service, v6_config, local_state, journal_rows, account, lease))
     reasons: list[str] = []
-    if not service.get("known"):
+    if not service.get("known") or service.get("active") is not True:
         reasons.append("V6 service identity is unknown")
     if v6_config.get("execution") != "okx_demo" or v6_config.get("mode") not in {
         None,
@@ -596,12 +669,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--v6-state", type=Path)
     parser.add_argument("--v6-journal", type=Path)
     parser.add_argument("--account", type=Path)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--account-fingerprint")
     parser.add_argument("--instance-id")
     parser.add_argument("--lease", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--linux-systemd", action="store_true", help="explicitly enable the allowlisted Linux systemd gateway")
     parser.add_argument("--ack-fragile", action="store_true")
     parser.add_argument("--ack-not-live-ready", action="store_true")
     parser.add_argument("--ack-sole-owner", action="store_true")
@@ -618,6 +693,27 @@ def _required(args: argparse.Namespace, *names: str) -> None:
         raise PaperSafetyError(f"{args.command} requires {', '.join(missing)}")
 
 
+def _manifest_inputs(manifest_path: Path, config_path: Path, state_path: Path, account_path: Path) -> dict[str, Any]:
+    manifest = _read_json(manifest_path)
+    _verify_hash(manifest, "manifest_hash")
+    expected = {"v6-config.json": config_path, "v6-state.json": state_path, "account-observation.json": account_path}
+    files = manifest.get("files")
+    if not isinstance(files, dict) or set(files) != set(expected):
+        raise PaperSafetyError("audit manifest file set is incomplete or ambiguous")
+    for name, path in expected.items():
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise PaperSafetyError("audit input is unavailable") from exc
+        if files.get(name) != digest:
+            raise PaperSafetyError("audit input does not match its manifest")
+    if not all(isinstance(manifest.get(key), str) and manifest[key] for key in ("source_commit", "instance_id", "account_fingerprint")):
+        raise PaperSafetyError("audit manifest identity is incomplete")
+    if not isinstance(manifest.get("service_identity"), dict):
+        raise PaperSafetyError("audit manifest service identity is incomplete")
+    return manifest
+
+
 def run(
     argv: Sequence[str] | None = None,
     *,
@@ -625,7 +721,7 @@ def run(
     now: datetime | None = None,
 ) -> int:
     args = build_parser().parse_args(argv)
-    gateway = gateway or unavailable_gateway()
+    gateway = gateway or (linux_systemd_gateway() if args.linux_systemd else unavailable_gateway())
     lease = DemoAccountLease(args.lease)
     try:
         if args.command == "audit-v6":
@@ -636,19 +732,32 @@ def run(
                 "v6_journal",
                 "account",
                 "account_fingerprint",
+                "manifest",
+                "output",
             )
+            manifest = _manifest_inputs(args.manifest, args.v6_config, args.v6_state, args.account)
+            if args.account_fingerprint != manifest["account_fingerprint"]:
+                raise PaperSafetyError("CLI account fingerprint does not match manifest")
             account = _read_json(args.account)
             account["fingerprint"] = args.account_fingerprint
+            config, state = _read_json(args.v6_config), _read_json(args.v6_state)
+            if state.get("instance_id") not in {None, manifest["instance_id"]} or config.get("instance_id") != manifest["instance_id"]:
+                raise PaperSafetyError("audit files do not match manifest instance identity")
+            service = gateway.identity("matibot-v6-paper.service")
+            manifest_service = manifest["service_identity"]
+            if manifest_service.get("name") != "matibot-v6-paper.service" or manifest_service.get("process") != service.get("process", manifest_service.get("process")):
+                raise PaperSafetyError("current V6 service does not match manifest identity")
             report = audit_v6(
-                service=gateway.identity("matibot-v6-paper.service"),
-                v6_config=_read_json(args.v6_config),
-                local_state=_read_json(args.v6_state),
+                service=service,
+                v6_config=config,
+                local_state=state,
                 journal_rows=_read_jsonl(args.v6_journal),
                 account=account,
                 lease=lease.current(),
-                source_commit=_read_json(args.v6_config).get("source_commit", ""),
+                source_commit=manifest["source_commit"],
                 now=now,
             )
+            _write_json(args.output, report)
             _emit(report)
             return 0 if report["verdict"] == "PASS" else 1
         if args.command == "show-audit":
@@ -799,11 +908,24 @@ def run(
                 },
                 lease=lease,
                 root=args.root,
-                start_service=lambda: gateway.start(V7_SERVICE_NAME),
-                service_status=lambda: gateway.status(V7_SERVICE_NAME),
                 now=now,
             )
             _write_json(args.output, manifest)
+            try:
+                gateway.start(V7_SERVICE_NAME)
+                if gateway.status(V7_SERVICE_NAME).get("active") is not True:
+                    raise PaperSafetyError("V7 start state is ambiguous; activation remains staged")
+            except PaperSafetyError as exc:
+                failure = {
+                    "schema": "v7-demo-activation-failure/v1",
+                    "activation_hash": manifest["activation_hash"],
+                    "lease_hash": manifest["lease_hash"],
+                    "reason": str(exc),
+                    "recoverable": True,
+                }
+                failure["failure_hash"] = canonical_hash(failure)
+                _write_json(args.output.with_suffix(args.output.suffix + ".failed"), failure)
+                raise
             _emit(manifest)
             return 0
         if args.command == "status":

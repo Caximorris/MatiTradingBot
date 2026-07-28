@@ -26,7 +26,7 @@ git pull --ff-only origin main
 python tools/v6_runtime_observation.py collect-v6-runtime --linux-runtime --service-name matibot-v6-paper.service --repository-path /srv/matibot --config-path /srv/matibot/data/runtime/v6/config.json --state-path /srv/matibot/data/runtime/v6/state.json --journal-path /srv/matibot/data/runtime/v6/journal.jsonl --source-commit "$(git rev-parse HEAD)" --output /srv/matibot/v6-runtime.json --json
 python tools/v6_runtime_observation.py observe-okx-demo-account --okx-demo-runtime --runtime-config /srv/matibot/data/runtime/v6/okx-demo-runtime.json --output /srv/matibot/account-observation.json --json
 python tools/v6_runtime_observation.py build-v6-audit-inputs --runtime-observation /srv/matibot/v6-runtime.json --account-observation /srv/matibot/account-observation.json --output /srv/matibot/v6-runtime-observation --json
-python tools/v6_v7_demo_cutover.py audit-v6 --lease /srv/matibot/data/runtime/v7_certified/account_ownership.jsonl --v6-config /srv/matibot/v6-runtime-observation/v6-config.json --v6-state /srv/matibot/v6-runtime-observation/v6-state.json --v6-journal /srv/matibot/data/runtime/v6/journal.jsonl --account /srv/matibot/v6-runtime-observation/account-observation.json --account-fingerprint "<account-observation.json:fingerprint>"
+python tools/v6_v7_demo_cutover.py audit-v6 --linux-systemd --lease /srv/matibot/data/runtime/v7_certified/account_ownership.jsonl --manifest /srv/matibot/v6-runtime-observation/manifest.json --v6-config /srv/matibot/v6-runtime-observation/v6-config.json --v6-state /srv/matibot/v6-runtime-observation/v6-state.json --v6-journal /srv/matibot/data/runtime/v6/journal.jsonl --account /srv/matibot/v6-runtime-observation/account-observation.json --account-fingerprint "<account-observation.json:fingerprint>" --output /srv/matibot/v6-audit.json
 ```
 
 Record `<AUDIT_HASH>` from `audit-v6` field `audit_hash`. Review `verdict=PASS` before continuing.
@@ -49,7 +49,7 @@ git status --short
 git branch --show-current
 systemctl is-active matibot-v6-paper.service
 systemctl is-active matibot-v7-certified-okx-demo.service
-python tools/v6_v7_demo_cutover.py status --lease data/runtime/v7_certified/account_ownership.jsonl
+python tools/v6_v7_demo_cutover.py status --linux-systemd --lease data/runtime/v7_certified/account_ownership.jsonl
 ```
 
 ## 2. Fetch and fast-forward main (state-changing: checkout only)
@@ -79,8 +79,8 @@ python tools/v6_v7_demo_cutover.py audit-v6 \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --v6-config <V6_CONFIG_JSON> --v6-state <V6_STATE_JSON> \
   --v6-journal <V6_JOURNAL_JSONL> --account <ACCOUNT_OBSERVATION_JSON> \
-  --account-fingerprint <ACCOUNT_FINGERPRINT> > v6-audit.json
-python -m json.tool v6-audit.json
+  --manifest <V6_AUDIT_INPUTS>/manifest.json --account-fingerprint <ACCOUNT_FINGERPRINT> \
+  --linux-systemd --output v6-audit.json
 python tools/v6_v7_demo_cutover.py show-audit \
   --lease data/runtime/v7_certified/account_ownership.jsonl --audit v6-audit.json
 ```
@@ -107,7 +107,7 @@ Stopping V6 does **not** close its BTC position. V7 later inherits the real OKX
 Demo cash and BTC state.
 
 ```bash
-python tools/v6_v7_demo_cutover.py stop-v6 \
+python tools/v6_v7_demo_cutover.py stop-v6 --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --audit v6-audit.json --audit-hash <AUDIT_HASH> \
   --evidence v6-evidence/v6_demo_evidence.json \
@@ -133,10 +133,8 @@ python tools/v6_v7_demo_cutover.py create-v7-inactive \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --audit v6-audit.json --evidence v6-evidence/v6_demo_evidence.json \
   --stop-record v6-stop.json --output v7-inactive.json
-sudo install -m 0644 deploy/matibot-v7-certified-okx-demo.service \
-  /etc/systemd/system/matibot-v7-certified-okx-demo.service
-sudo systemctl daemon-reload
-sudo systemctl disable matibot-v7-certified-okx-demo.service
+python tools/v7_certified_demo_service.py render --output /tmp/matibot-v7-certified-okx-demo.service --run-user <RUN_USER> --app-dir <APP_DIR> --python-path <PYTHON_PATH> --environment-file <ENV_FILE> --config-path <V7_CONFIG_PATH> --state-path <V7_STATE_PATH> --journal-path <V7_JOURNAL_PATH> --evidence-path <V7_EVIDENCE_PATH> --report-path <V7_REPORT_PATH>
+python tools/v7_certified_demo_service.py install-inactive --linux-systemd --unit /tmp/matibot-v7-certified-okx-demo.service --unit-hash <RENDER_OUTPUT:content_hash>
 systemctl is-enabled matibot-v7-certified-okx-demo.service || test $? -eq 1
 systemctl is-active matibot-v7-certified-okx-demo.service || test $? -eq 3
 ```
@@ -147,19 +145,22 @@ Do not enable or start this unit during installation. It is separate from V6,
 ## 7. Preflight and activate V7 (activation is STATE-CHANGING)
 
 ```bash
-python tools/v6_v7_demo_cutover.py preflight-v7 \
+python tools/v6_v7_demo_cutover.py preflight-v7 --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --account <ACCOUNT_OBSERVATION_JSON> --account-fingerprint <ACCOUNT_FINGERPRINT> \
   --inactive v7-inactive.json > v7-preflight.json
 python -m json.tool v7-preflight.json
-python tools/v6_v7_demo_cutover.py activate-v7 \
+python tools/v6_v7_demo_cutover.py activate-v7 --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --audit v6-audit.json --evidence v6-evidence/v6_demo_evidence.json \
   --stop-record v6-stop.json --inactive v7-inactive.json --preflight v7-preflight.json \
   --ack-fragile --ack-not-live-ready --ack-sole-owner \
-  --output data/runtime/v7_certified/control/activation.json
+  --output <V7_CONFIG_PATH_DIRECTORY>/activation.json
 ```
 
+Activation first writes the hash-verified activation record, then starts V7. If start
+fails, `<V7_CONFIG_PATH_DIRECTORY>/activation.json.failed` is a recoverable failure
+record and the retained lease prevents a second owner from taking the account.
 Activation requires the reviewed audit/export/stop/lease/preflight hash chain.
 V7 performance begins from `activation_baseline`; prior account performance belongs
 to V6. Activation may produce no immediate order when inherited exposure already
@@ -179,7 +180,7 @@ it cannot activate V7 or liquidate the account.
 ## 8. Verify activation and the 30-day run (read-only)
 
 ```bash
-python tools/v6_v7_demo_cutover.py status \
+python tools/v6_v7_demo_cutover.py status --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl --activation v7-activation.json
 systemctl status --no-pager matibot-v7-certified-okx-demo.service
 python -m json.tool v7-activation.json
@@ -196,7 +197,7 @@ duplicate process, missing report, or reconciliation mismatch requires a pause.
 Pause is STATE-CHANGING and prevents new V7 intents:
 
 ```bash
-python tools/v6_v7_demo_cutover.py pause-v7 \
+python tools/v6_v7_demo_cutover.py pause-v7 --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --activation data/runtime/v7_certified/control/activation.json --activation-hash <ACTIVATION_HASH> \
   --output data/runtime/v7_certified/control/pause.json
@@ -205,7 +206,7 @@ python tools/v6_v7_demo_cutover.py pause-v7 \
 Resume only after reviewed health evidence (STATE-CHANGING):
 
 ```bash
-python tools/v6_v7_demo_cutover.py resume-v7 \
+python tools/v6_v7_demo_cutover.py resume-v7 --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --activation data/runtime/v7_certified/control/activation.json --activation-hash <ACTIVATION_HASH> \
   --transition data/runtime/v7_certified/control/pause.json --transition-hash <PAUSE_TRANSITION_HASH> \
@@ -216,7 +217,7 @@ Deactivation is STATE-CHANGING, releases only the V7 lease, preserves balances a
 evidence, and never liquidates automatically:
 
 ```bash
-python tools/v6_v7_demo_cutover.py deactivate-v7 \
+python tools/v6_v7_demo_cutover.py deactivate-v7 --linux-systemd \
   --lease data/runtime/v7_certified/account_ownership.jsonl \
   --activation data/runtime/v7_certified/control/activation.json --activation-hash <ACTIVATION_HASH> \
   --transition data/runtime/v7_certified/control/resume.json --transition-hash <RESUME_TRANSITION_HASH> \

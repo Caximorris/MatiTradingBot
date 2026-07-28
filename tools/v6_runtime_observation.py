@@ -16,7 +16,10 @@ from core.v7_certified_paper import PaperSafetyError
 from tools.v6_v7_demo_cutover import V6_NAME, canonical_hash
 
 V6_SERVICE = "matibot-v6-paper.service"
-_SECRET = ("secret", "password", "passphrase", "api_key", "private_key", "access_token")
+_SECRET = ("secret", "password", "passphrase", "api_key", "private_key", "access_token", "credential")
+_PRESENCE_MARKERS = frozenset({
+    "demo_api_key_present", "demo_secret_present", "demo_passphrase_present",
+})
 
 
 class ReadOnlyService(Protocol):
@@ -71,14 +74,7 @@ def validate_demo_runtime_config(value: dict[str, Any]) -> None:
         raise PaperSafetyError("runtime is not explicitly confirmed as OKX Demo")
     if endpoint not in {"https://www.okx.com", "https://my.okx.com"}:
         raise PaperSafetyError("unapproved or production OKX endpoint")
-    if not all(
-        value.get(key)
-        for key in (
-            "demo_api_key_present",
-            "demo_secret_present",
-            "demo_passphrase_present",
-        )
-    ):
+    if any(type(value.get(key)) is not bool or value[key] is not True for key in _PRESENCE_MARKERS):
         raise PaperSafetyError("required demo credentials are unavailable")
 
 
@@ -123,7 +119,12 @@ class LinuxV6ReadOnlyGateway:
 def _safe(value: object) -> None:
     if isinstance(value, dict):
         for key, child in value.items():
-            if any(word in str(key).lower() for word in _SECRET):
+            name = str(key).lower()
+            if name in _PRESENCE_MARKERS:
+                if type(child) is not bool:
+                    raise PaperSafetyError("credential presence marker must be boolean")
+                continue
+            if any(word in name for word in _SECRET):
                 raise PaperSafetyError("credential-shaped output is prohibited")
             _safe(child)
     elif isinstance(value, (list, tuple)):
@@ -227,7 +228,10 @@ def observe_okx_demo_account(
     client: Any, *, symbol: str, now: datetime | None = None
 ) -> dict[str, Any]:
     """Use only observation methods from the existing OKXDemoClient contract."""
-    required = ("get_balance", "get_positions", "get_open_orders", "get_order_history")
+    required = (
+        "get_balance", "get_positions", "get_open_orders", "get_order_history",
+        "get_fills", "get_instrument", "get_position_mode", "get_fee_metadata",
+    )
     if any(not callable(getattr(client, method, None)) for method in required):
         raise PaperSafetyError("incomplete OKX Demo client contract")
     if getattr(client, "is_paper", True) is not True or getattr(
@@ -244,6 +248,10 @@ def observe_okx_demo_account(
         for key, value in balances.items()
         if key not in {"USDT", "BTC"} and Decimal(str(value)) != 0
     }
+    instrument = client.get_instrument(symbol)
+    if not isinstance(instrument, dict):
+        raise PaperSafetyError("instrument metadata is unavailable or ambiguous")
+    _safe(instrument)
     account = {
         "schema": "okx-demo-account-observation/v1",
         "observed_at": (now or datetime.now(timezone.utc)).isoformat(),
@@ -261,14 +269,13 @@ def observe_okx_demo_account(
         "open_orders": client.get_open_orders(symbol),
         "positions": client.get_positions(),
         "recent_orders": client.get_order_history(symbol, limit=20),
-        "recent_fills": getattr(client, "get_fills", lambda *_a, **_k: [])(
-            symbol, limit=20
-        ),
-        "fee_metadata": getattr(client, "fee_metadata", {}),
+        "recent_fills": client.get_fills(symbol, limit=20),
+        "fee_metadata": client.get_fee_metadata(symbol),
+        "position_mode": client.get_position_mode(),
         "unsupported_assets": unsupported,
         "available_balance": str(cash),
-        "precision": getattr(client, "precision", {}),
-        "minimum_size": getattr(client, "minimum_size", {}),
+        "precision": {"tick_size": instrument.get("tickSz"), "lot_size": instrument.get("lotSz")},
+        "minimum_size": {"minimum_size": instrument.get("minSz")},
     }
     _safe(account)
     account["observation_hash"] = canonical_hash(account)
