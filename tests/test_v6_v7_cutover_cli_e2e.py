@@ -90,7 +90,7 @@ def test_full_v6_cli_artifact_chain_is_parser_driven_and_secret_free(tmp_path: P
     bars = [bar]
     ran = []
     def factory(parsed):
-        assert parsed.run and not active["value"] is False
+        assert parsed.run and active["value"] is True
         loop = V7RuntimeLoop(startup=Startup(), runner=runner, candles=lambda: bars, v6_status=lambda: {"active": False}, state_path=tmp_path / "v7-state.json", now=lambda: datetime(2026, 7, 27, 8, 30, tzinfo=timezone.utc), target_for=lambda _a, _c, btc, _p: btc)
         assert loop.cycle()["order"] == "not_required"
         loop.target_for = lambda *_: Decimal("0")
@@ -100,6 +100,20 @@ def test_full_v6_cli_artifact_chain_is_parser_driven_and_secret_free(tmp_path: P
         assert loop.cycle()["last_cycle"] == "duplicate"
         ran.append(True)
     assert service_run(["--run"], service_factory=factory) == 0 and ran == [True] and len(runner.calls) == 1
+    pause = tmp_path / "pause.json"
+    activation_hash = json.loads(activation.read_text())["activation_hash"]
+    assert cutover.run(["pause-v7", "--lease", str(tmp_path / "lease.jsonl"), "--activation", str(activation), "--activation-hash", activation_hash, "--output", str(pause)], gateway=gateway, now=NOW) == 0
+    assert active["value"] is False
+    paused = json.loads(pause.read_text())
+    assert cutover.run(["status", "--lease", str(tmp_path / "lease.jsonl"), "--activation", str(activation)], gateway=gateway) == 0
+    resume = tmp_path / "resume.json"
+    assert cutover.run(["resume-v7", "--lease", str(tmp_path / "lease.jsonl"), "--activation", str(activation), "--activation-hash", activation_hash, "--transition", str(pause), "--transition-hash", paused["transition_hash"], "--output", str(resume)], gateway=gateway, now=NOW) == 0
+    assert active["value"] is True and len(starts) == 2
+    resumed = json.loads(resume.read_text())
+    deactivated = tmp_path / "deactivated.json"
+    assert cutover.run(["deactivate-v7", "--lease", str(tmp_path / "lease.jsonl"), "--activation", str(activation), "--activation-hash", activation_hash, "--transition", str(resume), "--transition-hash", resumed["transition_hash"], "--output", str(deactivated)], gateway=gateway, now=NOW) == 0
+    assert active["value"] is False and lease.current() is None
+    assert json.loads(account.read_text())["btc"] == "0"
     called = []
     assert service_run(["--run"], service_factory=lambda parsed: called.append(parsed.run)) == 0
     assert called == [True]
