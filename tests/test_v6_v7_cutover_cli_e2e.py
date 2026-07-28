@@ -61,6 +61,17 @@ def test_full_v6_cli_artifact_chain_is_parser_driven_and_secret_free(tmp_path: P
     stopped = tmp_path / "stopped.json"
     assert cutover.run(["stop-v6", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--audit-hash", json.loads(audit.read_text())["audit_hash"], "--evidence", str(evidence / "v6_demo_evidence.json"), "--instance-id", "v6", "--account-fingerprint", json.loads(account.read_text())["fingerprint"], "--output", str(stopped)], gateway=gateway, now=NOW) == 0
     assert active["value"] is False and lease.current() is None
+    inactive = tmp_path / "inactive.json"
+    assert cutover.run(["create-v7-inactive", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--evidence", str(evidence / "v6_demo_evidence.json"), "--stop-record", str(stopped), "--output", str(inactive)], gateway=gateway, now=NOW) == 0
+    preflight = tmp_path / "preflight.json"
+    fingerprint = json.loads(account.read_text())["fingerprint"]
+    assert cutover.run(["preflight-v7", "--lease", str(tmp_path / "lease.jsonl"), "--account", str(account), "--account-fingerprint", fingerprint, "--inactive", str(inactive), "--output", str(preflight)], gateway=gateway, now=NOW) == 0
+    activation = tmp_path / "activation.json"
+    starts = []
+    gateway = ServiceGateway(identity=lambda name: {"known": True, "active": active["value"]}, status=lambda name: {"known": True, "active": active["value"]}, stop=lambda _: active.update(value=False), start=lambda _: (starts.append(activation.exists()), active.update(value=True)))
+    assert cutover.run(["activate-v7", "--lease", str(tmp_path / "lease.jsonl"), "--audit", str(audit), "--evidence", str(evidence / "v6_demo_evidence.json"), "--stop-record", str(stopped), "--inactive", str(inactive), "--preflight", str(preflight), "--ack-fragile", "--ack-not-live-ready", "--ack-sole-owner", "--output", str(activation)], gateway=gateway, now=NOW) == 0
+    assert starts == [True] and json.loads(activation.read_text())["active"] is True
+    assert cutover.run(["status", "--lease", str(tmp_path / "lease.jsonl"), "--activation", str(activation)], gateway=gateway) == 0
     called = []
     assert service_run(["--run"], service_factory=lambda parsed: called.append(parsed.run)) == 0
     assert called == [True]

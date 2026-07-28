@@ -863,6 +863,8 @@ def run(
                 inactive=inactive,
                 now=now,
             )
+            if args.output:
+                _write_json(args.output, report)
             _emit(report)
             return 0
         if args.command == "activate-v7":
