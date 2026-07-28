@@ -14,7 +14,10 @@ import argparse
 import re
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Protocol, Sequence
 
@@ -487,7 +490,8 @@ def _write_rendered(path: Path, rendered: RenderedUnit) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("render", "install-inactive", "inspect", "start", "stop"))
+    parser.add_argument("command", nargs="?", choices=("render", "install-inactive", "inspect", "start", "stop"))
+    parser.add_argument("--run", action="store_true", help="run the dedicated certified V7 OKX Demo service")
     parser.add_argument("--linux-systemd", action="store_true", help="explicitly permit the Linux systemd gateway")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", type=Path)
@@ -496,6 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--activation", type=Path)
     parser.add_argument("--activation-hash")
     parser.add_argument("--lease", type=Path)
+    parser.add_argument("--account", type=Path)
     for name in ("run-user", "app-dir", "python-path", "environment-file", "config-path", "state-path", "journal-path", "evidence-path", "report-path"):
         parser.add_argument(f"--{name}")
     return parser
@@ -528,6 +533,13 @@ def _require_activation_and_lease(args: Any) -> None:
 def run(argv: Sequence[str] | None = None, *, gateway: LinuxSystemdGateway | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.run:
+            if args.command is not None:
+                raise PaperSafetyError("--run cannot be combined with a service management command")
+            _run_service(args)
+            return 0
+        if args.command is None:
+            raise PaperSafetyError("a service management command is required")
         if args.command == "render":
             if not args.output:
                 raise PaperSafetyError("render requires an explicit output path")
@@ -561,8 +573,45 @@ def run(argv: Sequence[str] | None = None, *, gateway: LinuxSystemdGateway | Non
         _emit({"command": "stop", "service": SERVICE_NAME, "result": linux.stop(SERVICE_NAME, dry_run=args.dry_run)})
         return 0
     except (PaperSafetyError, DemoLeaseError) as exc:
-        _emit({"command": args.command, "error": str(exc), "status": "BLOCKED"})
+        _emit({"command": "--run" if args.run else args.command, "error": str(exc), "status": "BLOCKED"})
         return 2
+
+
+def _run_service(args: Any) -> None:
+    """Validate the staged activation, adopt the baseline, then retain the lease.
+
+    No inherited BTC is liquidated and every ownership change terminates the unit.
+    """
+    paths = (args.config_path, args.state_path, args.journal_path, args.evidence_path, args.report_path)
+    if any(path is None for path in paths):
+        raise PaperSafetyError("--run requires all isolated runtime paths")
+    if any(not Path(path).is_absolute() or "v7_certified" not in str(path) for path in paths):
+        raise PaperSafetyError("--run requires isolated absolute V7 paths")
+    runtime = Path(args.config_path).parent
+    activation = _read_record(runtime / "activation.json")
+    account = _read_record(args.account or runtime / "account-observation.json")
+    lease = DemoAccountLease(args.lease or runtime / "account_ownership.jsonl")
+    from config.settings import Settings
+    from core.okx_demo_client import OKXDemoClient
+    from tools.v6_v7_demo_cutover import LinuxCutoverGateway
+    root = Path.cwd()
+    config = make_config(root, instance_id=SERVICE_INSTANCE_ID)
+    client = OKXDemoClient(Settings(), mirror_name=SERVICE_INSTANCE_ID, runtime_dir=runtime)
+    runner = V7OKXDemoRunner(config, client, lease, str(account.get("fingerprint", "")))
+    systemd = LinuxCutoverGateway()
+    guarded = CertifiedV7DemoServiceRunner(
+        root=root, runner=runner,
+        inputs=StartupInputs(activation=activation, account=account,
+                             v6_service=systemd.status("matibot-v6-paper.service"),
+                             shadow_service={"active": False}, lease=lease),
+    )
+    guarded.validate_startup()
+    runner.adopt_account(target_btc=Decimal(str(account["btc"])), now=datetime.now(timezone.utc))
+    while True:
+        runner._require_owner()
+        if systemd.status("matibot-v6-paper.service").get("active") is not False:
+            raise PaperSafetyError("V6 became active while certified V7 was running")
+        time.sleep(30)
 
 
 def main() -> int:

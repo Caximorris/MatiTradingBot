@@ -1,7 +1,7 @@
-Objective: Add a fail-closed V7 Telegram operations surface and remove retired/duplicate Telegram commands.
+Objective: Complete VM-CUTOVER-RUNTIME-FIX for the checked-in V6-to-V7 OKX Demo cutover path.
 
 Milestones:
-1. [done] Audit legacy Telegram and isolated V7 service boundaries.
-2. [done] Implemented V7 read-only and hash-chained lifecycle command adapter with focused tests.
-3. [done] Removed retired Prop and duplicate shortcut commands; updated docs/menu.
-4. [done] Repository validation and diff inspection passed.
+1. [done] Added explicit allowlisted Linux systemd cutover gateway and manifest-bound V6 audit output.
+2. [done] Hardened runtime secret-presence validation and completed read-only account metadata collection.
+3. [done] Validated the dedicated V7 `--run` entrypoint, rendered unit path, and updated runbook.
+4. [in progress] Run repository validation, review diff, commit, push, PR, CI, and protected merge.
