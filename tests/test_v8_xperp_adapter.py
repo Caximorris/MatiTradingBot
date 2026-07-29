@@ -298,7 +298,12 @@ def test_injected_rest_clients_require_explicit_test_gate(monkeypatch, tmp_path)
     assert adapter.account is not None
 
 
-def test_account_lock_identity_is_independent_of_runtime_root(tmp_path) -> None:
+def test_account_lock_identity_is_independent_of_runtime_root(monkeypatch, tmp_path) -> None:
+    # CI deliberately has no Demo credentials.  This test exercises only the
+    # account-derived lock identity, so use inert values rather than a local .env.
+    monkeypatch.setenv("OKX_XPERP_DEMO_API_KEY", "lock-test-key")
+    monkeypatch.setenv("OKX_XPERP_DEMO_SECRET_KEY", "lock-test-secret")
+    monkeypatch.setenv("OKX_XPERP_DEMO_PASSPHRASE", "lock-test-pass")
     first = V8XPerpDemoAdapter(runtime_root=tmp_path / "one")
     second = V8XPerpDemoAdapter(runtime_root=tmp_path / "two")
     assert first._account_lock_path == second._account_lock_path
