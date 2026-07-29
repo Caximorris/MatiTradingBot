@@ -32,8 +32,8 @@ Milestones:
 3. [complete] Implement/test scheduled/bootstrap/restart target transport and monitoring.
 4. [complete] Add diagnostic runner, secure systemd/deployment assets, and operator runbook.
 5. [complete] Run all local validation and exact V7 replay.
-6. [in progress] Commit dynamic bootstrap separately and push exact committed V8 state.
-7. [pending] Deliver exact VM pull/config/install/preflight/activation/restart/monitoring commands.
+6. [complete] Commit dynamic bootstrap separately and push exact committed V8 state.
+7. [complete] Add exact VM pull/config/install/preflight/activation/restart/monitoring commands.
 
 Safety state at milestone start:
 - Local Demo account was authenticated flat with zero FUTURES open orders.
@@ -49,6 +49,8 @@ Latest no-order evidence:
 - Dynamic leverage 0.2824651278298268863498007776; canary result short 0.0155 contracts,
   996.8515 USD estimated notional, actual leverage 0.009969866810660179748723525866.
 - No bootstrap/target intent was persisted and no order was submitted.
+- Dynamic bootstrap commit `423104c` is pushed on
+  `origin/codex/v8-xperp-intent-recovery`.
 
 Next action:
-- Inspect the scoped staged diff, commit, and push. Do not connect to the VM.
+- Human operator follows `docs/ops/v8-xperp-vm-pull-and-run.md` on the VM.
