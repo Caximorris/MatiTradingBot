@@ -1,0 +1,50 @@
+{
+  "blocked_during_uncertainty": true,
+  "capped_notional": "993.38778",
+  "contracts": "0.0154",
+  "environment": "okx_demo",
+  "executor_processes_remaining": 0,
+  "exercise": "bounded_capped_continuous_demo",
+  "final": {
+    "all_futures_open_orders": 0,
+    "position": "0",
+    "v8_open_orders": 0
+  },
+  "first_executor_ended": true,
+  "first_executor_exit_code": 92,
+  "hard_cap_usd": "1000",
+  "intent_persisted_before_submission": true,
+  "maximum_actual_notional_observed": "993.0982606160002",
+  "opening_fill_count": 3,
+  "opening_fill_count_after_restart": 3,
+  "opening_submission_count": 1,
+  "opening_submission_count_after_restart": 1,
+  "position_after_reconnect": "0.0154",
+  "position_after_restart": "0.0154",
+  "position_before_disconnect": "0.0154",
+  "reconnect_recovery": {
+    "active_intents": 0,
+    "open_v8_orders": 0,
+    "position": "0.0154",
+    "recent_v8_fills": 3,
+    "recovered": 0,
+    "status": "reconciled"
+  },
+  "reconnects": 1,
+  "requested_notional": "199993.89549842",
+  "requested_target": "long 2x",
+  "restart_recovery": {
+    "active_intents": 0,
+    "open_v8_orders": 0,
+    "position": "0.0154",
+    "recent_v8_fills": 3,
+    "recovered": 0,
+    "status": "reconciled"
+  },
+  "second_executor_ended": true,
+  "service_status": "STOPPED",
+  "worker_stdout_sanitized": {
+    "first_lines": 0,
+    "second_lines": 0
+  }
+}

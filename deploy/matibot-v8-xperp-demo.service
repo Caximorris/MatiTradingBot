@@ -1,0 +1,44 @@
+[Unit]
+Description=MatiTradingBot isolated V8 OKX EEA X-Perp Demo
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+StartLimitIntervalSec=15min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
+WorkingDirectory=__APP_DIR__
+EnvironmentFile=__ENV_FILE__
+Environment=PYTHONUNBUFFERED=1
+Environment=V8_XPERP_RUNTIME_ROOT=__RUNTIME_DIR__
+ExecStartPre=__PYTHON__ __APP_DIR__/tools/v8_xperp_demo.py preactivation
+ExecStart=__PYTHON__ __APP_DIR__/tools/v8_xperp_demo.py run --enable-continuous-demo
+Restart=on-failure
+RestartPreventExitStatus=3
+RestartSec=15s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6
+ReadWritePaths=__DATA_RUNTIME_DIR__
+MemoryMax=350M
+TasksMax=128
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=60s
+LogRateLimitBurst=200
+
+[Install]
+WantedBy=multi-user.target

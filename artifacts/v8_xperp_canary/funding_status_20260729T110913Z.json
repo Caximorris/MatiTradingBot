@@ -1,0 +1,11 @@
+{
+  "actual_parity": "UNOBSERVED",
+  "expectations": 0,
+  "funding_bills": 0,
+  "funding_time": "1785340800000",
+  "history_count": 100,
+  "instrument": "BTC-USD_UM_XPERP-310328",
+  "next_funding_time": "1785369600000",
+  "rate": "0.0001528844608397",
+  "states": {}
+}

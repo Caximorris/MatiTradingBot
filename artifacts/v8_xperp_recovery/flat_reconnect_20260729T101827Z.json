@@ -1,0 +1,15 @@
+{
+  "blocked_after_forced_disconnect": true,
+  "continuous_mode": "disabled",
+  "environment": "okx_demo",
+  "exercise": "authenticated_flat_reconnect",
+  "final": {
+    "all_futures_open_orders": 0,
+    "position": "0",
+    "v8_open_orders": 0
+  },
+  "initial_subscribed": true,
+  "instrument": "BTC-USD_UM_XPERP-310328",
+  "reconnects": 1,
+  "rest_reconciliations": 4
+}

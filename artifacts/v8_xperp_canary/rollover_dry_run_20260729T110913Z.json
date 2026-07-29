@@ -1,0 +1,13 @@
+{
+  "block_new_exposure": false,
+  "current_contracts": "0",
+  "days_remaining": "1702.868595328344907407407407",
+  "expiry": "2031-03-28T08:00:00+00:00",
+  "instrument": "BTC-USD_UM_XPERP-310328",
+  "mandatory_flat": false,
+  "reason": "no valid later X-Perp successor exists",
+  "source_hash": "f732f1bb03e8fa58bf10df8469224bb48b0d89ce2653d737a677731321c48f1b",
+  "status": "BLOCKED",
+  "successor": null,
+  "warning": false
+}
