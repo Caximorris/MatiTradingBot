@@ -1,0 +1,29 @@
+{
+  "blocked_after_forced_disconnect": true,
+  "continuous_mode": "disabled",
+  "counts_after_reconnect": {
+    "accepted_orders": 1,
+    "fills": 1
+  },
+  "environment": "okx_demo",
+  "exercise": "authenticated_open_position_reconnect",
+  "final": {
+    "all_futures_open_orders": 0,
+    "position": "0",
+    "v8_open_orders": 0
+  },
+  "instrument": "BTC-USD_UM_XPERP-310328",
+  "opening_client_id_suffix": "51276252",
+  "opening_fill_count": 1,
+  "opening_submission_count": 1,
+  "position_after_reconnect": "0.0001",
+  "position_before_disconnect": "0.0001",
+  "startup_recovery": {
+    "active_intents": 0,
+    "open_v8_orders": 0,
+    "position": "0.0001",
+    "recent_v8_fills": 1,
+    "recovered": 0,
+    "status": "reconciled"
+  }
+}

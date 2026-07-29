@@ -1,0 +1,33 @@
+{
+  "accepted_opening_orders": 1,
+  "client_id_suffix": "6afd9a4c",
+  "continuous_mode": "disabled",
+  "environment": "okx_demo",
+  "executor_processes_remaining": 0,
+  "exercise": "authenticated_process_restart_adoption",
+  "final": {
+    "all_futures_open_orders": 0,
+    "position": "0",
+    "v8_open_orders": 0
+  },
+  "first_executor_ended": true,
+  "first_executor_exit_code": 91,
+  "opening_fill_count": 1,
+  "position_after_restart": "0.0001",
+  "position_before_termination": "0.0001",
+  "second_executor_ended": true,
+  "second_executor_exit_code": 0,
+  "startup_recovery": {
+    "active_intents": 1,
+    "open_v8_orders": 0,
+    "position": "0.0001",
+    "recent_v8_fills": 1,
+    "recovered": 1,
+    "status": "reconciled"
+  },
+  "submission_count": 1,
+  "worker_stdout_sanitized": {
+    "first_lines": 0,
+    "second_lines": 0
+  }
+}
