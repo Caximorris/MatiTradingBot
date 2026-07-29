@@ -6,9 +6,10 @@ APP_DIR="${1:-/srv/matibot}"
 ENV_FILE="${2:-/etc/matibot/v8-xperp-demo.env}"
 RUN_USER="${3:-${SUDO_USER:-matibot}}"
 UNIT_NAME="matibot-v8-xperp-demo.service"
+TELEGRAM_UNIT="matibot-v8-xperp-telegram.service"
 
-if systemctl is-active --quiet "$UNIT_NAME"; then
-    echo "Refusing to replace an active V8 unit; stop it first" >&2
+if systemctl is-active --quiet "$UNIT_NAME" || systemctl is-active --quiet "$TELEGRAM_UNIT"; then
+    echo "Refusing to replace an active V8 or V8 Telegram unit; stop both first" >&2
     exit 2
 fi
 APP_DIR="$(readlink -f "$APP_DIR")"
@@ -38,19 +39,22 @@ install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$DATA_RUNTIME_DIR" "$RUNTIME_
 chown root:root "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 
-sed \
-    -e "s|__APP_DIR__|$APP_DIR|g" \
-    -e "s|__ENV_FILE__|$ENV_FILE|g" \
-    -e "s|__PYTHON__|$PYTHON|g" \
-    -e "s|__RUN_USER__|$RUN_USER|g" \
-    -e "s|__RUN_GROUP__|$RUN_GROUP|g" \
-    -e "s|__DATA_RUNTIME_DIR__|$DATA_RUNTIME_DIR|g" \
-    -e "s|__RUNTIME_DIR__|$RUNTIME_DIR|g" \
-    "$APP_DIR/deploy/$UNIT_NAME" \
-    > "/etc/systemd/system/$UNIT_NAME"
-chmod 0644 "/etc/systemd/system/$UNIT_NAME"
+for unit in "$UNIT_NAME" "$TELEGRAM_UNIT"; do
+    sed \
+        -e "s|__APP_DIR__|$APP_DIR|g" \
+        -e "s|__ENV_FILE__|$ENV_FILE|g" \
+        -e "s|__PYTHON__|$PYTHON|g" \
+        -e "s|__RUN_USER__|$RUN_USER|g" \
+        -e "s|__RUN_GROUP__|$RUN_GROUP|g" \
+        -e "s|__DATA_RUNTIME_DIR__|$DATA_RUNTIME_DIR|g" \
+        -e "s|__RUNTIME_DIR__|$RUNTIME_DIR|g" \
+        "$APP_DIR/deploy/$unit" \
+        > "/etc/systemd/system/$unit"
+    chmod 0644 "/etc/systemd/system/$unit"
+done
 systemctl daemon-reload
 systemctl disable "$UNIT_NAME" >/dev/null 2>&1 || true
+systemctl disable "$TELEGRAM_UNIT" >/dev/null 2>&1 || true
 
-echo "Installed inactive: $UNIT_NAME"
+echo "Installed inactive: $UNIT_NAME and $TELEGRAM_UNIT"
 echo "Run the documented preactivation command before enabling this unit."

@@ -1,56 +1,44 @@
-Objective: Implement dynamic mid-phase V8 bootstrap and unattended target transport, prepare secure systemd/deployment assets, validate, commit, push, and hand the user exact VM commands. The user will pull and execute remotely. Live remains prohibited.
+Objective: Add an isolated accelerated V8 synthetic Demo cycle and a V8-only Telegram operator interface, update deployment assets, validate, commit, and push. Do not access the VM, start services, mutate Telegram externally, or place Demo/Live orders.
 
-Classification: strategy-affecting operational startup policy plus local deployment preparation. Frozen V8 historical backtests and V7 remain unchanged.
+Classification: Strategy-affecting scheduler/target-ownership change plus execution-control interface and deployment preparation. Real-cycle behavior remains the default; V7 is a historical regression control.
 
 Authorization:
-- Push committed V8 work is authorized.
-- The user explicitly withdrew authorization for Codex to perform VM/SSH/systemd/order actions; Codex must only prepare commands for the user.
-- Live orders, Live endpoints/credentials, V7 mutation, full exposure, and canary cap above $1,000 remain unauthorized.
-
-Frozen inputs:
-- Recovery checkpoint `12501d0`.
-- Canary implementation `bc6b97a`.
-- Confirmed halving timestamps from `strategies/cycle_phase_clock.py`.
-- Scheduled V8 transitions: halving +540 short 2x, +900 long 2x.
-- Bootstrap defaults: 20% equity-loss budget, 2x maximum, 0.25x minimum entry.
+- Local implementation, validation, commit, and push of the current branch are authorized.
+- VM/SSH/systemd actions, service start/stop, external Telegram mutation, and all Demo/Live orders are prohibited.
+- Live execution remains disabled. The existing USD 1,000 Demo canary cap may not be raised.
 
 Change contract:
-- A known position on restart is adopted without resize/rebootstrap.
-- A flat account exactly at a scheduled transition uses the scheduled 2x target subject to safety/cap.
-- A flat account mid-phase computes one deterministic same-source BTC-USD-index bootstrap decision and freezes it.
-- Missing/inconsistent causal reference data, ambiguous phase, or leverage below minimum remains flat.
-- No unchanged target is resubmitted. Scheduled transitions may replace bootstrap; process restart may not.
-- Rollback: stop/disable the V8 unit and return to committed `bc6b97a`; preserve runtime evidence/state.
-
-Diagnostic contract:
-- Compare a finite, preregistered set of historical cold starts against flat-until-transition, fixed 1x, and immediate 2x.
-- Use frozen 20%/0.25x parameters without optimization; diagnostic results do not replace historical V8 artifacts.
+- Schedule modes are `real_cycle` (default) and `synthetic_demo_cycle`.
+- Synthetic mode is possible only for OKX Demo, dedicated X-Perp Demo credentials, Live disabled, an explicit enable flag, and a valid UTC anchor.
+- Synthetic Day 0/4 is long 2x, Day 2 is short 2x, Day 3 is long 2x; exact UTC/server time and deterministic isolated IDs/state are required.
+- Restart adopts persisted synthetic state/position without duplicate transitions or exposure recalculation.
+- Mode switches fail closed unless stopped, reconciled, flat, order-free, intent-free, acknowledged, archived, persisted, and recovered.
+- Telegram is V8-only, allowlisted, audited, confirmation-gated for mutations, executor-authoritative, degraded read-only when unhealthy, and unable to weaken Live/environment/canary/reconciliation/schedule controls.
+- Rollback: stop the V8 service, flatten through the reviewed path if needed, restore `real_cycle`, archive synthetic state, and revert this scoped commit; preserve runtime evidence.
 
 Milestones:
-1. [complete] Inspect scheduler, halving/index data, deployment path, and remote branch state.
-2. [complete] Implement/test bootstrap calculation and frozen decision ledger.
-3. [complete] Implement/test scheduled/bootstrap/restart target transport and monitoring.
-4. [complete] Add diagnostic runner, secure systemd/deployment assets, and operator runbook.
-5. [complete] Run all local validation and exact V7 replay.
-6. [complete] Commit dynamic bootstrap separately and push exact committed V8 state.
-7. [complete] Add exact VM pull/config/install/preflight/activation/restart/monitoring commands.
+1. [complete] Inspect current V8 scheduler/service/persistence/Telegram/deployment code, direct consumers, tests, and protected execution contracts.
+2. [complete] Implement isolated schedule modes, synthetic cycle state/preview/switching, and focused tests.
+3. [complete] Implement V8-only Telegram authorization, reporting, confirmations, reliability, executor routing, and focused tests.
+4. [complete] Update environment/systemd/runbook assets without deploying or starting services.
+5. [complete] Run focused V8/Telegram tests, full suite, compile, build, Ruff changed files/ratchet, diff checks, and exact V7 replay.
+6. [complete] Review final diff/status, commit only scoped changes, push current branch, and report operator commands.
 
-Safety state at milestone start:
-- Local Demo account was authenticated flat with zero FUTURES open orders.
-- No local Python executor was running.
-- Continuous Demo was stopped.
-- Remote branch did not yet contain `bc6b97a`.
+Prior checkpoint:
+- Existing dynamic-bootstrap/intent-recovery work is pushed through commit `423104c` on `origin/codex/v8-xperp-intent-recovery`.
 
-Latest no-order evidence:
-- Authenticated local preactivation passed with `execute=false`; account was flat.
-- Phase: short, day-540 transition 2025-10-12T00:09:27Z.
-- Same-source reference: BTC-USD index open 109765.4 at 2025-10-12T01:00:00Z.
-- Current index at calculation: 64263.5; adverse move 0.7080520046371579512475977810.
-- Dynamic leverage 0.2824651278298268863498007776; canary result short 0.0155 contracts,
-  996.8515 USD estimated notional, actual leverage 0.009969866810660179748723525866.
-- No bootstrap/target intent was persisted and no order was submitted.
-- Dynamic bootstrap commit `423104c` is pushed on
-  `origin/codex/v8-xperp-intent-recovery`.
+Evidence:
+- Initial branch/status: `codex/v8-xperp-intent-recovery` tracking its origin; clean worktree before this task-state update.
+- Final full repository suite: 700 passed, 10 dependency deprecation warnings.
+- Final compileall and build: passed.
+- Changed-file Ruff: passed.
+- Ruff ratchet: passed, 202 remaining versus 209 baseline.
+- `git diff --check`: passed (line-ending conversion warnings only).
+- Exact frozen V7 normalized replay (`98fb5ca` harness): final capital
+  `54002022.18728089349690`, 6 orders. A generic non-normalized suite case produced a different
+  3-order result and was rejected as the wrong replay contract; its temporary worktree/output were
+  removed.
 
 Next action:
-- Human operator follows `docs/ops/v8-xperp-vm-pull-and-run.md` on the VM.
+- Human operator reviews the pushed commit and follows the V8 VM runbook; Codex performs no VM,
+  service, Telegram, Demo-order, or Live-order action.
