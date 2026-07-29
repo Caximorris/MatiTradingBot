@@ -207,6 +207,92 @@ class V8XPerpCanaryService:
         self._record_target(target, actual)
         return capped
 
+    def refresh(
+        self,
+        *,
+        report: PreflightReport,
+        tiers: tuple[MarginTier, ...],
+        authenticated_leverage: Decimal,
+        reconciled_at: datetime,
+        clock_drift_seconds: Decimal,
+    ) -> None:
+        """Refresh every per-cycle gate without reinterpreting lifecycle state."""
+        if self.state.status != "RUNNING" or self.stream is None:
+            raise SafetyError("V8 canary service is not running")
+        previous_started = self.state.started_at
+        self.start(
+            report=report,
+            tiers=tiers,
+            authenticated_leverage=authenticated_leverage,
+            stream=self.stream,
+            reconciled_at=reconciled_at,
+            clock_drift_seconds=clock_drift_seconds,
+        )
+        self.state = CanaryRuntimeState(
+            **{**asdict(self.state), "started_at": previous_started}
+        )
+        self.state_store.write(self.state)
+
+    def execute_capped_target(
+        self,
+        capped: CappedTarget,
+        *,
+        transition_id: str,
+        eligible_equity: Decimal,
+    ) -> CappedTarget:
+        """Execute one already-capped operational target exactly through intents."""
+        if self.state.status != "RUNNING" or self.report is None or self.stream is None:
+            raise SafetyError("V8 canary service is not running")
+        self.stream.assert_healthy()
+        self.adapter._assert_lock_held()
+        if (
+            not transition_id
+            or capped.allowed_notional > self.config.max_notional_usd
+            or capped.actual_leverage > capped.strategy_leverage
+            or eligible_equity <= 0
+        ):
+            raise SafetyError("operational target violates the canary envelope")
+        current = self.adapter._position(self.report.instrument)
+        desired = capped.signed_contracts
+        if current == desired:
+            self._record_target(capped.requested_target, capped.allowed_notional)
+            return capped
+        if current != 0:
+            side = "sell" if current > 0 else "buy"
+            self.adapter.place_market(
+                self.report,
+                side=side,
+                contracts=abs(current),
+                reduce_only=True,
+                target=f"{transition_id}:close",
+            )
+            if self.adapter._position(self.report.instrument) != 0:
+                raise SafetyError("operational transition did not reconcile flat before opening")
+        if desired != 0:
+            side = "buy" if desired > 0 else "sell"
+            self.adapter.place_market(
+                self.report,
+                side=side,
+                contracts=abs(desired),
+                reduce_only=False,
+                target=transition_id,
+            )
+        actual_contracts = self.adapter._position(self.report.instrument)
+        actual_notional = (
+            abs(actual_contracts)
+            * self.report.instrument.ct_val
+            * self.report.market.last
+        )
+        actual_leverage = actual_notional / eligible_equity
+        if (
+            actual_contracts != desired
+            or actual_notional > self.config.max_notional_usd
+            or actual_leverage > capped.strategy_leverage
+        ):
+            raise SafetyError("post-transition exposure violates the operational target")
+        self._record_target(capped.requested_target, actual_notional)
+        return capped
+
     def record_loss(self, *, event_id: str, amount: Decimal) -> None:
         if amount >= 0 or event_id in self.state.loss_event_ids:
             return

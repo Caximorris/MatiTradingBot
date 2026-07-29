@@ -99,6 +99,8 @@ class CappedTarget:
     allowed_notional: Decimal
     signed_contracts: Decimal
     cap_reduced: bool
+    strategy_leverage: Decimal = Decimal("0")
+    actual_leverage: Decimal = Decimal("0")
 
 
 TARGET_MULTIPLIER = {
@@ -123,11 +125,52 @@ def cap_target(
 ) -> CappedTarget:
     if target not in TARGET_MULTIPLIER:
         raise SafetyError("unsupported V8 canary target")
-    if min(equity_usdc, adverse_price, contract_value, lot_size) <= 0:
+    multiplier = TARGET_MULTIPLIER[target]
+    direction = "flat" if multiplier == 0 else "long" if multiplier > 0 else "short"
+    return cap_leverage_target(
+        target=target,
+        direction=direction,
+        leverage=abs(multiplier),
+        eligible_equity=equity_usdc,
+        adverse_price=adverse_price,
+        contract_value=contract_value,
+        lot_size=lot_size,
+        margin_safe_notional=margin_safe_notional,
+        existing_notional=existing_notional,
+        pending_open_notional=pending_open_notional,
+        config=config,
+    )
+
+
+def cap_leverage_target(
+    *,
+    target: str,
+    direction: str,
+    leverage: Decimal,
+    eligible_equity: Decimal,
+    adverse_price: Decimal,
+    contract_value: Decimal,
+    lot_size: Decimal,
+    margin_safe_notional: Decimal,
+    existing_notional: Decimal = Decimal("0"),
+    pending_open_notional: Decimal = Decimal("0"),
+    config: CanaryConfig,
+) -> CappedTarget:
+    if direction not in {"flat", "long", "short"}:
+        raise SafetyError("unsupported V8 canary direction")
+    if leverage < 0 or leverage > HARD_LEVERAGE:
+        raise SafetyError("strategy leverage exceeds the hard canary ceiling")
+    if min(eligible_equity, adverse_price, contract_value, lot_size) <= 0:
         raise SafetyError("invalid canary target inputs")
-    requested = equity_usdc * TARGET_MULTIPLIER[target]
-    if requested == 0:
-        return CappedTarget(target, requested, Decimal("0"), Decimal("0"), existing_notional != 0)
+    if eligible_equity <= 0:
+        raise SafetyError("eligible canary equity is nonpositive")
+    sign = Decimal("0") if direction == "flat" else Decimal("1") if direction == "long" else Decimal("-1")
+    requested = eligible_equity * leverage * sign
+    if direction == "flat" or leverage == 0:
+        return CappedTarget(
+            target, requested, Decimal("0"), Decimal("0"),
+            existing_notional != 0, leverage, Decimal("0"),
+        )
     price_safe_cap = min(
         config.max_notional_usd,
         margin_safe_notional,
@@ -143,8 +186,14 @@ def cap_target(
     actual = contracts * adverse_price * contract_value
     if contracts <= 0 or actual > config.max_notional_usd:
         raise SafetyError("capped canary target cannot produce a safe executable lot")
-    signed = contracts if requested > 0 else -contracts
-    return CappedTarget(target, requested, actual, signed, actual < abs(requested))
+    signed = contracts if direction == "long" else -contracts
+    actual_leverage = actual / eligible_equity
+    if actual_leverage > leverage:
+        raise SafetyError("canary quantization increased strategy leverage")
+    return CappedTarget(
+        target, requested, actual, signed, actual < abs(requested),
+        leverage, actual_leverage,
+    )
 
 
 class KillAction(str, Enum):

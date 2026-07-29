@@ -71,6 +71,18 @@ def test_private_stream_deduplicates_updates_and_stales_on_malformed_event() -> 
         stream.assert_healthy()
 
 
+def test_private_stream_server_heartbeat_preserves_reconciled_health() -> None:
+    stream = PrivateStreamSupervisor(
+        api_key="key", secret="secret", passphrase="pass", instrument_id="inst",
+        reconcile=lambda: None,
+    )
+    for subscription in stream.subscriptions():
+        stream.accept({"event": "subscribe", "arg": subscription})
+    stream.accept_heartbeat()
+    stream.assert_healthy()
+    assert stream.state.last_event_at is not None
+
+
 def test_private_stream_rejects_cross_environment_or_manual_endpoint() -> None:
     args = dict(api_key="key", secret="secret", passphrase="pass", instrument_id="inst", reconcile=lambda: None)
     assert PrivateStreamSupervisor(**args).url == DEMO_PRIVATE_WS

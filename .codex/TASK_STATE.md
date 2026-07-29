@@ -1,56 +1,54 @@
-Objective: Complete the remaining controls and bounded authenticated evidence for a capped continuous V8 OKX EEA Demo X-Perp canary. Live remains unauthorized.
+Objective: Implement dynamic mid-phase V8 bootstrap and unattended target transport, prepare secure systemd/deployment assets, validate, commit, push, and hand the user exact VM commands. The user will pull and execute remotely. Live remains prohibited.
 
-Classification: explicitly authorized bounded OKX Demo implementation and exercises. Continuous operation must finish disabled and stopped.
+Classification: strategy-affecting operational startup policy plus local deployment preparation. Frozen V8 historical backtests and V7 remain unchanged.
 
-Checkpoint:
-- Recovery baseline committed as `12501d0 feat(execution): checkpoint v8 recovery controls`.
-- Deterministic checkpoint manifest: `artifacts/v8_xperp_recovery/checkpoint_manifest_20260729.json`.
-- Baseline full suite 637 passed; V7 exact replay `54002022.18728089349690`, 6 orders.
+Authorization:
+- Push committed V8 work is authorized.
+- The user explicitly withdrew authorization for Codex to perform VM/SSH/systemd/order actions; Codex must only prepare commands for the user.
+- Live orders, Live endpoints/credentials, V7 mutation, full exposure, and canary cap above $1,000 remain unauthorized.
+
+Frozen inputs:
+- Recovery checkpoint `12501d0`.
+- Canary implementation `bc6b97a`.
+- Confirmed halving timestamps from `strategies/cycle_phase_clock.py`.
+- Scheduled V8 transitions: halving +540 short 2x, +900 long 2x.
+- Bootstrap defaults: 20% equity-loss budget, 2x maximum, 0.25x minimum entry.
+
+Change contract:
+- A known position on restart is adopted without resize/rebootstrap.
+- A flat account exactly at a scheduled transition uses the scheduled 2x target subject to safety/cap.
+- A flat account mid-phase computes one deterministic same-source BTC-USD-index bootstrap decision and freezes it.
+- Missing/inconsistent causal reference data, ambiguous phase, or leverage below minimum remains flat.
+- No unchanged target is resubmitted. Scheduled transitions may replace bootstrap; process restart may not.
+- Rollback: stop/disable the V8 unit and return to committed `bc6b97a`; preserve runtime evidence/state.
+
+Diagnostic contract:
+- Compare a finite, preregistered set of historical cold starts against flat-until-transition, fixed 1x, and immediate 2x.
+- Use frozen 20%/0.25x parameters without optimization; diagnostic results do not replace historical V8 artifacts.
 
 Milestones:
-1. [completed] Preserve scoped recovery checkpoint, hashes, tests, and existing artifacts.
-2. [completed] Implement 81-tier parsing/selection and isolated liquidation/margin model.
-3. [completed] Run minimum-size authenticated Demo margin comparison and flatten.
-4. [completed] Implement separate atomic exact-once funding ledger/reconciliation and deterministic cases.
-5. [completed] Close independent emergency-flatten findings and adversarial cases.
-6. [completed] Complete capped service, hard risk envelope, kill-switch execution, and commands.
-7. [completed] Implement expiry gates and read-only rollover dry-run planner/tests.
-8. [completed] Run authenticated rollover dry-run report.
-9. [completed] Run bounded capped service open/reconnect/crash/restart/adopt/flat exercise.
-10. [completed] Create complete operating runbooks.
-11. [completed] Run focused/full validation, V7 replay, final flat/order/process checks.
+1. [complete] Inspect scheduler, halving/index data, deployment path, and remote branch state.
+2. [complete] Implement/test bootstrap calculation and frozen decision ledger.
+3. [complete] Implement/test scheduled/bootstrap/restart target transport and monitoring.
+4. [complete] Add diagnostic runner, secure systemd/deployment assets, and operator runbook.
+5. [complete] Run all local validation and exact V7 replay.
+6. [in progress] Commit dynamic bootstrap separately and push exact committed V8 state.
+7. [pending] Deliver exact VM pull/config/install/preflight/activation/restart/monitoring commands.
 
-Current evidence:
-- Margin comparison: `artifacts/v8_xperp_canary/margin_comparison_20260729T110435Z.json`.
-- All 81 current isolated tiers parsed; tier 1 selected for 0.0001 BTC.
-- Actual comparison notional $6.44625 at selected 2x leverage.
-- Exchange liquidation 33941.64818325434; conservative local 33959.43097997892518440463646.
-- Liquidation distance 47.31909097540597217854623004%, above 35% floor.
-- Initial comparison failed closed because OKX `mmr` excludes the separate liquidation-fee reserve; corrected with a regression assertion, rerun passed, and emergency flatten restored zero.
-- Funding actual settlement parity remains `UNOBSERVED`: no known V8 position spanned a funding settlement.
-- Bounded canary: `artifacts/v8_xperp_canary/bounded_capped_canary_20260729T111357Z.json`.
-- Final account: `artifacts/v8_xperp_canary/final_account_20260729T111409Z.json`.
-- Capped target $993.38778; maximum actual notional $993.0982606160002.
-- Exactly one opening order, three stable fill fragments, forced reconnect blocked execution,
-  crash exit 92, restart adopted 0.0154 without duplication, then reduce-only flat.
-- Focused V8 tests: 72 passed, 8 SDK deprecation warnings.
-- Full repository: 686 passed, 10 known deprecation warnings.
-- Compileall, build, changed-file Ruff, Ruff ratchet, and `git diff --check` passed.
-- Ruff debt 201 versus checked-in baseline 209 (reduction 8).
-- Frozen V7 exact replay passed: `54002022.18728089349690`, 6 orders.
+Safety state at milestone start:
+- Local Demo account was authenticated flat with zero FUTURES open orders.
+- No local Python executor was running.
+- Continuous Demo was stopped.
+- Remote branch did not yet contain `bc6b97a`.
 
-Independent review verdicts:
-- Emergency flatten baseline was BLOCK: known orders while flat, visibility lag, account-scoped lock, lineage, and final full-account checks required fixes.
-- Margin/funding baseline was UNDERMODELLED; specialist formulas and exact-once identity/state contract are now implemented.
-- Canary baseline was BLOCK; hard $1000/2x/loss/freshness/expiry ceilings and unknown-state no-mutation policy are implemented, with operational integration still in progress.
-
-Safety facts:
-- No live order has been placed.
-- Final authenticated Demo position is zero and all FUTURES/V8 open orders are zero.
-- No Python executor process remains.
-- Continuous Demo is disabled unless `V8_XPERP_CONTINUOUS_DEMO_ENABLED=true`.
-- Selected isolated Demo leverage is now 2x.
+Latest no-order evidence:
+- Authenticated local preactivation passed with `execute=false`; account was flat.
+- Phase: short, day-540 transition 2025-10-12T00:09:27Z.
+- Same-source reference: BTC-USD index open 109765.4 at 2025-10-12T01:00:00Z.
+- Current index at calculation: 64263.5; adverse move 0.7080520046371579512475977810.
+- Dynamic leverage 0.2824651278298268863498007776; canary result short 0.0155 contracts,
+  996.8515 USD estimated notional, actual leverage 0.009969866810660179748723525866.
+- No bootstrap/target intent was persisted and no order was submitted.
 
 Next action:
-- Keep continuous Demo stopped. A human may separately authorize a monitored
-  continuous observation period after reviewing the committed evidence and runbooks.
+- Inspect the scoped staged diff, commit, and push. Do not connect to the VM.

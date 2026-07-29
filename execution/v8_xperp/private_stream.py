@@ -64,6 +64,15 @@ class PrivateStreamSupervisor:
         if self.state.stale:
             raise SafetyError("private WebSocket is stale or reconnecting; execution blocked")
 
+    def accept_heartbeat(self) -> None:
+        """Record a server pong without treating it as an account event."""
+        if not self._state.connected or not self._state.subscribed or not self._reconciled:
+            raise SafetyError("private WebSocket heartbeat arrived before reconciliation")
+        self._last_event_monotonic = time.monotonic()
+        self._state = StreamState(
+            True, True, False, self._state.reconnects, _utc_now()
+        )
+
     def login_payload(self) -> dict[str, Any]:
         timestamp = str(int(time.time()))
         sign = base64.b64encode(hmac.new(self.secret.encode(), f"{timestamp}GET/users/self/verify".encode(), hashlib.sha256).digest()).decode()
@@ -139,8 +148,15 @@ class PrivateStreamSupervisor:
                     await socket.send(json.dumps({"op": "subscribe", "args": self.subscriptions()}))
                     delay = 1.0
                     while not stop.is_set():
-                        raw = await asyncio.wait_for(socket.recv(), timeout=STALE_SECONDS)
-                        self.accept(json.loads(raw))
+                        try:
+                            raw = await asyncio.wait_for(socket.recv(), timeout=10)
+                        except asyncio.TimeoutError:
+                            await socket.send("ping")
+                            raw = await asyncio.wait_for(socket.recv(), timeout=5)
+                        if raw == "pong":
+                            self.accept_heartbeat()
+                        else:
+                            self.accept(json.loads(raw))
             except (OSError, asyncio.TimeoutError, websockets.WebSocketException, SafetyError, json.JSONDecodeError):
                 self._socket = None
                 self._reconciled = False

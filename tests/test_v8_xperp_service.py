@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from execution.v8_xperp.adapter import Instrument, Market, PreflightReport, SafetyError
-from execution.v8_xperp.canary import CanaryConfig
+from execution.v8_xperp.canary import CanaryConfig, cap_leverage_target
 from execution.v8_xperp.intents import IntentLedger
 from execution.v8_xperp.margins import parse_margin_tiers
 from execution.v8_xperp.service import CanaryStateStore, V8XPerpCanaryService
@@ -158,3 +158,35 @@ def test_kill_switch_actions_mutate_only_known_state(tmp_path) -> None:
     adapter.position = Decimal("1")
     assert svc.apply_kill_switch("unknown_position").value == "block_no_mutation_manual"
     assert adapter.position == 1
+
+
+def test_generic_target_adopts_unchanged_and_reverses_with_two_intents(tmp_path) -> None:
+    svc, adapter = service(tmp_path)
+    svc.start(report=report(), tiers=tiers(), authenticated_leverage=Decimal("2"), stream=Stream())
+    capped = cap_leverage_target(
+        target="bootstrap-long", direction="long", leverage=Decimal("0.4"),
+        eligible_equity=Decimal("100000"), adverse_price=Decimal("65000"),
+        contract_value=Decimal("1"), lot_size=Decimal("0.0001"),
+        margin_safe_notional=Decimal("1000"), config=config(),
+    )
+    svc.execute_capped_target(
+        capped, transition_id="bootstrap-1", eligible_equity=Decimal("100000")
+    )
+    calls_after_open = list(adapter.calls)
+    svc.execute_capped_target(
+        capped, transition_id="bootstrap-1", eligible_equity=Decimal("100000")
+    )
+    assert adapter.calls == calls_after_open
+
+    short = cap_leverage_target(
+        target="scheduled-short", direction="short", leverage=Decimal("2"),
+        eligible_equity=Decimal("100000"), adverse_price=Decimal("65000"),
+        contract_value=Decimal("1"), lot_size=Decimal("0.0001"),
+        margin_safe_notional=Decimal("1000"), config=config(),
+    )
+    svc.execute_capped_target(
+        short, transition_id="scheduled-1", eligible_equity=Decimal("100000")
+    )
+    assert adapter.calls[-2][2:] == (True, "scheduled-1:close")
+    assert adapter.calls[-1][2:] == (False, "scheduled-1")
+    assert adapter.position == short.signed_contracts

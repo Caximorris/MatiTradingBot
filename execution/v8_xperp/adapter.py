@@ -174,6 +174,7 @@ class V8XPerpDemoAdapter:
         self.snapshot_dir = runtime_root / "reconciliation"
         self._startup_recovered = False
         self._lock_depth = 0
+        self.account_hash = _safe_hash(key)
         self._account_lock_path = (
             Path("data/runtime/v8_xperp_locks")
             / f"{_safe_hash(key)}.lock"
@@ -397,6 +398,40 @@ class V8XPerpDemoAdapter:
         self._startup_recovered = True
         return report
 
+    def operational_report(self, instrument: Instrument) -> PreflightReport:
+        """Fresh account/market report after startup recovery proved ownership."""
+        self._assert_lock_held()
+        self._assert_recovered()
+        current = self._discover()
+        if (
+            current.inst_id != instrument.inst_id
+            or current.metadata_hash != instrument.metadata_hash
+        ):
+            raise SafetyError("operational X-Perp metadata changed")
+        config = self._ok(self.account.get_account_config(), "operational account config")
+        if len(config) != 1 or config[0].get("posMode") != "net_mode" or str(config[0].get("acctLv")) != "2":
+            raise SafetyError("operational account level or position mode is incompatible")
+        balances = self._ok(
+            self.account.get_account_balance(ccy="USDC"),
+            "operational USDC balance",
+        )
+        details = (balances[0].get("details") if balances else None) or []
+        usdc = next((row for row in details if row.get("ccy") == "USDC"), None)
+        available = _decimal(usdc.get("availEq") or usdc.get("availBal")) if usdc else Decimal("0")
+        if available <= 0:
+            raise SafetyError("operational USDC available equity is zero")
+        collateral = self._ok(
+            self._raw_get("/api/v5/account/collateral-assets?ccy=USDC"),
+            "operational USDC collateral",
+        )
+        if len(collateral) != 1 or collateral[0].get("collateralEnabled") is not True:
+            raise SafetyError("operational USDC collateral is not enabled")
+        return PreflightReport(
+            ENVIRONMENT, DOMAIN, current, available, True,
+            str(config[0]["acctLv"]), str(config[0]["posMode"]),
+            self._market(current), _utc_now(),
+        )
+
     def startup_recovery(self, instrument: Instrument) -> dict[str, Any]:
         from .intents import IntentLedger
         from .recovery import StartupRecovery
@@ -469,6 +504,14 @@ class V8XPerpDemoAdapter:
         if leverage <= 0:
             raise SafetyError("isolated leverage is missing or nonpositive")
         return leverage
+
+    def verified_server_time(self) -> tuple[datetime, Decimal]:
+        rows = self._ok(self.public.get_system_time(), "OKX server time")
+        if len(rows) != 1 or rows[0].get("ts") in (None, ""):
+            raise SafetyError("OKX server time response is ambiguous")
+        server = datetime.fromtimestamp(int(rows[0]["ts"]) / 1000, UTC)
+        drift = abs(Decimal(str((_utc_now() - server).total_seconds())))
+        return server, drift
 
     def margin_evidence(self, report: PreflightReport) -> dict[str, Any]:
         """Prefer venue risk response; missing EEA X-Perp tier data blocks continuous mode."""

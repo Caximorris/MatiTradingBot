@@ -110,8 +110,13 @@ class FundingLedger:
 
     def create(self, record: FundingExpectation) -> FundingExpectation:
         rows = self.load()
-        if record.state != "EXPECTED" or any(item.identity == record.identity for item in rows):
-            raise SafetyError("invalid or duplicate V8 funding expectation")
+        existing = next((item for item in rows if item.identity == record.identity), None)
+        if existing is not None:
+            if existing != record:
+                raise SafetyError("V8 funding expectation identity content changed")
+            return existing
+        if record.state != "EXPECTED":
+            raise SafetyError("invalid V8 funding expectation")
         self._write([*rows, record])
         return record
 
