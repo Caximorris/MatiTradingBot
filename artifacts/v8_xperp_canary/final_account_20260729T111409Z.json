@@ -1,0 +1,21 @@
+{
+  "continuous_mode": "disabled",
+  "environment": "okx_demo",
+  "exclusive_lock_acquired": true,
+  "exclusive_lock_released": true,
+  "exercise": "final_authenticated_account_reconciliation",
+  "final": {
+    "all_futures_open_orders": 0,
+    "position": "0",
+    "v8_open_orders": 0
+  },
+  "instrument": "BTC-USD_UM_XPERP-310328",
+  "startup_recovery": {
+    "active_intents": 0,
+    "open_v8_orders": 0,
+    "position": "0",
+    "recent_v8_fills": 6,
+    "recovered": 0,
+    "status": "reconciled"
+  }
+}

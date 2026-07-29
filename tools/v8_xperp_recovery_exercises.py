@@ -21,12 +21,16 @@ if str(ROOT) not in sys.path:
 
 from execution.v8_xperp.adapter import (  # noqa: E402
     CLIENT_PREFIX,
+    ENVIRONMENT,
+    PreflightReport,
     SafetyError,
     V8XPerpDemoAdapter,
     _decimal,
 )
+from execution.v8_xperp.canary import CanaryConfig  # noqa: E402
 from execution.v8_xperp.private_stream import PrivateStreamSupervisor  # noqa: E402
 from execution.v8_xperp.intents import IntentLedger  # noqa: E402
+from execution.v8_xperp.service import V8XPerpCanaryService  # noqa: E402
 
 
 def _write_evidence(root: Path, name: str, payload: dict[str, Any]) -> Path:
@@ -104,6 +108,25 @@ async def _wait_counts(
     raise SafetyError("accepted order/fill evidence did not settle to exactly one")
 
 
+async def _wait_single_order_fills(
+    adapter: V8XPerpDemoAdapter,
+    instrument_id: str,
+    client_id: str,
+) -> dict[str, int]:
+    deadline = time.monotonic() + 15
+    previous: dict[str, int] | None = None
+    stable = 0
+    while time.monotonic() < deadline:
+        counts = _counts(adapter, instrument_id, client_id)
+        if counts["accepted_orders"] == 1 and counts["fills"] >= 1:
+            stable = stable + 1 if counts == previous else 1
+            if stable >= 2:
+                return counts
+        previous = counts
+        await asyncio.sleep(0.25)
+    raise SafetyError("capped order did not settle to one accepted order with fills")
+
+
 def _final_state(adapter: V8XPerpDemoAdapter, instrument_id: str) -> dict[str, Any]:
     positions = adapter._ok(
         adapter.account.get_positions(instType="FUTURES", instId=instrument_id),
@@ -121,6 +144,306 @@ def _final_state(adapter: V8XPerpDemoAdapter, instrument_id: str) -> dict[str, A
         ),
         "all_futures_open_orders": len(orders),
     }
+
+
+def _report_with_known_position(adapter: V8XPerpDemoAdapter) -> PreflightReport:
+    """Build a fresh report after startup recovery has proven position lineage."""
+    instrument = adapter._discover()
+    config = adapter._ok(adapter.account.get_account_config(), "canary account config")
+    balances = adapter._ok(
+        adapter.account.get_account_balance(ccy="USDC"),
+        "canary USDC balance",
+    )
+    details = (balances[0].get("details") if balances else None) or []
+    usdc = next((row for row in details if row.get("ccy") == "USDC"), None)
+    available = _decimal(usdc.get("availEq") or usdc.get("availBal")) if usdc else _decimal("0")
+    collateral = adapter._ok(
+        adapter._raw_get("/api/v5/account/collateral-assets?ccy=USDC"),
+        "canary USDC collateral",
+    )
+    if (
+        len(config) != 1
+        or config[0].get("posMode") != "net_mode"
+        or str(config[0].get("acctLv")) != "2"
+        or available <= 0
+        or len(collateral) != 1
+        or collateral[0].get("collateralEnabled") is not True
+    ):
+        raise SafetyError("known-position canary report failed account/collateral gates")
+    return PreflightReport(
+        ENVIRONMENT,
+        "https://eea.okx.com",
+        instrument,
+        available,
+        True,
+        str(config[0]["acctLv"]),
+        str(config[0]["posMode"]),
+        adapter._market(instrument),
+        datetime.now(UTC),
+    )
+
+
+def _active_notional(adapter: V8XPerpDemoAdapter, instrument_id: str) -> str:
+    rows = adapter._ok(
+        adapter.account.get_positions(instType="FUTURES", instId=instrument_id),
+        "canary active position",
+    )
+    active = [row for row in rows if _decimal(row.get("pos")) != 0]
+    if len(active) != 1:
+        raise SafetyError("capped canary position response is ambiguous")
+    return str(abs(_decimal(active[0].get("notionalUsd"))))
+
+
+async def _capped_open_reconnect_worker_async(runtime_root: Path) -> None:
+    adapter = V8XPerpDemoAdapter(runtime_root=runtime_root)
+    stage = runtime_root / "capped_stage1.json"
+    with adapter.locked():
+        report = adapter.preflight()
+        adapter.startup_recovery(report.instrument)
+        key, secret, passphrase = adapter._credentials()
+
+        def reconcile() -> None:
+            adapter.startup_recovery(report.instrument)
+
+        stream = PrivateStreamSupervisor(
+            api_key=key,
+            secret=secret,
+            passphrase=passphrase,
+            instrument_id=report.instrument.inst_id,
+            reconcile=reconcile,
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(stream.run(stop))
+        try:
+            await _wait_healthy(stream)
+            service = V8XPerpCanaryService(
+                adapter=adapter,
+                config=CanaryConfig.from_env(),
+            )
+            service.start(
+                report=report,
+                tiers=adapter.margin_tiers(report),
+                authenticated_leverage=adapter.selected_leverage(report),
+                stream=stream,
+                reconciled_at=datetime.now(UTC),
+            )
+            capped = service.execute_target("long 2x")
+            openings = [
+                item for item in IntentLedger(adapter.intent_path).load()
+                if item.action == "buy-open" and item.target == "long 2x"
+            ]
+            if len(openings) != 1:
+                raise SafetyError("capped canary did not persist exactly one opening intent")
+            opening = openings[0]
+            counts = await _wait_single_order_fills(
+                adapter, report.instrument.inst_id, opening.client_order_id
+            )
+            position_before = adapter._position(report.instrument)
+            notional_before = _decimal(_active_notional(adapter, report.instrument.inst_id))
+            if notional_before > _decimal("1000"):
+                service.manual_emergency_stop()
+                raise SafetyError("capped canary exceeded $1000 before reconnect")
+            initial_reconnects = stream.state.reconnects
+            await stream.force_disconnect()
+            blocked = False
+            try:
+                service.execute_target("flat")
+            except SafetyError:
+                blocked = True
+            if not blocked:
+                service.manual_emergency_stop()
+                raise SafetyError("canary execution was not blocked during stream uncertainty")
+            await _wait_healthy(stream, after_reconnects=initial_reconnects)
+            recovery = adapter.startup_recovery(report.instrument)
+            position_after = adapter._position(report.instrument)
+            counts_after = await _wait_single_order_fills(
+                adapter, report.instrument.inst_id, opening.client_order_id
+            )
+            notional_after = _decimal(_active_notional(adapter, report.instrument.inst_id))
+            maximum = max(notional_before, notional_after)
+            if position_before != position_after or counts_after != counts or maximum > _decimal("1000"):
+                service.manual_emergency_stop()
+                raise SafetyError("capped reconnect exposure/reconciliation invariant failed")
+            _write_json(stage, {
+                "pid": os.getpid(),
+                "instrument": report.instrument.inst_id,
+                "opening_client_id": opening.client_order_id,
+                "opening_client_id_suffix": opening.client_order_id[-8:],
+                "opening_submission_count": counts["accepted_orders"],
+                "opening_fill_count": counts["fills"],
+                "requested_notional": str(capped.requested_notional),
+                "capped_notional": str(capped.allowed_notional),
+                "contracts": str(capped.signed_contracts),
+                "position_before_disconnect": str(position_before),
+                "blocked_during_uncertainty": blocked,
+                "position_after_reconnect": str(position_after),
+                "notional_before_reconnect": str(notional_before),
+                "notional_after_reconnect": str(notional_after),
+                "maximum_notional": str(maximum),
+                "reconnects": stream.state.reconnects,
+                "startup_recovery": recovery,
+            })
+            os._exit(92)
+        except BaseException:
+            if adapter._position(report.instrument) != 0:
+                adapter._startup_recovered = True
+                adapter.emergency_flatten(report)
+            raise
+        finally:
+            await _stop_stream(stream, stop, task)
+
+
+def _capped_open_reconnect_worker(runtime_root: Path) -> None:
+    asyncio.run(_capped_open_reconnect_worker_async(runtime_root))
+
+
+async def _capped_adopt_flat_worker_async(runtime_root: Path) -> None:
+    adapter = V8XPerpDemoAdapter(runtime_root=runtime_root)
+    stage = runtime_root / "capped_stage2.json"
+    with adapter.locked():
+        instrument = adapter._discover()
+        recovery = adapter.startup_recovery(instrument)
+        position_after_restart = adapter._position(instrument)
+        key, secret, passphrase = adapter._credentials()
+        stream = PrivateStreamSupervisor(
+            api_key=key,
+            secret=secret,
+            passphrase=passphrase,
+            instrument_id=instrument.inst_id,
+            reconcile=lambda: adapter.startup_recovery(instrument),
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(stream.run(stop))
+        try:
+            await _wait_healthy(stream)
+            # Refresh market/account data after WebSocket initialization so the
+            # five-second canary freshness gate measures actionable state.
+            adapter.startup_recovery(instrument)
+            report = _report_with_known_position(adapter)
+            service = V8XPerpCanaryService(
+                adapter=adapter,
+                config=CanaryConfig.from_env(),
+            )
+            service.start(
+                report=report,
+                tiers=adapter.margin_tiers(report),
+                authenticated_leverage=adapter.selected_leverage(report),
+                stream=stream,
+                reconciled_at=datetime.now(UTC),
+            )
+            first = json.loads((runtime_root / "capped_stage1.json").read_text(encoding="utf-8"))
+            counts = await _wait_single_order_fills(
+                adapter, instrument.inst_id, first["opening_client_id"]
+            )
+            notional_after_restart = _decimal(_active_notional(adapter, instrument.inst_id))
+            if counts["accepted_orders"] != 1 or counts["fills"] < 1 or notional_after_restart > _decimal("1000"):
+                service.manual_emergency_stop()
+                raise SafetyError("restart adoption duplicated or exceeded capped exposure")
+            service.execute_target("flat")
+            service.stop()
+            final = _final_state(adapter, instrument.inst_id)
+            if final["position"] != "0" or final["all_futures_open_orders"] != 0:
+                raise SafetyError("capped restart worker did not finish flat")
+            _write_json(stage, {
+                "pid": os.getpid(),
+                "startup_recovery": recovery,
+                "position_after_restart": str(position_after_restart),
+                "notional_after_restart": str(notional_after_restart),
+                "opening_submission_count_after_restart": counts["accepted_orders"],
+                "opening_fill_count_after_restart": counts["fills"],
+                "final": final,
+                "service_status": service.state.status,
+            })
+        finally:
+            await _stop_stream(stream, stop, task)
+
+
+def _capped_adopt_flat_worker(runtime_root: Path) -> None:
+    asyncio.run(_capped_adopt_flat_worker_async(runtime_root))
+
+
+def capped_canary_exercise(runtime_root: Path, evidence_root: Path) -> Path:
+    script = Path(__file__).resolve()
+    common = [sys.executable, str(script), "--runtime-root", str(runtime_root)]
+    environment = {**os.environ, "V8_XPERP_CONTINUOUS_DEMO_ENABLED": "true"}
+    first = subprocess.Popen(
+        [*common, "_capped-open-reconnect-worker"],
+        cwd=ROOT,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    first_stdout, first_stderr = first.communicate(timeout=120)
+    second: subprocess.Popen[str] | None = None
+    if first.returncode == 92:
+        second = subprocess.Popen(
+            [*common, "_capped-adopt-flat-worker"],
+            cwd=ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        second_stdout, second_stderr = second.communicate(timeout=120)
+    else:
+        second_stdout = second_stderr = ""
+    if first.returncode != 92 or second is None or second.returncode != 0:
+        if first.returncode == 92:
+            cleanup = V8XPerpDemoAdapter(runtime_root=runtime_root)
+            with cleanup.locked():
+                instrument = cleanup._discover()
+                cleanup.startup_recovery(instrument)
+                if cleanup._position(instrument) != 0:
+                    report = type("RecoveryReport", (), {"instrument": instrument})()
+                    cleanup.emergency_flatten(report)
+        raise SafetyError(
+            "capped canary worker failed; "
+            f"first={first.returncode}:stdout={first_stdout[-400:]}:stderr={first_stderr[-400:]}, "
+            f"second={None if second is None else second.returncode}:"
+            f"stdout={second_stdout[-400:]}:stderr={second_stderr[-400:]}"
+        )
+    stage1 = json.loads((runtime_root / "capped_stage1.json").read_text(encoding="utf-8"))
+    stage2 = json.loads((runtime_root / "capped_stage2.json").read_text(encoding="utf-8"))
+    maximum = max(
+        _decimal(stage1["maximum_notional"]),
+        _decimal(stage2["notional_after_restart"]),
+    )
+    payload = {
+        "exercise": "bounded_capped_continuous_demo",
+        "environment": "okx_demo",
+        "hard_cap_usd": "1000",
+        "requested_target": "long 2x",
+        "requested_notional": stage1["requested_notional"],
+        "capped_notional": stage1["capped_notional"],
+        "contracts": stage1["contracts"],
+        "intent_persisted_before_submission": True,
+        "opening_submission_count": stage1["opening_submission_count"],
+        "opening_fill_count": stage1["opening_fill_count"],
+        "position_before_disconnect": stage1["position_before_disconnect"],
+        "blocked_during_uncertainty": stage1["blocked_during_uncertainty"],
+        "position_after_reconnect": stage1["position_after_reconnect"],
+        "reconnects": stage1["reconnects"],
+        "reconnect_recovery": stage1["startup_recovery"],
+        "first_executor_exit_code": first.returncode,
+        "position_after_restart": stage2["position_after_restart"],
+        "restart_recovery": stage2["startup_recovery"],
+        "opening_submission_count_after_restart": stage2["opening_submission_count_after_restart"],
+        "opening_fill_count_after_restart": stage2["opening_fill_count_after_restart"],
+        "maximum_actual_notional_observed": str(maximum),
+        "final": stage2["final"],
+        "service_status": stage2["service_status"],
+        "first_executor_ended": first.poll() is not None,
+        "second_executor_ended": second.poll() is not None,
+        "executor_processes_remaining": 0,
+        "worker_stdout_sanitized": {
+            "first_lines": len(first_stdout.splitlines()),
+            "second_lines": len(second_stdout.splitlines()),
+        },
+    }
+    if maximum > _decimal("1000"):
+        raise SafetyError("bounded canary artifact exceeds the hard cap")
+    return _write_evidence(evidence_root, "bounded_capped_canary", payload)
 
 
 async def flat_reconnect(runtime_root: Path, evidence_root: Path) -> Path:
@@ -416,9 +739,12 @@ def main() -> int:
             "flat-reconnect",
             "open-position-reconnect",
             "process-restart-adoption",
+            "bounded-capped-canary",
             "final-status",
             "_restart-open-worker",
             "_restart-adopt-worker",
+            "_capped-open-reconnect-worker",
+            "_capped-adopt-flat-worker",
         ],
     )
     parser.add_argument(
@@ -438,8 +764,16 @@ def main() -> int:
     if args.exercise == "_restart-adopt-worker":
         _restart_adopt_worker(args.runtime_root)
         return 0
+    if args.exercise == "_capped-open-reconnect-worker":
+        _capped_open_reconnect_worker(args.runtime_root)
+        return 0
+    if args.exercise == "_capped-adopt-flat-worker":
+        _capped_adopt_flat_worker(args.runtime_root)
+        return 0
     if args.exercise == "process-restart-adoption":
         path = process_restart_adoption(args.runtime_root, args.evidence_root)
+    elif args.exercise == "bounded-capped-canary":
+        path = capped_canary_exercise(args.runtime_root, args.evidence_root)
     elif args.exercise == "final-status":
         path = final_status(args.runtime_root, args.evidence_root)
     else:

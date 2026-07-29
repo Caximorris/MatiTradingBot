@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from execution.v8_xperp.adapter import (
     _ProcessLock,
 )
 from execution.v8_xperp.private_stream import DEMO_PRIVATE_WS, LIVE_PRIVATE_WS, PrivateStreamSupervisor
+from execution.v8_xperp.intents import Intent, IntentLedger
 
 
 def _report() -> PreflightReport:
@@ -121,3 +123,174 @@ def test_reversal_closes_then_opens_opposite_with_separate_order_calls() -> None
 
     assert calls == [("sell", True), ("sell", False)]
     assert result["position"] == str(-report.instrument.min_sz)
+
+
+def test_emergency_flatten_cancels_known_order_even_when_position_is_flat(tmp_path) -> None:
+    adapter = object.__new__(V8XPerpDemoAdapter)
+    adapter._lock_depth = 1
+    adapter._startup_recovered = True
+    adapter._discover = lambda: _report().instrument
+    adapter.intent_path = tmp_path / "intents.json"
+    client_id = "v8xpknown000000000000000000001"
+    IntentLedger(adapter.intent_path).create(Intent(
+        "transition", client_id, _report().instrument.inst_id, "long", "buy-open",
+        "buy", "0.0001", False, "limit", metadata_hash="metadata",
+    ))
+    open_orders = [[{"clOrdId": client_id, "reduceOnly": "false"}], []]
+
+    class Account:
+        @staticmethod
+        def get_positions(**_kwargs):
+            return {"code": "0", "data": []}
+
+    class Trade:
+        @staticmethod
+        def get_order_list(**_kwargs):
+            return {"code": "0", "data": open_orders.pop(0)}
+
+    adapter.account = Account()
+    adapter.trade = Trade()
+    adapter._position = lambda _instrument: Decimal("0")
+    canceled: list[str] = []
+    adapter.cancel_v8_order = lambda _report, value: canceled.append(value)
+    events: list[str] = []
+    adapter._append = lambda event, _payload: events.append(event)
+
+    result = adapter.emergency_flatten(_report())
+
+    assert canceled == [client_id]
+    assert result == {"status": "already_flat", "canceled_orders": 1}
+    assert events == ["incident_started", "incident_resolved"]
+
+
+def test_emergency_flatten_never_mutates_unknown_order_or_multiple_positions(tmp_path) -> None:
+    adapter = object.__new__(V8XPerpDemoAdapter)
+    adapter._lock_depth = 1
+    adapter._startup_recovered = True
+    adapter._discover = lambda: _report().instrument
+    adapter.intent_path = tmp_path / "intents.json"
+    adapter._append = lambda *_args: None
+    mutations: list[str] = []
+    adapter.cancel_v8_order = lambda *_args: mutations.append("cancel")
+
+    class Trade:
+        @staticmethod
+        def get_order_list(**_kwargs):
+            return {"code": "0", "data": [{"clOrdId": "external"}]}
+
+    class Account:
+        rows = [{"instId": _report().instrument.inst_id, "pos": "1"}]
+
+        @classmethod
+        def get_positions(cls, **_kwargs):
+            return {"code": "0", "data": cls.rows}
+
+    adapter.trade, adapter.account = Trade(), Account()
+    with pytest.raises(SafetyError, match="unknown FUTURES order"):
+        adapter.emergency_flatten(_report())
+    assert mutations == []
+
+    Account.rows = [
+        {"instId": _report().instrument.inst_id, "pos": "1"},
+        {"instId": "OTHER", "pos": "1"},
+    ]
+    with pytest.raises(SafetyError, match="multiple"):
+        adapter.emergency_flatten(_report())
+    assert mutations == []
+
+
+def test_emergency_flatten_uses_post_cancel_partial_position_and_records_incident(tmp_path) -> None:
+    adapter = object.__new__(V8XPerpDemoAdapter)
+    adapter._lock_depth = 1
+    adapter._startup_recovered = True
+    adapter.intent_path = tmp_path / "intents.json"
+    adapter._discover = lambda: _report().instrument
+    adapter.cancel_known_pending = lambda _report: 1
+    positions = iter([Decimal("0.4")])
+    adapter._position = lambda _instrument: next(positions)
+    events: list[str] = []
+    adapter._append = lambda event, _payload: events.append(event)
+    captured: dict[str, object] = {}
+
+    class Account:
+        calls = 0
+
+        @classmethod
+        def get_positions(cls, **_kwargs):
+            cls.calls += 1
+            return {
+                "code": "0",
+                "data": (
+                    [{"instId": _report().instrument.inst_id, "pos": "0.4"}]
+                    if cls.calls == 1
+                    else []
+                ),
+            }
+
+    class Trade:
+        @staticmethod
+        def get_order_list(**_kwargs):
+            return {"code": "0", "data": []}
+
+    def create_intent(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(client_order_id="v8xppartial0000000000000000001")
+
+    class Execution:
+        @staticmethod
+        def submit_order(_intent, *, before_position):
+            assert before_position == Decimal("0.4")
+            return SimpleNamespace(order={"state": "filled"}, position=Decimal("0"))
+
+    adapter.account, adapter.trade = Account(), Trade()
+    adapter._create_intent = create_intent
+    adapter._intent_execution = lambda: Execution()
+
+    result = adapter.emergency_flatten(_report())
+
+    assert captured["contracts"] == Decimal("0.4")
+    assert captured["reduce_only"] is True
+    assert result["status"] == "flat"
+    assert events == ["incident_started", "incident_order", "incident_resolved"]
+
+
+def test_emergency_flatten_blocks_metadata_change_before_mutation(tmp_path) -> None:
+    adapter = object.__new__(V8XPerpDemoAdapter)
+    adapter._lock_depth = 1
+    adapter._startup_recovered = True
+    adapter.intent_path = tmp_path / "intents.json"
+    changed = _report().instrument
+    adapter._discover = lambda: type(changed)(
+        changed.inst_id, changed.inst_family, changed.uly, changed.settle_ccy,
+        changed.ct_type, changed.ct_val, changed.ct_val_ccy, changed.lot_sz,
+        changed.min_sz, changed.tick_sz, changed.lever, changed.exp_time, "changed",
+    )
+    events: list[str] = []
+    adapter._append = lambda event, _payload: events.append(event)
+    with pytest.raises(SafetyError, match="metadata changed"):
+        adapter.emergency_flatten(_report())
+    assert events == ["incident_started", "incident_failed"]
+
+
+def test_injected_rest_clients_require_explicit_test_gate(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OKX_XPERP_DEMO_API_KEY", "demo-key")
+    monkeypatch.setenv("OKX_XPERP_DEMO_SECRET_KEY", "demo-secret")
+    monkeypatch.setenv("OKX_XPERP_DEMO_PASSPHRASE", "demo-pass")
+    with pytest.raises(SafetyError, match="test-only"):
+        V8XPerpDemoAdapter(runtime_root=tmp_path, account=object())
+    adapter = V8XPerpDemoAdapter(
+        runtime_root=tmp_path,
+        account=object(),
+        allow_test_clients=True,
+    )
+    assert adapter.account is not None
+
+
+def test_account_lock_identity_is_independent_of_runtime_root(tmp_path) -> None:
+    first = V8XPerpDemoAdapter(runtime_root=tmp_path / "one")
+    second = V8XPerpDemoAdapter(runtime_root=tmp_path / "two")
+    assert first._account_lock_path == second._account_lock_path
+    with first.locked():
+        with pytest.raises(SafetyError, match="owns the process lock"):
+            with second.locked():
+                pass

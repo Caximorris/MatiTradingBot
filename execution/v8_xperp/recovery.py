@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
@@ -278,6 +279,8 @@ class IntentExecution:
         timeout: float = 12.0,
     ) -> RecoveryResult | None:
         deadline = time.monotonic() + timeout
+        absence_started: float | None = None
+        absence_confirmations = 0
         while True:
             result = self.reconcile(
                 intent,
@@ -286,7 +289,16 @@ class IntentExecution:
                 defer_absent=not permit_absent,
             )
             if result is None and permit_absent:
-                return result
+                now = time.monotonic()
+                absence_started = absence_started or now
+                absence_confirmations += 1
+                if absence_confirmations >= 5 and now - absence_started >= 2:
+                    return None
+                if now >= deadline:
+                    self._record(intent, "UNKNOWN", last_result="absence_confirmation_timeout")
+                    raise SafetyError("exchange absence could not be confirmed safely")
+                time.sleep(0.5)
+                continue
             if result is not None and result.intent.state in {"RECONCILED", "PARTIALLY_FILLED"}:
                 return result
             if result is not None and result.intent.state == "OPEN" and intent.order_type == "limit":
@@ -403,6 +415,7 @@ class StartupRecovery:
             )
             if result is not None:
                 results.append(result)
+        intents = self.ledger.load()
         open_rows = self.adapter._ok(
             self.adapter.trade.get_order_list(instType="FUTURES", state="live"),
             "startup open-order reconciliation",
@@ -444,6 +457,28 @@ class StartupRecovery:
             or position_intents[-1].target == "flat"
         ):
             raise SafetyError("journal says flat but exchange has a known V8 position")
+        if position != 0:
+            latest = position_intents[-1]
+            if latest.metadata_hash != instrument.metadata_hash:
+                raise SafetyError("current V8 position metadata differs from its opening intent")
+            signed_local = (
+                _decimal(latest.filled_contracts)
+                if latest.side == "buy"
+                else -_decimal(latest.filled_contracts)
+            )
+            if signed_local != position:
+                raise SafetyError("V8 intent lineage does not reconcile to the current position")
+            try:
+                opened_ms = int(datetime.fromisoformat(latest.created_at).timestamp() * 1000)
+            except Exception as exc:
+                raise SafetyError("V8 position intent timestamp is invalid") from exc
+            recent_unknown = [
+                row for row in fills
+                if int(row.get("fillTime") or row.get("ts") or opened_ms) >= opened_ms
+                and row.get("clOrdId") != latest.client_order_id
+            ]
+            if recent_unknown:
+                raise SafetyError("unknown fill exists in the current V8 position lineage window")
         report = {
             "active_intents": len(active),
             "recovered": len(results),

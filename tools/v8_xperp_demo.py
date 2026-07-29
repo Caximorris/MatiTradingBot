@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
+from contextlib import suppress
 from dataclasses import asdict
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,10 +18,22 @@ if str(ROOT) not in sys.path:
 
 from execution.v8_xperp import SafetyError, V8XPerpDemoAdapter  # noqa: E402
 from execution.v8_xperp.intents import IntentLedger, TERMINAL  # noqa: E402
+from execution.v8_xperp.canary import CanaryConfig  # noqa: E402
+from execution.v8_xperp.funding import FundingLedger  # noqa: E402
+from execution.v8_xperp.private_stream import PrivateStreamSupervisor  # noqa: E402
 from execution.v8_xperp.recovery import (  # noqa: E402
     IntentExecution,
     archive_reconciled,
     sanitized_status,
+)
+from execution.v8_xperp.rollover import (  # noqa: E402
+    discover_successor,
+    expiry_status,
+    rollover_dry_run,
+)
+from execution.v8_xperp.service import (  # noqa: E402
+    CanaryStateStore,
+    V8XPerpCanaryService,
 )
 
 
@@ -28,12 +43,100 @@ def _json(value: object) -> None:
     print(json.dumps(asdict(value) if hasattr(value, "__dataclass_fields__") else value, default=convert, indent=2, sort_keys=True))
 
 
+def _rollover_market(adapter: V8XPerpDemoAdapter, instrument_id: str, index_id: str) -> dict[str, str]:
+    ticker = adapter._ok(adapter.market_api.get_ticker(instrument_id), "rollover ticker")
+    book = adapter._ok(adapter.market_api.get_orderbook(instrument_id, sz="5"), "rollover book")
+    index = adapter._ok(adapter.market_api.get_index_tickers(instId=index_id), "rollover index")
+    if len(ticker) != 1 or len(book) != 1 or len(index) != 1:
+        raise SafetyError("rollover market response is ambiguous")
+    return {
+        "bidPx": str(book[0]["bids"][0][0]),
+        "askPx": str(book[0]["asks"][0][0]),
+        "bidSz": str(book[0]["bids"][0][1]),
+        "askSz": str(book[0]["asks"][0][1]),
+        "indexPx": str(index[0]["idxPx"]),
+    }
+
+
+async def _wait_stream(stream: PrivateStreamSupervisor) -> None:
+    deadline = asyncio.get_running_loop().time() + 45
+    while asyncio.get_running_loop().time() < deadline:
+        if not stream.state.stale and stream.state.subscribed:
+            stream.assert_healthy()
+            return
+        await asyncio.sleep(0.1)
+    raise SafetyError("private WebSocket did not become healthy")
+
+
+async def _run_canary(*, one_shot: bool) -> dict[str, object]:
+    config = CanaryConfig.from_env()
+    if not config.enabled:
+        raise SafetyError("V8_XPERP_CONTINUOUS_DEMO_ENABLED=true is required")
+    adapter = V8XPerpDemoAdapter()
+    with adapter.locked():
+        report = adapter.preflight()
+        adapter.startup_recovery(report.instrument)
+        key, secret, passphrase = adapter._credentials()
+        stream = PrivateStreamSupervisor(
+            api_key=key,
+            secret=secret,
+            passphrase=passphrase,
+            instrument_id=report.instrument.inst_id,
+            reconcile=lambda: adapter.startup_recovery(report.instrument),
+        )
+        stop = asyncio.Event()
+        task = asyncio.create_task(stream.run(stop))
+        service = V8XPerpCanaryService(adapter=adapter, config=config)
+        try:
+            await _wait_stream(stream)
+            service.start(
+                report=report,
+                tiers=adapter.margin_tiers(report),
+                authenticated_leverage=adapter.selected_leverage(report),
+                stream=stream,
+                reconciled_at=datetime.now(UTC),
+            )
+            if one_shot:
+                service.stop()
+            else:
+                while True:
+                    await asyncio.sleep(1)
+                    stream.assert_healthy()
+        except KeyboardInterrupt:
+            service.stop()
+        finally:
+            if service.state.status == "RUNNING" and adapter._position(report.instrument) == 0:
+                service.stop()
+            stop.set()
+            if stream.state.connected:
+                with suppress(Exception):
+                    await stream.force_disconnect()
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        return {
+            "status": service.state.status,
+            "instrument": report.instrument.inst_id,
+            "maximum_notional_observed": service.state.maximum_notional_observed,
+            "one_shot": one_shot,
+        }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("preflight", help="read-only authenticated gate")
     sub.add_parser("reconcile", help="read-only preflight plus reconciliation snapshot")
     sub.add_parser("status", help="read-only account and market status")
+    sub.add_parser("canary-config", help="validate hard canary configuration")
+    sub.add_parser("canary-status", help="read local canary lifecycle state")
+    sub.add_parser("funding-status", help="read funding interfaces and exact-once ledger status")
+    sub.add_parser("margin-status", help="read current tier/leverage/risk status")
+    sub.add_parser("expiry-status", help="read current expiry gates")
+    sub.add_parser("rollover-dry-run", help="read-only successor and rollover plan")
+    sub.add_parser("graceful-shutdown", help="stop local canary state only when Demo is flat")
+    manual = sub.add_parser("manual-emergency-stop", help="flatten known V8 state and latch manual stop")
+    manual.add_argument("--confirm-v8-emergency-stop", action="store_true")
     sub.add_parser("validate-journal", help="validate the atomic intent journal")
     sub.add_parser("list-intents", help="list non-terminal persisted intents")
     sub.add_parser("startup-recovery", help="lock and run read-only startup recovery")
@@ -50,11 +153,22 @@ def main() -> int:
     flatten.add_argument("--confirm-v8-emergency-flatten", action="store_true")
     run = sub.add_parser("run", help="continuous Demo operation")
     run.add_argument("--enable-continuous-demo", action="store_true")
+    start = sub.add_parser("canary-start", help="start, validate, and stop a one-shot canary")
+    start.add_argument("--enable-continuous-demo", action="store_true")
     args = parser.parse_args()
-    if args.command == "run":
-        raise SafetyError("continuous V8 Demo operation remains disabled in this milestone")
+    if args.command in {"run", "canary-start"}:
+        if not args.enable_continuous_demo:
+            raise SafetyError("continuous Demo requires the explicit CLI enable flag")
+        _json(asyncio.run(_run_canary(one_shot=args.command == "canary-start")))
+        return 0
     adapter = V8XPerpDemoAdapter()
     ledger = IntentLedger(adapter.intent_path)
+    if args.command == "canary-config":
+        _json(CanaryConfig.from_env())
+        return 0
+    if args.command == "canary-status":
+        _json(CanaryStateStore(adapter.runtime_root / "canary_state.json").load())
+        return 0
     if args.command in {"validate-journal", "list-intents", "recovery-status", "archive-intents"}:
         if args.command == "archive-intents":
             destination = args.destination or adapter.runtime_root / "archive" / "reconciled-intents.json"
@@ -90,13 +204,73 @@ def main() -> int:
             instrument = adapter._discover()
             adapter.startup_recovery(instrument)
             report = type("RecoveryReport", (), {"instrument": instrument})()
-            _json(adapter.emergency_flatten(report, lock_already_held=True))
+            _json(adapter.emergency_flatten(report))
+        return 0
+    if args.command == "manual-emergency-stop":
+        if not args.confirm_v8_emergency_stop:
+            raise SafetyError("manual emergency stop requires explicit confirmation")
+        with adapter.locked():
+            instrument = adapter._discover()
+            adapter.startup_recovery(instrument)
+            report = type("RecoveryReport", (), {"instrument": instrument})()
+            result = adapter.emergency_flatten(report)
+            state_store = CanaryStateStore(adapter.runtime_root / "canary_state.json")
+            state = state_store.load()
+            state_store.write(type(state)(
+                **{
+                    **asdict(state),
+                    "status": "STOPPED",
+                    "manual_stop": True,
+                    "stopped_at": datetime.now(UTC).isoformat(),
+                }
+            ))
+            _json(result)
+        return 0
+    if args.command == "graceful-shutdown":
+        with adapter.locked():
+            instrument = adapter._discover()
+            adapter.startup_recovery(instrument)
+            if adapter._position(instrument) != 0:
+                raise SafetyError("graceful shutdown requires a flat V8 position")
+            state_store = CanaryStateStore(adapter.runtime_root / "canary_state.json")
+            state = state_store.load()
+            state_store.write(type(state)(
+                **{**asdict(state), "status": "STOPPED", "stopped_at": datetime.now(UTC).isoformat()}
+            ))
+            _json(state_store.load())
         return 0
     if args.command == "smoke":
         _json(adapter.smoke())
         return 0
     report = adapter.preflight()
-    if args.command == "targets":
+    if args.command == "funding-status":
+        snapshot = adapter.funding_reconciliation(report)
+        records = FundingLedger(adapter.runtime_root / "funding.json").load()
+        _json({
+            "snapshot": snapshot,
+            "expectations": len(records),
+            "states": {state: len([row for row in records if row.state == state]) for state in sorted({row.state for row in records})},
+            "actual_parity": "OBSERVED" if any(row.state == "RECONCILED" for row in records) else "UNOBSERVED",
+        })
+    elif args.command == "margin-status":
+        _json(adapter.margin_evidence(report))
+    elif args.command == "expiry-status":
+        _json(expiry_status(report.instrument))
+    elif args.command == "rollover-dry-run":
+        rows = adapter._ok(adapter.account.get_instruments("FUTURES"), "rollover instrument catalogue")
+        markets = {report.instrument.inst_id: _rollover_market(adapter, report.instrument.inst_id, report.instrument.uly)}
+        with suppress(SafetyError):
+            successor = discover_successor(report.instrument, rows)
+            markets[str(successor["instId"])] = _rollover_market(
+                adapter, str(successor["instId"]), report.instrument.uly
+            )
+        _json(rollover_dry_run(
+            current=report.instrument,
+            instrument_rows=rows,
+            markets=markets,
+            current_contracts=Decimal("0"),
+        ))
+    elif args.command == "targets":
         _json([adapter.calculate_target(report, value) for value in (args.target or ["flat", "long 1x", "long 2x", "short 2x"])])
     else:
         _json(report)

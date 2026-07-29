@@ -162,13 +162,22 @@ class V8XPerpDemoAdapter:
     def __init__(self, *, runtime_root: Path = Path("data/runtime/v8_xperp_demo"),
                  account: Any | None = None, trade: Any | None = None,
                  funding: Any | None = None, market: Any | None = None,
-                 public: Any | None = None, raw_get: Callable[[str], dict[str, Any]] | None = None) -> None:
+                 public: Any | None = None, raw_get: Callable[[str], dict[str, Any]] | None = None,
+                 allow_test_clients: bool = False) -> None:
+        injected = (account, trade, funding, market, public, raw_get)
+        if any(client is not None for client in injected) and not allow_test_clients:
+            raise SafetyError("injected REST clients require the explicit test-only gate")
         key, secret, passphrase = self._credentials()
         self.runtime_root = runtime_root
         self.journal_path = runtime_root / "journal.jsonl"
         self.intent_path = runtime_root / "intents.json"
         self.snapshot_dir = runtime_root / "reconciliation"
         self._startup_recovered = False
+        self._lock_depth = 0
+        self._account_lock_path = (
+            Path("data/runtime/v8_xperp_locks")
+            / f"{_safe_hash(key)}.lock"
+        )
         kwargs = {"use_server_time": False, "flag": "1", "domain": DOMAIN, "debug": False}
         self.account = account or AccountAPI(key, secret, passphrase, **kwargs)
         self.trade = trade or TradeAPI(key, secret, passphrase, **kwargs)
@@ -203,8 +212,18 @@ class V8XPerpDemoAdapter:
 
     @contextmanager
     def locked(self) -> Iterator[None]:
-        with _ProcessLock(self.runtime_root / "executor.lock"):
-            yield
+        if self._lock_depth:
+            raise SafetyError("nested V8 X-Perp process lock acquisition is forbidden")
+        with _ProcessLock(self._account_lock_path):
+            self._lock_depth = 1
+            try:
+                yield
+            finally:
+                self._lock_depth = 0
+
+    def _assert_lock_held(self) -> None:
+        if self._lock_depth != 1:
+            raise SafetyError("exclusive V8 account process lock is not held")
 
     def _ok(self, payload: dict[str, Any], label: str) -> list[dict[str, Any]]:
         if payload.get("code") != "0":
@@ -427,13 +446,116 @@ class V8XPerpDemoAdapter:
         self._append("funding_snapshot", {"inst_id": result["inst_id"], "rate": result["rate"], "history_count": len(history), "funding_bill_count": len(result["funding_bills"])})
         return result
 
+    def margin_tiers(self, report: PreflightReport) -> tuple[Any, ...]:
+        """Fetch and validate the complete current isolated-margin tier table."""
+        from .margins import parse_margin_tiers
+
+        rows = self._ok(
+            self.public.get_position_tiers(
+                "FUTURES", "isolated", instFamily=report.instrument.inst_family
+            ),
+            "X-Perp position tiers",
+        )
+        return parse_margin_tiers(rows, instrument=report.instrument)
+
+    def selected_leverage(self, report: PreflightReport) -> Decimal:
+        rows = self._ok(
+            self.account.get_leverage("isolated", instId=report.instrument.inst_id),
+            "X-Perp selected leverage",
+        )
+        if len(rows) != 1 or rows[0].get("mgnMode") != "isolated":
+            raise SafetyError("isolated leverage response is ambiguous")
+        leverage = _decimal(rows[0].get("lever"))
+        if leverage <= 0:
+            raise SafetyError("isolated leverage is missing or nonpositive")
+        return leverage
+
     def margin_evidence(self, report: PreflightReport) -> dict[str, Any]:
         """Prefer venue risk response; missing EEA X-Perp tier data blocks continuous mode."""
-        tiers = self._ok(self.public.get_position_tiers("FUTURES", "isolated", instFamily=report.instrument.inst_family), "X-Perp position tiers")
+        tiers = self.margin_tiers(report)
         risk = self._ok(self.account.get_position_risk(instType="FUTURES"), "X-Perp position risk")
-        result = {"tier_count": len(tiers), "risk_rows": len(risk), "continuous_eligible": bool(tiers)}
+        result = {
+            "tier_count": len(tiers),
+            "selected_leverage": str(self.selected_leverage(report)),
+            "risk_rows": len(risk),
+            "continuous_eligible": bool(tiers),
+        }
         self._append("margin_snapshot", result)
         return result
+
+    def minimum_margin_comparison(self) -> dict[str, Any]:
+        """Open one minimum Demo lot, compare exchange/local risk, and flatten."""
+        from .margins import assess_margin
+
+        self._assert_lock_held()
+        report = self.preflight()
+        leverage_before = self.selected_leverage(report)
+        leverage = min(leverage_before, Decimal("2"))
+        if leverage_before != leverage:
+            changed = self._ok(
+                self.account.set_leverage(
+                    str(leverage), "isolated", instId=report.instrument.inst_id
+                ),
+                "set isolated canary leverage",
+            )
+            if not changed:
+                raise SafetyError("isolated leverage update returned no confirmation")
+            leverage = self.selected_leverage(report)
+        tiers = self.margin_tiers(report)
+        opening_id: str | None = None
+        try:
+            opening_id, _ = self.place_market(
+                report,
+                side="buy",
+                contracts=report.instrument.min_sz,
+                reduce_only=False,
+                target="long 1x",
+            )
+            positions = self._ok(
+                self.account.get_positions(
+                    instType="FUTURES", instId=report.instrument.inst_id
+                ),
+                "minimum margin position",
+            )
+            active = [row for row in positions if _decimal(row.get("pos")) != 0]
+            if len(active) != 1:
+                raise SafetyError("minimum margin comparison position is ambiguous")
+            row = active[0]
+            assessment = assess_margin(
+                instrument=report.instrument,
+                tiers=tiers,
+                contracts=abs(_decimal(row["pos"])),
+                side="long" if _decimal(row["pos"]) > 0 else "short",
+                mark_price=_decimal(row["markPx"]),
+                entry_price=_decimal(row["avgPx"]),
+                leverage=leverage,
+                available_usdc=report.available_usdc,
+                reserve_usdc=Decimal("5"),
+                exchange_position=row,
+            )
+            evidence = {
+                "environment": ENVIRONMENT,
+                "instrument": report.instrument.inst_id,
+                "opening_client_id_hash": _safe_hash(opening_id),
+                "leverage_before": str(leverage_before),
+                "leverage_compared": str(leverage),
+                "tier_count": len(tiers),
+                "assessment": asdict(assessment),
+            }
+            self._append(
+                "minimum_margin_comparison",
+                {
+                    "instrument": report.instrument.inst_id,
+                    "tier": assessment.tier.tier,
+                    "notional": str(assessment.actual_notional),
+                    "liquidation_distance_pct": str(assessment.liquidation_distance_pct),
+                    "source_hash": assessment.source_hash,
+                },
+            )
+            return evidence
+        finally:
+            if self._position(report.instrument) != 0:
+                self.emergency_flatten(report)
 
     def _client_id(self, *, instrument: Instrument, action: str, transition_at: str) -> str:
         """Stable for a persisted transition, short enough for OKX's client-id limit."""
@@ -457,9 +579,22 @@ class V8XPerpDemoAdapter:
             raise SafetyError("ambiguous X-Perp position response")
         return _decimal(rows[0].get("pos"))
 
-    def place_minimum(self, report: PreflightReport, *, side: str, reduce_only: bool) -> tuple[str, dict[str, Any]]:
+    def place_market(
+        self,
+        report: PreflightReport,
+        *,
+        side: str,
+        contracts: Decimal,
+        reduce_only: bool,
+        target: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         if side not in {"buy", "sell"}:
             raise ValueError("side must be buy or sell")
+        if (
+            contracts < report.instrument.min_sz
+            or contracts % report.instrument.lot_sz != 0
+        ):
+            raise SafetyError("market contracts violate instrument minimum or lot size")
         before = self._position(report.instrument)
         if reduce_only:
             if before == 0:
@@ -474,9 +609,9 @@ class V8XPerpDemoAdapter:
         intent = self._create_intent(
             instrument=report.instrument,
             action=action,
-            target="flat" if reduce_only else ("long" if side == "buy" else "short"),
+            target=target or ("flat" if reduce_only else ("long" if side == "buy" else "short")),
             side=side,
-            contracts=report.instrument.min_sz,
+            contracts=contracts,
             reduce_only=reduce_only,
             order_type="market",
         )
@@ -487,9 +622,17 @@ class V8XPerpDemoAdapter:
         terminal = result.order or {}
         self._append("terminal", {"client_id_hash": _safe_hash(intent.client_order_id), "state": terminal.get("state"),
                                   "fill_count": result.fill_count, "acc_fill_sz": str(result.filled_contracts)})
-        if terminal.get("state") != "filled" or result.filled_contracts < report.instrument.min_sz:
-            raise SafetyError("minimum order did not fill completely")
+        if terminal.get("state") != "filled" or result.filled_contracts < contracts:
+            raise SafetyError("market order did not fill completely")
         return intent.client_order_id, terminal
+
+    def place_minimum(self, report: PreflightReport, *, side: str, reduce_only: bool) -> tuple[str, dict[str, Any]]:
+        return self.place_market(
+            report,
+            side=side,
+            contracts=report.instrument.min_sz,
+            reduce_only=reduce_only,
+        )
 
     def place_far_limit(self, report: PreflightReport) -> tuple[str, dict[str, Any]]:
         """Create one deliberately non-marketable V8-owned order for cancel testing."""
@@ -568,17 +711,71 @@ class V8XPerpDemoAdapter:
             "position": str(self._position(report.instrument)),
         }
 
-    def emergency_flatten(
-        self,
-        report: PreflightReport,
-        *,
-        lock_already_held: bool = False,
-    ) -> dict[str, Any]:
-        """Demo-only, lock-held close of one known V8 X-Perp position."""
-        def execute() -> dict[str, Any]:
+    def cancel_known_pending(self, report: PreflightReport) -> int:
+        """Cancel only exchange orders proven to belong to this durable ledger."""
+        from .intents import IntentLedger
+
+        self._assert_lock_held()
+        self._assert_recovered()
+        intent_ids = {
+            item.client_order_id for item in IntentLedger(self.intent_path).load()
+        }
+        orders = self._ok(
+            self.trade.get_order_list(instType="FUTURES", state="live"),
+            "known-order cancellation inventory",
+        )
+        unknown = [
+            row for row in orders
+            if row.get("clOrdId") not in intent_ids
+            or not str(row.get("clOrdId", "")).startswith(CLIENT_PREFIX)
+        ]
+        if unknown:
+            raise SafetyError("unknown FUTURES order blocks known-order cancellation")
+        for order in orders:
+            self.cancel_v8_order(report, str(order["clOrdId"]))
+        remaining = self._ok(
+            self.trade.get_order_list(instType="FUTURES", state="live"),
+            "post-cancel order inventory",
+        )
+        if remaining:
+            raise SafetyError("known V8 order remains after cancellation")
+        return len(orders)
+
+    def _emergency_flatten_locked(self, report: PreflightReport) -> dict[str, Any]:
+        """Cancel known pending risk, then flatten one proven V8 position."""
+        self._assert_lock_held()
+        self._assert_recovered()
+        incident = {
+            "kind": "emergency_flatten",
+            "instrument": report.instrument.inst_id,
+            "metadata_hash": report.instrument.metadata_hash,
+        }
+        self._append("incident_started", incident)
+        try:
+            current_metadata = self._discover()
+            if (
+                current_metadata.inst_id != report.instrument.inst_id
+                or current_metadata.metadata_hash != report.instrument.metadata_hash
+            ):
+                raise SafetyError("X-Perp metadata changed after recovery; emergency mutation blocked")
+            positions = self._ok(
+                self.account.get_positions(instType="FUTURES"),
+                "emergency FUTURES positions",
+            )
+            nonzero = [row for row in positions if _decimal(row.get("pos")) != 0]
+            if len(nonzero) > 1 or (
+                nonzero and nonzero[0].get("instId") != report.instrument.inst_id
+            ):
+                raise SafetyError("unknown or multiple FUTURES positions block emergency flatten")
+            canceled_orders = self.cancel_known_pending(report)
+
             current = self._position(report.instrument)
             if current == 0:
-                return {"status": "already_flat"}
+                self._append(
+                    "incident_resolved",
+                    {**incident, "position": "0", "open_orders": 0, "result": "already_flat"},
+                )
+                return {"status": "already_flat", "canceled_orders": canceled_orders}
             self._assert_recovered()
             side = "sell" if current > 0 else "buy"
             intent = self._create_intent(
@@ -590,7 +787,11 @@ class V8XPerpDemoAdapter:
                 reduce_only=True,
                 order_type="market",
             )
-            self._append("incident", {"kind": "emergency_flatten", "client_id": intent.client_order_id, "position_before": str(current)})
+            self._append("incident_order", {
+                **incident,
+                "client_id_hash": _safe_hash(intent.client_order_id),
+                "position_before": str(current),
+            })
             result = self._intent_execution().submit_order(
                 intent,
                 before_position=current,
@@ -598,15 +799,35 @@ class V8XPerpDemoAdapter:
             terminal = result.order or {}
             if terminal.get("state") != "filled" or result.position != 0:
                 raise SafetyError("emergency flatten did not restore flat position")
+            final_positions = self._ok(
+                self.account.get_positions(instType="FUTURES"),
+                "post-flatten FUTURES positions",
+            )
+            if any(_decimal(row.get("pos")) != 0 for row in final_positions):
+                raise SafetyError("FUTURES position remains after emergency flatten")
             remaining = self._ok(self.trade.get_order_list(instType="FUTURES", state="live"), "post-flatten orders")
             if remaining:
                 raise SafetyError("open FUTURES orders remain after emergency flatten")
-            self._append("incident_resolved", {"client_id": intent.client_order_id, "state": terminal.get("state")})
+            self._append("incident_resolved", {
+                **incident,
+                "client_id_hash": _safe_hash(intent.client_order_id),
+                "state": terminal.get("state"),
+                "position": "0",
+                "open_orders": 0,
+            })
             return {"status": "flat", "client_id": intent.client_order_id, "terminal": terminal.get("state")}
-        if lock_already_held:
-            return execute()
+        except Exception as exc:
+            self._append(
+                "incident_failed",
+                {**incident, "error": type(exc).__name__, "message": str(exc)[:160]},
+            )
+            raise
+
+    def emergency_flatten(self, report: PreflightReport) -> dict[str, Any]:
+        if self._lock_depth:
+            return self._emergency_flatten_locked(report)
         with self.locked():
-            return execute()
+            return self._emergency_flatten_locked(report)
 
     def smoke(self) -> dict[str, Any]:
         with self.locked():

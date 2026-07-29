@@ -29,6 +29,8 @@ class Exchange:
         self.query_calls = {"order": 0, "open": 0, "history": 0, "fills": 0, "position": 0}
         self.submit_behaviors: list[str] = []
         self.cancel_behavior = "ack"
+        self.hidden_snapshots = 0
+        self.completed_snapshots = 0
 
     def place_order(self) -> dict[str, Any]:
         self.submit_calls += 1
@@ -44,12 +46,17 @@ class Exchange:
         fill_size = self.order["accFillSz"]
         self.fills = [{"clOrdId": CLIENT_ID, "fillId": "fill-1", "fillSz": fill_size}]
         self.position = Decimal(fill_size)
+        if behavior == "delayed_timeout":
+            self.hidden_snapshots = 2
+            raise TimeoutError("accepted but temporarily invisible")
         if behavior in {"timeout_after", "partial_timeout"}:
             raise TimeoutError("after acceptance")
         return {"code": "0", "data": [{"sCode": "0", "ordId": "remote-1"}]}
 
     def get_order(self, _inst: str, **_kwargs: Any) -> dict[str, Any]:
         self.query_calls["order"] += 1
+        if self.completed_snapshots < self.hidden_snapshots:
+            return {"code": "51603", "msg": "Order does not exist", "data": []}
         return (
             {"code": "0", "data": [self.order]}
             if self.order
@@ -58,20 +65,29 @@ class Exchange:
 
     def get_order_list(self, **_kwargs: Any) -> dict[str, Any]:
         self.query_calls["open"] += 1
+        if self.completed_snapshots < self.hidden_snapshots:
+            return {"code": "0", "data": []}
         rows = [self.order] if self.order and self.order["state"] in {"live", "partially_filled"} else []
         return {"code": "0", "data": rows}
 
     def get_orders_history(self, **_kwargs: Any) -> dict[str, Any]:
         self.query_calls["history"] += 1
+        if self.completed_snapshots < self.hidden_snapshots:
+            return {"code": "0", "data": []}
         rows = [self.order] if self.order and self.order["state"] not in {"live"} else []
         return {"code": "0", "data": rows}
 
     def get_fills(self, **_kwargs: Any) -> dict[str, Any]:
         self.query_calls["fills"] += 1
+        if self.completed_snapshots < self.hidden_snapshots:
+            return {"code": "0", "data": []}
         return {"code": "0", "data": list(self.fills)}
 
     def get_positions(self, **_kwargs: Any) -> dict[str, Any]:
         self.query_calls["position"] += 1
+        if self.completed_snapshots < self.hidden_snapshots:
+            self.completed_snapshots += 1
+            return {"code": "0", "data": []}
         rows = [{"instId": INSTRUMENT, "pos": str(self.position)}] if self.position else []
         return {"code": "0", "data": rows}
 
@@ -184,6 +200,18 @@ def test_timeout_after_acceptance_never_retries(tmp_path: Path) -> None:
     assert result.retried is False
     assert result.fill_count == 1
     assert exchange.position == 1
+
+
+def test_timeout_after_acceptance_waits_through_exchange_visibility_lag(tmp_path: Path) -> None:
+    exchange = Exchange()
+    exchange.submit_behaviors = ["delayed_timeout"]
+    engine, _, intent = _engine(tmp_path, exchange)
+
+    result = engine.submit(intent, before_position=Decimal("0"), submit_call=exchange.place_order)
+
+    assert exchange.submit_calls == 1
+    assert result.retried is False
+    assert result.fill_count == 1
 
 
 def test_filled_without_local_acknowledgement_is_adopted(tmp_path: Path) -> None:
