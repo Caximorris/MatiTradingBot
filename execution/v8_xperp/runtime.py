@@ -32,8 +32,17 @@ from .funding import (
 )
 from .index_source import OKXIndexPriceSource
 from .intents import IntentLedger, TERMINAL
+from .operator import OperatorControlStore
 from .rollover import expiry_status
 from .service import V8XPerpCanaryService
+from .schedule import (
+    REAL_CYCLE,
+    SYNTHETIC_DEMO_CYCLE,
+    ScheduleConfig,
+    ScheduleEventLedger,
+    synthetic_events_between,
+    synthetic_preview,
+)
 from .target_transport import (
     OperationalTarget,
     OperationalTargetLedger,
@@ -95,6 +104,7 @@ class V8OperationalController:
         index_source: OKXIndexPriceSource,
         canary_config: CanaryConfig,
         bootstrap_config: BootstrapConfig,
+        schedule_config: ScheduleConfig | None = None,
         runtime_root: Path | None = None,
     ) -> None:
         self.adapter = adapter
@@ -102,6 +112,8 @@ class V8OperationalController:
         self.index_source = index_source
         self.canary_config = canary_config
         self.bootstrap_config = bootstrap_config
+        self.schedule_config = schedule_config or ScheduleConfig()
+        self.schedule_config.validate()
         root = runtime_root or adapter.runtime_root
         self.bootstrap_ledger = BootstrapDecisionLedger(root / "bootstrap_decisions.json")
         self.target_ledger = OperationalTargetLedger(root / "operational_targets.json")
@@ -109,6 +121,11 @@ class V8OperationalController:
         self.funding_ledger = FundingLedger(root / "funding.json")
         self.health_path = root / "health.json"
         self.operator_flat_path = root / OPERATOR_FLAT_REQUEST
+        self.schedule_ledger = ScheduleEventLedger(root / "schedule_events.json")
+        self.transition_report_dir = root / "reports" / "transitions"
+        self.operator_control = OperatorControlStore(root)
+        self.emergency_flatten_path = root / "emergency_flatten.request"
+        self.reconcile_request_path = root / "reconcile.request"
 
     @staticmethod
     def _previous(state: TransportState) -> datetime | None:
@@ -269,15 +286,36 @@ class V8OperationalController:
             reconciled_at=report.checked_at,
             clock_drift_seconds=clock_drift_seconds,
         )
+        control = self.operator_control.load()
+        if control.manual_stop:
+            raise SafetyError("Telegram manual stop is latched")
+        if execute and self.emergency_flatten_path.exists():
+            self.service.manual_emergency_stop()
+            self.emergency_flatten_path.unlink()
+            raise SafetyError("Telegram emergency flatten completed; manual recovery required")
+        if self.reconcile_request_path.exists():
+            # The fresh report, stream gate, service refresh and intent checks above
+            # are the authoritative reconciliation requested by Telegram.
+            if execute:
+                self.reconcile_request_path.unlink()
         state = self.state_store.load()
         previous = self._previous(state)
         position = self.adapter._position(report.instrument)
         active = self.target_ledger.active()
-        due = scheduled_target(at=server_time, previous_observed_at=previous)
+        due = scheduled_target(
+            at=server_time,
+            previous_observed_at=previous,
+            schedule_config=self.schedule_config,
+        )
         bootstrap_decision: BootstrapDecision | None = None
         bootstrap_target: OperationalTarget | None = None
         bootstrap_cap: CappedTarget | None = None
-        if due is None and position == 0 and active is None:
+        if (
+            self.schedule_config.mode == REAL_CYCLE
+            and due is None
+            and position == 0
+            and active is None
+        ):
             bootstrap_decision, bootstrap_cap = self._bootstrap_for(
                 report=report,
                 server_time=server_time,
@@ -294,7 +332,16 @@ class V8OperationalController:
             explicit_flat_requested=(
                 state.explicit_flat_requested or self.operator_flat_path.exists()
             ),
+            schedule_config=self.schedule_config,
         )
+        paused_deferred = control.paused and decision.action in {"EXECUTE", "RESTORE"}
+        if paused_deferred:
+            decision = replace(
+                decision,
+                action="NOOP",
+                target=None,
+                reason="operator pause blocks new exposure",
+            )
         capped: CappedTarget | None = bootstrap_cap
         equity = (
             Decimal(bootstrap_decision.eligible_equity)
@@ -306,7 +353,14 @@ class V8OperationalController:
             )
         )
         planned = decision.target
-        if planned is not None and planned.kind == "scheduled_540_900":
+        if (
+            planned is not None
+            and decision.action == "EXECUTE"
+            and (
+                planned.kind == "scheduled_540_900"
+                or self.schedule_config.mode == SYNTHETIC_DEMO_CYCLE
+            )
+        ):
             planned, capped, equity = self._scheduled_cap(planned, report=report)
             decision = replace(decision, target=planned)
         elif planned is not None and planned.kind == "operational_bootstrap" and capped is None:
@@ -329,17 +383,57 @@ class V8OperationalController:
                 existing_notional=abs(position) * report.instrument.ct_val * report.market.last,
                 config=self.canary_config,
             )
+        elif planned is not None and decision.action == "RESTORE":
+            signed = planned.signed_contracts
+            capped = CappedTarget(
+                requested_target=planned.transition_id,
+                requested_notional=Decimal(planned.final_notional),
+                allowed_notional=Decimal(planned.final_notional),
+                signed_contracts=signed,
+                cap_reduced=True,
+                strategy_leverage=Decimal(planned.strategy_leverage),
+                actual_leverage=Decimal(planned.actual_leverage),
+            )
+        schedule_events = (
+            synthetic_events_between(
+                self.schedule_config,
+                previous_observed_at=previous,
+                now=server_time,
+            )
+            if self.schedule_config.mode == SYNTHETIC_DEMO_CYCLE
+            else []
+        )
+        phase = (
+            asdict(
+                synthetic_preview(
+                    self.schedule_config,
+                    now=server_time,
+                    previous_observed_at=previous,
+                )
+            )
+            if self.schedule_config.mode == SYNTHETIC_DEMO_CYCLE
+            else asdict(operational_phase(server_time))
+        )
         result: dict[str, Any] = {
             "server_time": server_time.isoformat(),
-            "phase": asdict(operational_phase(server_time)),
+            "schedule_mode": self.schedule_config.mode,
+            "phase": phase,
+            "schedule_events": [asdict(item) for item in schedule_events],
             "position_before": str(position),
             "decision": asdict(decision),
             "bootstrap": asdict(bootstrap_decision) if bootstrap_decision else None,
             "capped": asdict(capped) if capped else None,
             "execute": execute,
+            "operator_control": asdict(control),
         }
         if not execute:
             return result
+        if paused_deferred:
+            result["monitoring"] = self._monitoring(report, active, equity)
+            self._write_health(result)
+            return result
+        for event in schedule_events:
+            self.schedule_ledger.append(event)
         if decision.action in {"EXECUTE", "RESTORE"}:
             if planned is None or capped is None:
                 raise SafetyError("executable transport decision lacks a capped target")
@@ -371,6 +465,8 @@ class V8OperationalController:
             report, active, now_ms=int(server_time.timestamp() * 1000)
         )
         result["monitoring"] = self._monitoring(report, active, equity)
+        for event in schedule_events:
+            self._write_transition_report(result, event.transition_id)
         self._write_health(result)
         return result
 
@@ -487,6 +583,25 @@ class V8OperationalController:
     ) -> dict[str, Any]:
         position = self.adapter._position(report.instrument)
         notional = abs(position) * report.instrument.ct_val * report.market.last
+        liquidation_distance: Decimal | None = None
+        position_rows = self.adapter._ok(
+            self.adapter.account.get_positions(
+                instType="FUTURES", instId=report.instrument.inst_id
+            ),
+            "operational position-risk monitoring",
+        )
+        owned = [
+            row for row in position_rows
+            if row.get("instId", report.instrument.inst_id) == report.instrument.inst_id
+            and _decimal(row.get("pos")) != 0
+        ]
+        if len(owned) > 1:
+            raise SafetyError("multiple V8 position-risk rows are ambiguous")
+        if owned:
+            mark = _decimal(owned[0].get("markPx"))
+            liquidation = _decimal(owned[0].get("liqPx"))
+            if mark > 0 and liquidation > 0:
+                liquidation_distance = abs(mark - liquidation) / mark * Decimal("100")
         orders = self.adapter._ok(
             self.adapter.trade.get_order_list(instType="FUTURES", state="live"),
             "operational open-order monitoring",
@@ -503,6 +618,14 @@ class V8OperationalController:
             "position_contracts": str(position),
             "position_notional_usd": str(notional),
             "actual_leverage": str(notional / eligible),
+            "liquidation_distance_pct": (
+                str(liquidation_distance)
+                if liquidation_distance is not None
+                else None
+            ),
+            "minimum_liquidation_distance_pct": str(
+                self.canary_config.minimum_liquidation_distance_pct
+            ),
             "available_usdc": str(report.available_usdc),
             "market_timestamp": report.market.timestamp.isoformat(),
             "rest_checked_at": report.checked_at.isoformat(),
@@ -529,6 +652,24 @@ class V8OperationalController:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, self.health_path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def _write_transition_report(
+        self, result: dict[str, Any], transition_id: str
+    ) -> None:
+        self.transition_report_dir.mkdir(parents=True, exist_ok=True)
+        path = self.transition_report_dir / f"{transition_id}.json"
+        if path.exists():
+            return
+        fd, temporary = tempfile.mkstemp(dir=self.transition_report_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(result, handle, sort_keys=True, default=str)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

@@ -1,10 +1,8 @@
 [Unit]
-Description=MatiTradingBot isolated V8 OKX EEA X-Perp Demo
-After=network-online.target time-sync.target
-Wants=network-online.target time-sync.target
-Conflicts=matibot.service matibot-telegram.service matibot-v7-paper.service matibot-v7-shadow.service matibot-v7-promotion.service matibot-v7-certified-okx-demo.service
-StartLimitIntervalSec=15min
-StartLimitBurst=5
+Description=MatiTradingBot V8-only Telegram operator companion
+After=network-online.target matibot-v8-xperp-demo.service
+Wants=network-online.target
+Conflicts=matibot-telegram.service
 
 [Service]
 Type=simple
@@ -14,13 +12,9 @@ WorkingDirectory=__APP_DIR__
 EnvironmentFile=__ENV_FILE__
 Environment=PYTHONUNBUFFERED=1
 Environment=V8_XPERP_RUNTIME_ROOT=__RUNTIME_DIR__
-ExecStartPre=__PYTHON__ __APP_DIR__/tools/v8_xperp_demo.py preactivation
-ExecStart=__PYTHON__ __APP_DIR__/tools/v8_xperp_demo.py run --enable-continuous-demo
+ExecStart=__PYTHON__ __APP_DIR__/tools/v8_xperp_telegram.py
 Restart=on-failure
-RestartPreventExitStatus=3
 RestartSec=15s
-TimeoutStopSec=30s
-KillSignal=SIGTERM
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -34,12 +28,12 @@ LockPersonality=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_INET AF_INET6
 ReadWritePaths=__DATA_RUNTIME_DIR__
-MemoryMax=350M
-TasksMax=128
+MemoryMax=250M
+TasksMax=64
 StandardOutput=journal
 StandardError=journal
 LogRateLimitIntervalSec=60s
-LogRateLimitBurst=200
+LogRateLimitBurst=100
 
 [Install]
 WantedBy=multi-user.target

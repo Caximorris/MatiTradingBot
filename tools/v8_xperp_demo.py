@@ -43,6 +43,17 @@ from execution.v8_xperp.runtime import (  # noqa: E402
     V8OperationalController,
     request_operator_flat,
 )
+from execution.v8_xperp.schedule import (  # noqa: E402
+    REAL_CYCLE,
+    SYNTHETIC_DEMO_CYCLE,
+    ScheduleConfig,
+    ScheduleModeStore,
+    runtime_namespace,
+    synthetic_event,
+    synthetic_preview,
+)
+from execution.v8_xperp.target_transport import TransportStateStore  # noqa: E402
+from execution.v8_xperp.operator import OperatorControlStore  # noqa: E402
 
 
 def _json(value: object) -> None:
@@ -130,8 +141,27 @@ async def _run_canary(*, one_shot: bool) -> dict[str, object]:
         }
 
 
-def _runtime_root() -> Path:
+def _base_runtime_root() -> Path:
     return Path(os.getenv("V8_XPERP_RUNTIME_ROOT", "data/runtime/v8_xperp_demo"))
+
+
+def _schedule_config() -> ScheduleConfig:
+    base = _base_runtime_root()
+    configured = ScheduleConfig.from_env()
+    persisted = ScheduleModeStore(base).load()
+    if (base / "schedule_mode.json").exists():
+        if configured.mode != persisted.mode:
+            raise SafetyError("persisted and configured V8 schedule modes disagree")
+        if (
+            persisted.synthetic_anchor_utc
+            and configured.synthetic_anchor_utc != persisted.synthetic_anchor_utc
+        ):
+            raise SafetyError("persisted and configured synthetic anchors disagree")
+    return configured
+
+
+def _runtime_root() -> Path:
+    return runtime_namespace(_base_runtime_root(), _schedule_config())
 
 
 def _read_health() -> dict[str, object]:
@@ -187,6 +217,7 @@ def _write_failure_health(message: str) -> None:
 def _safety_exit_code(message: str) -> int:
     manual_markers = (
         "manual emergency stop is latched",
+        "Telegram manual stop is latched",
         "daily canary loss limit is latched",
         "total canary loss limit is latched",
         "unknown exchange position",
@@ -210,7 +241,10 @@ async def _run_operational(*, execute: bool, one_shot: bool) -> dict[str, object
     if interval < 5 or interval > 60:
         raise SafetyError("V8_XPERP_CYCLE_SECONDS must be between 5 and 60")
 
-    adapter = V8XPerpDemoAdapter(runtime_root=_runtime_root())
+    schedule_config = _schedule_config()
+    adapter = V8XPerpDemoAdapter(
+        runtime_root=runtime_namespace(_base_runtime_root(), schedule_config)
+    )
     with adapter.locked():
         instrument = adapter._discover()
         adapter.startup_recovery(instrument)
@@ -236,6 +270,7 @@ async def _run_operational(*, execute: bool, one_shot: bool) -> dict[str, object
             index_source=OKXIndexPriceSource(market_api=adapter.market_api),
             canary_config=config,
             bootstrap_config=BootstrapConfig.from_env(),
+            schedule_config=schedule_config,
         )
         last_result: dict[str, object] = {}
         try:
@@ -288,6 +323,18 @@ def main() -> int:
     sub.add_parser("canary-status", help="read local canary lifecycle state")
     sub.add_parser("health", help="read machine-readable unattended health state")
     sub.add_parser("operational-status", help="read human-readable unattended status")
+    sub.add_parser("schedule-mode-status", help="read persisted/configured schedule mode")
+    sub.add_parser("schedule-preview", help="read-only current schedule preview")
+    dry = sub.add_parser("synthetic-dry-run", help="simulate synthetic cycles without orders")
+    dry.add_argument("--cycles", type=int, default=3)
+    mode = sub.add_parser("set-mode", help="persist a stopped, reconciled schedule-mode switch")
+    mode.add_argument("mode", choices=[REAL_CYCLE, SYNTHETIC_DEMO_CYCLE])
+    mode.add_argument("--acknowledge", required=True)
+    mode.add_argument("--confirm-v8-schedule-mode", action="store_true")
+    anchor = sub.add_parser("set-synthetic-anchor", help="persist a future UTC synthetic anchor")
+    anchor.add_argument("anchor")
+    anchor.add_argument("--acknowledge", required=True)
+    anchor.add_argument("--confirm-v8-synthetic-anchor", action="store_true")
     sub.add_parser("preactivation", help="one authenticated no-order operational cycle")
     operator_flat = sub.add_parser(
         "operator-flat", help="persist a flat request for the unattended controller"
@@ -323,6 +370,82 @@ def main() -> int:
     start = sub.add_parser("canary-start", help="start, validate, and stop a one-shot canary")
     start.add_argument("--enable-continuous-demo", action="store_true")
     args = parser.parse_args()
+    if args.command == "schedule-mode-status":
+        _json({
+            "configured": _schedule_config(),
+            "persisted": ScheduleModeStore(_base_runtime_root()).load(),
+            "runtime_namespace": str(_runtime_root()),
+        })
+        return 0
+    if args.command in {"schedule-preview", "synthetic-dry-run"}:
+        config = _schedule_config()
+        if config.mode != SYNTHETIC_DEMO_CYCLE:
+            _json({"schedule_mode": config.mode, "synthetic": None})
+            return 0
+        now = datetime.now(UTC)
+        if args.command == "schedule-preview":
+            state = TransportStateStore(_runtime_root() / "target_transport_state.json").load()
+            previous = (
+                datetime.fromisoformat(state.last_observed_at)
+                if state.last_observed_at
+                else None
+            )
+            preview = asdict(
+                synthetic_preview(
+                    config, now=now, previous_observed_at=previous
+                )
+            )
+            health = _read_health()
+            monitoring = health.get("monitoring") or {}
+            preview.update({
+                "current_target": monitoring.get("active_target", preview["current_target"]),
+                "actual_capped_target": health.get("capped"),
+                "current_position": monitoring.get("position_contracts", "unknown"),
+                "current_position_notional_usd": monitoring.get(
+                    "position_notional_usd", "unknown"
+                ),
+            })
+            _json(preview)
+        else:
+            if args.cycles < 1 or args.cycles > 30:
+                raise SafetyError("synthetic dry-run cycles must be between 1 and 30")
+            _json([
+                synthetic_event(config, cycle, event)
+                for cycle in range(args.cycles)
+                for event in (
+                    "synthetic_halving",
+                    "bear_transition",
+                    "accumulation_transition",
+                )
+            ])
+        return 0
+    if args.command == "set-synthetic-anchor":
+        if not args.confirm_v8_synthetic_anchor:
+            raise SafetyError("synthetic anchor change requires explicit confirmation")
+        adapter = V8XPerpDemoAdapter(runtime_root=_runtime_root())
+        with adapter.locked():
+            instrument = adapter._discover()
+            adapter.startup_recovery(instrument)
+            orders = adapter._ok(
+                adapter.trade.get_order_list(instType="FUTURES", state="live"),
+                "synthetic anchor open orders",
+            )
+            non_terminal = [
+                item for item in IntentLedger(adapter.intent_path).load()
+                if item.state not in TERMINAL
+            ]
+            state = CanaryStateStore(adapter.runtime_root / "canary_state.json").load()
+            _json(ScheduleModeStore(_base_runtime_root()).set_anchor(
+                args.anchor,
+                service_stopped=state.status != "RUNNING",
+                reconciled=True,
+                position_contracts=str(adapter._position(instrument)),
+                open_orders=len(orders),
+                non_terminal_intents=len(non_terminal),
+                acknowledgement=args.acknowledge,
+                now=datetime.now(UTC),
+            ))
+        return 0
     if args.command in {"run", "canary-start"}:
         if not args.enable_continuous_demo:
             raise SafetyError("continuous Demo requires the explicit CLI enable flag")
@@ -351,6 +474,42 @@ def main() -> int:
     ledger = IntentLedger(adapter.intent_path)
     if args.command == "canary-config":
         _json(CanaryConfig.from_env())
+        return 0
+    if args.command == "set-mode":
+        if not args.confirm_v8_schedule_mode:
+            raise SafetyError("schedule mode switch requires explicit confirmation")
+        with adapter.locked():
+            instrument = adapter._discover()
+            adapter.startup_recovery(instrument)
+            position = adapter._position(instrument)
+            orders = adapter._ok(
+                adapter.trade.get_order_list(instType="FUTURES", state="live"),
+                "schedule switch open orders",
+            )
+            non_terminal = [
+                item for item in ledger.load() if item.state not in TERMINAL
+            ]
+            state = CanaryStateStore(adapter.runtime_root / "canary_state.json").load()
+            _json(ScheduleModeStore(_base_runtime_root()).switch(
+                new_mode=args.mode,
+                service_stopped=state.status != "RUNNING",
+                reconciled=True,
+                position_contracts=str(position),
+                open_orders=len(orders),
+                non_terminal_intents=len(non_terminal),
+                acknowledgement=args.acknowledge,
+                config=ScheduleConfig(
+                    mode=args.mode,
+                    synthetic_enabled=(
+                        os.getenv("V8_SYNTHETIC_DEMO_CYCLE_ENABLED", "").lower()
+                        == "true"
+                    ),
+                    synthetic_anchor_utc=(
+                        os.getenv("V8_SYNTHETIC_CYCLE_ANCHOR_UTC", "").strip() or None
+                    ),
+                ),
+                now=datetime.now(UTC),
+            ))
         return 0
     if args.command == "canary-status":
         _json(CanaryStateStore(adapter.runtime_root / "canary_state.json").load())
@@ -436,6 +595,7 @@ def main() -> int:
                     "stopped_at": datetime.now(UTC).isoformat(),
                 }
             ))
+            OperatorControlStore(adapter.runtime_root).update("manual_recovery")
             _json(state_store.load())
         return 0
     if args.command == "graceful-shutdown":

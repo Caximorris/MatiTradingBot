@@ -7,6 +7,7 @@ from execution.v8_xperp.canary import CanaryConfig
 from execution.v8_xperp.private_stream import StreamState
 from execution.v8_xperp.service import CanaryRuntimeState
 from execution.v8_xperp.runtime import V8OperationalController, request_operator_flat
+from execution.v8_xperp.schedule import ScheduleConfig, SYNTHETIC_DEMO_CYCLE
 
 
 SERVER = datetime(2026, 7, 29, 12, 0, tzinfo=UTC)
@@ -59,6 +60,15 @@ class Public:
     def funding_rate_history(_instrument, *, limit):
         assert limit == "100"
         return {"code": "0", "data": []}
+
+
+class FarFundingPublic(Public):
+    @staticmethod
+    def get_funding_rate(_instrument):
+        return {"code": "0", "data": [{
+            "fundingTime": str(int((SERVER + timedelta(days=10)).timestamp() * 1000)),
+            "fundingRate": "0.0001",
+        }]}
 
 
 class Trade:
@@ -147,6 +157,14 @@ class BelowMinimumSource(Source):
 
 def canary_config():
     return CanaryConfig.from_env({"V8_XPERP_CONTINUOUS_DEMO_ENABLED": "true"})
+
+
+def synthetic_config(anchor: datetime) -> ScheduleConfig:
+    return ScheduleConfig(
+        mode=SYNTHETIC_DEMO_CYCLE,
+        synthetic_enabled=True,
+        synthetic_anchor_utc=anchor.isoformat(),
+    )
 
 
 def test_execute_bootstrap_once_then_restart_adopts_without_recalculation(tmp_path) -> None:
@@ -240,3 +258,108 @@ def test_below_minimum_bootstrap_persists_flat_without_target_order(tmp_path) ->
     assert controller.bootstrap_ledger.load()[0].state == "FLAT"
     assert controller.target_ledger.load() == []
     assert service.executions == []
+
+
+def test_synthetic_multicycle_runtime_persists_transitions_without_restart_duplicates(
+    tmp_path,
+) -> None:
+    anchor = SERVER - timedelta(hours=1)
+    adapter = Adapter(tmp_path)
+    adapter.public = FarFundingPublic()
+    service = Service(adapter)
+    controller = V8OperationalController(
+        adapter=adapter,
+        service=service,
+        index_source=Source(),
+        canary_config=canary_config(),
+        bootstrap_config=BootstrapConfig(),
+        schedule_config=synthetic_config(anchor),
+    )
+    day0 = controller.cycle(
+        report=report(),
+        server_time=SERVER,
+        clock_drift_seconds=Decimal("0"),
+        execute=True,
+    )
+    assert day0["decision"]["target"]["kind"] == "synthetic_halving"
+    assert adapter.position > 0
+    assert len(service.executions) == 1
+
+    restarted = V8OperationalController(
+        adapter=adapter,
+        service=service,
+        index_source=Source(),
+        canary_config=canary_config(),
+        bootstrap_config=BootstrapConfig(),
+        schedule_config=synthetic_config(anchor),
+    )
+    after_restart = restarted.cycle(
+        report=report(),
+        server_time=SERVER + timedelta(minutes=1),
+        clock_drift_seconds=Decimal("0"),
+        execute=True,
+    )
+    assert after_restart["decision"]["action"] == "ADOPT"
+    assert len(service.executions) == 1
+
+    day2 = restarted.cycle(
+        report=report(),
+        server_time=anchor + timedelta(days=2, minutes=1),
+        clock_drift_seconds=Decimal("0"),
+        execute=True,
+    )
+    assert day2["decision"]["target"]["direction"] == "short"
+    assert adapter.position < 0
+
+    day3 = restarted.cycle(
+        report=report(),
+        server_time=anchor + timedelta(days=3, minutes=1),
+        clock_drift_seconds=Decimal("0"),
+        execute=True,
+    )
+    assert day3["decision"]["target"]["direction"] == "long"
+    executions_before_halving = len(service.executions)
+
+    day4 = restarted.cycle(
+        report=report(),
+        server_time=anchor + timedelta(days=4, minutes=1),
+        clock_drift_seconds=Decimal("0"),
+        execute=True,
+    )
+    assert day4["decision"]["action"] == "NOOP"
+    assert len(service.executions) == executions_before_halving
+    assert len(restarted.schedule_ledger.load()) == 4
+    assert len(list(restarted.transition_report_dir.glob("*.json"))) == 4
+
+
+def test_synthetic_offline_catchup_persists_all_events_but_only_latest_target(
+    tmp_path,
+) -> None:
+    anchor = SERVER - timedelta(hours=1)
+    adapter = Adapter(tmp_path)
+    adapter.public = FarFundingPublic()
+    service = Service(adapter)
+    controller = V8OperationalController(
+        adapter=adapter,
+        service=service,
+        index_source=Source(),
+        canary_config=canary_config(),
+        bootstrap_config=BootstrapConfig(),
+        schedule_config=synthetic_config(anchor),
+    )
+    controller.cycle(
+        report=report(), server_time=SERVER,
+        clock_drift_seconds=Decimal("0"), execute=True,
+    )
+    caught_up = controller.cycle(
+        report=report(),
+        server_time=anchor + timedelta(days=3, minutes=1),
+        clock_drift_seconds=Decimal("0"),
+        execute=True,
+    )
+    assert [row["event_type"] for row in caught_up["schedule_events"]] == [
+        "bear_transition",
+        "accumulation_transition",
+    ]
+    assert caught_up["decision"]["target"]["direction"] == "long"
+    assert len(controller.schedule_ledger.load()) == 3

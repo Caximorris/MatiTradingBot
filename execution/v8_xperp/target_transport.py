@@ -15,6 +15,12 @@ from strategies.cycle_phase_clock import CyclePhaseClock
 
 from .adapter import SafetyError
 from .bootstrap import BootstrapDecision
+from .schedule import (
+    REAL_CYCLE,
+    SYNTHETIC_DEMO_CYCLE,
+    ScheduleConfig,
+    synthetic_events_between,
+)
 
 TARGET_SCHEMA = 1
 TARGET_STATES = {"PLANNED", "EXECUTED", "ADOPTED", "FLAT", "SUPERSEDED"}
@@ -64,6 +70,7 @@ def scheduled_target(
     at: datetime,
     previous_observed_at: datetime | None,
     clock: CyclePhaseClock | None = None,
+    schedule_config: ScheduleConfig | None = None,
 ) -> OperationalTarget | None:
     if at.tzinfo is None or (
         previous_observed_at is not None and previous_observed_at.tzinfo is None
@@ -71,6 +78,28 @@ def scheduled_target(
         raise SafetyError("scheduled transport timestamps must be timezone-aware")
     now = at.astimezone(UTC)
     previous = previous_observed_at.astimezone(UTC) if previous_observed_at else None
+    config = schedule_config or ScheduleConfig()
+    config.validate()
+    if config.mode == SYNTHETIC_DEMO_CYCLE:
+        events = synthetic_events_between(
+            config, previous_observed_at=previous, now=now
+        )
+        if not events:
+            return None
+        latest = events[-1]
+        return OperationalTarget(
+            transition_id=latest.transition_id,
+            kind=latest.event_type,
+            direction=latest.direction,
+            strategy_leverage=latest.strategy_leverage,
+            final_contracts="0",
+            final_notional="0",
+            actual_leverage="0",
+            effective_at=latest.effective_at,
+            source_id=f"synthetic-cycle-{latest.cycle_number}",
+        )
+    if config.mode != REAL_CYCLE:
+        raise SafetyError("unsupported V8 schedule mode")
     active = clock or CyclePhaseClock()
     transitions: list[tuple[datetime, str]] = []
     for halving in active.halving_timestamps:
@@ -91,7 +120,10 @@ def scheduled_target(
     if not due:
         return None
     effective, direction = due[0]
-    identity = f"okx_demo|scheduled|{effective.isoformat()}|{direction}|2"
+    identity = (
+        f"okx_demo|{REAL_CYCLE}|real_540_900|{effective.isoformat()}|"
+        f"{direction}|v8"
+    )
     return OperationalTarget(
         transition_id=f"v8-scheduled-{_hash(identity)[:32]}",
         kind="scheduled_540_900",
@@ -131,9 +163,13 @@ def decide_transport(
     bootstrap_target: OperationalTarget | None,
     explicit_flat_requested: bool = False,
     clock: CyclePhaseClock | None = None,
+    schedule_config: ScheduleConfig | None = None,
 ) -> TransportDecision:
     due = scheduled_target(
-        at=now, previous_observed_at=previous_observed_at, clock=clock
+        at=now,
+        previous_observed_at=previous_observed_at,
+        clock=clock,
+        schedule_config=schedule_config,
     )
     if explicit_flat_requested:
         if current_position == 0:
@@ -146,8 +182,29 @@ def decide_transport(
         )
         return TransportDecision("EXECUTE", target, "explicit operator flat")
     if due is not None:
+        if (
+            due.kind == "synthetic_halving"
+            and active_target is not None
+            and active_target.direction == due.direction
+            and current_position == active_target.signed_contracts
+        ):
+            return TransportDecision(
+                "NOOP",
+                due,
+                "synthetic halving persisted without an unchanged-target order",
+            )
         return TransportDecision(
-            "EXECUTE", due, "scheduled 540/900 transition became effective"
+            "EXECUTE",
+            due,
+            (
+                "synthetic schedule transition became effective"
+                if due.kind in {
+                    "synthetic_halving",
+                    "bear_transition",
+                    "accumulation_transition",
+                }
+                else "scheduled 540/900 transition became effective"
+            ),
         )
     if current_position != 0:
         if active_target is None:

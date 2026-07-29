@@ -10,6 +10,7 @@ replace the frozen v6-2 default or authorize Demo/live trading.
 |---|---|
 | [V7 paper readiness](forward-test/v7-cycle-core-paper-readiness.md) | Current candidate contract and approval-gated isolated-paper boundary |
 | [V7 Cycle Core plan](SWING_V7_CYCLE_CORE_PLAN.md) | Hypothesis, immutable clock, fail-closed transitions, and preregistered robustness protocol |
+| [V8 cycle comparison](V8_CYCLE_COMPARISON.md) | 2018 accumulation-start V6/V7/V8/B&H research comparison, data lineage, and limitations |
 | [V7 results](SWING_V7_CYCLE_CORE_RESULTS.md) | Authoritative $54.002M causal result, matched BTC buy-and-hold control, and limitations |
 | [V7 deployment plan](SWING_V7_PAPER_DEPLOYMENT_PLAN.md) | Isolated VM topology, shadow soak gates, and non-destructive rollback |
 | [V7 deployment results](SWING_V7_PAPER_DEPLOYMENT_RESULTS.md) | Local-only state and the evidence still required for any remote activation claim |
