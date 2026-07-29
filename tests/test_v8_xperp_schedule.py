@@ -99,6 +99,15 @@ def test_synthetic_server_time_must_be_monotonic() -> None:
         )
 
 
+def test_preview_before_anchor_is_valid_without_prior_observation() -> None:
+    preview = synthetic_preview(
+        config(), now=ANCHOR - timedelta(minutes=1), previous_observed_at=None
+    )
+    assert preview.current_phase == "pending"
+    assert preview.current_target == "flat"
+    assert preview.transition_due is False
+
+
 def test_day_four_persists_without_order_when_long_target_unchanged() -> None:
     active = OperationalTarget(
         "day3", "accumulation_transition", "long", "2", "0.01",

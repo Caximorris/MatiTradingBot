@@ -175,7 +175,7 @@ def synthetic_events_between(
     previous = (
         previous_observed_at.astimezone(UTC) if previous_observed_at else anchor - timedelta(microseconds=1)
     )
-    if previous > current:
+    if previous_observed_at is not None and previous > current:
         raise SafetyError("synthetic schedule server time moved backwards")
     if current < anchor:
         return []

@@ -29,7 +29,7 @@ Prior checkpoint:
 
 Evidence:
 - Initial branch/status: `codex/v8-xperp-intent-recovery` tracking its origin; clean worktree before this task-state update.
-- Final full repository suite: 700 passed, 10 dependency deprecation warnings.
+- Final full repository suite: 701 passed, 10 dependency deprecation warnings.
 - Final compileall and build: passed.
 - Changed-file Ruff: passed.
 - Ruff ratchet: passed, 202 remaining versus 209 baseline.
@@ -38,6 +38,8 @@ Evidence:
   `54002022.18728089349690`, 6 orders. A generic non-normalized suite case produced a different
   3-order result and was rejected as the wrong replay contract; its temporary worktree/output were
   removed.
+- Follow-up fix: a pre-anchor preview with no prior transport state no longer treats the sentinel
+  anchor-minus-epsilon as a backwards server clock; focused coverage passes.
 
 Next action:
 - Human operator reviews the pushed commit and follows the V8 VM runbook; Codex performs no VM,
