@@ -21,7 +21,7 @@ FUNDING_STATES = {
 DELAY_AFTER_MS = 120_000
 MISSING_AFTER_MS = 900_000
 AMOUNT_ABS_TOLERANCE = Decimal("0.00000001")
-AMOUNT_REL_TOLERANCE = Decimal("0.000001")
+AMOUNT_REL_TOLERANCE = Decimal("0.001")
 AMOUNT_MAX_TOLERANCE = Decimal("0.01")
 
 
@@ -250,7 +250,8 @@ def reconcile_funding(
     if record.bill_id == bill_id:
         if record.bill_hash != bill_digest:
             return ledger.update(record.identity, state="CONFLICT", last_result="funding bill content changed")
-        return record
+        if record.state == "RECONCILED":
+            return record
 
     actual = _decimal(bill.get("pnl"))
     expected = _decimal(record.expected_amount)
@@ -265,13 +266,27 @@ def reconcile_funding(
             record.identity, state="SIGN_MISMATCH", bill_id=bill_id,
             bill_hash=bill_digest, actual_amount=str(actual), last_result="expected/actual sign mismatch",
         )
-    if abs(actual - expected) > _amount_tolerance(expected):
+    within_tolerance = abs(actual - expected) <= _amount_tolerance(expected)
+    if not within_tolerance:
         return ledger.update(
             record.identity, state="AMOUNT_MISMATCH", bill_id=bill_id,
             bill_hash=bill_digest, actual_amount=str(actual), last_result="funding amount outside tolerance",
         )
     matched = ledger.update(
         record.identity, state="MATCHED", bill_id=bill_id,
-        bill_hash=bill_digest, actual_amount=str(actual), last_result="exact funding bill matched",
+        bill_hash=bill_digest, actual_amount=str(actual),
+        last_result=(
+            "exact funding bill matched"
+            if actual == expected
+            else "funding bill matched within settlement tolerance"
+        ),
     )
-    return ledger.update(matched.identity, state="RECONCILED", last_result="exact-once funding reconciled")
+    return ledger.update(
+        matched.identity,
+        state="RECONCILED",
+        last_result=(
+            "exact-once funding reconciled"
+            if matched.last_result == "exact funding bill matched"
+            else "exact-once funding reconciled within settlement tolerance"
+        ),
+    )
