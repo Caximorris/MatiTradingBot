@@ -180,6 +180,8 @@ class LocalGateway:
                 if state_disagreement
                 else health.get("status", "HEALTHY" if monitoring else "NO_HEALTH_RECORD")
             ),
+            "health_reason": health.get("reason"),
+            "health_checked_at": health.get("checked_at", health.get("server_time")),
             "service_state": canary.status,
             "service_stopped": canary.status != "RUNNING",
             "reconciled": reconciled,

@@ -205,15 +205,24 @@ def _write_failure_health(message: str) -> None:
     path = _runtime_root() / "health.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
+    previous: dict[str, object] = {}
+    if path.exists():
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                previous = value
+        except Exception:
+            # A failure record must still be persisted even when the prior artifact
+            # is unavailable or corrupt. Do not carry corrupt state forward.
+            previous = {}
+    failure = {
+        **previous,
+        "status": "BLOCKED",
+        "checked_at": datetime.now(UTC).isoformat(),
+        "reason": message,
+    }
     temporary.write_text(
-        json.dumps(
-            {
-                "status": "BLOCKED",
-                "checked_at": datetime.now(UTC).isoformat(),
-                "reason": message,
-            },
-            sort_keys=True,
-        ),
+        json.dumps(failure, sort_keys=True),
         encoding="utf-8",
     )
     os.replace(temporary, path)

@@ -96,9 +96,16 @@ def test_duplicate_and_non_monotonic_updates_are_suppressed(tmp_path) -> None:
 
 
 def test_unhealthy_executor_forces_read_only_degraded_mode(tmp_path) -> None:
-    subject = router(tmp_path, Gateway(status="BLOCKED", reconciled=False))
+    subject = router(tmp_path, Gateway(
+        status="BLOCKED",
+        reconciled=False,
+        health_reason="market-data freshness gate failed",
+    ))
     assert subject.handle(update_id=1, chat_id=42, text="/health")
-    blocked = subject.handle(update_id=2, chat_id=42, text="/resume")
+    dashboard = subject.handle(update_id=2, chat_id=42, text="/status")
+    assert "Block reason" in dashboard
+    assert "market-data freshness gate failed" in dashboard
+    blocked = subject.handle(update_id=3, chat_id=42, text="/resume")
     assert blocked == "BLOCKED: executor is unhealthy; Telegram is read-only"
 
 

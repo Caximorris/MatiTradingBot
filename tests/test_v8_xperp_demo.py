@@ -1,5 +1,6 @@
 import asyncio
 import importlib.util
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -87,3 +88,27 @@ def test_canary_refreshes_market_report_after_stream_is_healthy(monkeypatch):
     assert result["status"] == "STOPPED"
     assert adapter.operational_report_calls == 1
     assert FakeService.started_report is adapter.operational_report_value
+
+
+def test_failure_health_preserves_last_verified_operational_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(demo, "_runtime_root", lambda: tmp_path)
+    (tmp_path / "health.json").write_text(
+        json.dumps(
+            {
+                "status": "HEALTHY",
+                "monitoring": {"instrument": "BTC-XPERP", "position_contracts": "0.01"},
+                "phase": {"current_phase": "long_phase"},
+                "funding": {"status": "REAL_PARITY_OBSERVED"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    demo._write_failure_health("market-data freshness gate failed")
+
+    health = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+    assert health["status"] == "BLOCKED"
+    assert health["reason"] == "market-data freshness gate failed"
+    assert health["monitoring"]["instrument"] == "BTC-XPERP"
+    assert health["phase"]["current_phase"] == "long_phase"
+    assert health["funding"]["status"] == "REAL_PARITY_OBSERVED"
