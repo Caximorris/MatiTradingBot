@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from execution.v8_xperp.telegram import (
+    COMMAND_MENU,
     TelegramConfig,
     V8TelegramRouter,
 )
@@ -57,8 +58,8 @@ def test_read_only_command_is_v8_scoped_and_audited(tmp_path) -> None:
     response = router(tmp_path).handle(
         update_id=1, chat_id=42, text="/status"
     )
-    assert "environment: okx_demo" in response
-    assert "schedule_mode: synthetic_demo_cycle" in response
+    assert "V8 X-Perp Demo · Control Room" in response
+    assert "okx_demo · synthetic_demo_cycle" in response
     audit = (tmp_path / "telegram" / "audit.jsonl").read_text()
     assert '"command": "status"' in audit
     assert "never-exposed" not in audit
@@ -121,6 +122,17 @@ def test_legacy_and_discretionary_commands_are_rejected(tmp_path) -> None:
         assert subject.handle(
             update_id=update_id, chat_id=42, text=command
         ).startswith("REJECTED:")
+
+
+def test_v8_menu_and_startup_report_are_visual_and_legacy_free(tmp_path) -> None:
+    subject = router(tmp_path)
+    menu = subject.handle(update_id=1, chat_id=42, text="/menu")
+    assert "V8 X-Perp Demo · Control Room" in menu
+    assert "/flat" in subject.handle(update_id=2, chat_id=42, text="/help")
+    assert subject.startup_report() == subject._format_read("status", subject.gateway.snapshot())
+    commands = {command for command, _ in COMMAND_MENU}
+    assert {"start", "menu", "status", "position", "safety", "funding", "flat"} <= commands
+    assert not commands & {"bots", "equity", "status_v6", "status_demo", "prop"}
 
 
 def test_every_documented_read_command_routes_without_mutation(tmp_path) -> None:

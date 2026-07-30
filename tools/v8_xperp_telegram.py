@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from telegram import Update  # noqa: E402
+from loguru import logger  # noqa: E402
+from telegram import BotCommand, ReplyKeyboardMarkup, Update  # noqa: E402
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters  # noqa: E402
 
 from execution.v8_xperp.adapter import SafetyError, V8XPerpDemoAdapter  # noqa: E402
@@ -28,7 +29,11 @@ from execution.v8_xperp.schedule import (  # noqa: E402
     runtime_namespace,
 )
 from execution.v8_xperp.service import CanaryStateStore  # noqa: E402
-from execution.v8_xperp.telegram import TelegramConfig, V8TelegramRouter  # noqa: E402
+from execution.v8_xperp.telegram import (  # noqa: E402
+    COMMAND_MENU,
+    TelegramConfig,
+    V8TelegramRouter,
+)
 
 
 def base_root() -> Path:
@@ -52,6 +57,21 @@ def schedule_config() -> ScheduleConfig:
 
 def active_root() -> Path:
     return runtime_namespace(base_root(), schedule_config())
+
+
+def command_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        (
+            ("/status", "/position"),
+            ("/schedule", "/safety"),
+            ("/funding", "/orders"),
+            ("/pause", "/flat"),
+            ("/menu", "/help"),
+        ),
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="V8 command…",
+    )
 
 
 @contextmanager
@@ -265,7 +285,33 @@ def main() -> int:
         gateway=LocalGateway(),
         runtime_root=active_root(),
     )
-    application = ApplicationBuilder().token(config.token).build()
+
+    async def post_init(application) -> None:
+        try:
+            await application.bot.set_my_commands(
+                [BotCommand(command, description) for command, description in COMMAND_MENU]
+            )
+        except Exception as exc:
+            logger.warning("unable to publish V8 Telegram commands: {}", type(exc).__name__)
+        try:
+            report = router.startup_report()
+        except SafetyError as exc:
+            report = (
+                "<b>⚠️ V8 X-Perp Telegram started in degraded mode</b>\n"
+                f"<code>{str(exc)[:300]}</code>\nUse /health for details."
+            )
+        for chat_id in sorted(config.allowed_chat_ids):
+            try:
+                await application.bot.send_message(
+                    chat_id=chat_id,
+                    text=report,
+                    parse_mode="HTML",
+                    reply_markup=command_keyboard(),
+                )
+            except Exception as exc:
+                logger.warning("unable to send V8 Telegram startup report: {}", type(exc).__name__)
+
+    application = ApplicationBuilder().token(config.token).post_init(post_init).build()
 
     async def dispatch(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat is None or update.effective_message is None:
@@ -276,7 +322,13 @@ def main() -> int:
             text=update.effective_message.text or "",
         )
         if response:
-            await update.effective_message.reply_text(response)
+            text = update.effective_message.text or ""
+            command = text.strip().split(maxsplit=1)[0].lower().split("@", 1)[0]
+            await update.effective_message.reply_text(
+                response,
+                parse_mode="HTML",
+                reply_markup=command_keyboard() if command in {"/start", "/menu", "/help"} else None,
+            )
 
     application.add_handler(MessageHandler(filters.COMMAND, dispatch))
     with telegram_process_lock():
