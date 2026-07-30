@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import secrets
@@ -17,7 +18,7 @@ from typing import Mapping, Protocol
 from .adapter import SafetyError
 
 READ_ONLY = {
-    "help", "status", "health", "version", "mode", "phase", "schedule",
+    "start", "menu", "help", "status", "report", "health", "safety", "version", "mode", "phase", "schedule",
     "next_transition", "position", "orders", "intents", "funding", "margin",
     "expiry", "canary", "kill_switches", "reconciliation",
 }
@@ -27,6 +28,24 @@ MUTATIONS = {
 }
 STRONG = {"flat", "emergency_flatten", "manual_stop", "set_mode", "set_synthetic_anchor"}
 MAX_MESSAGE = 4096
+
+COMMAND_MENU = (
+    ("start", "Open the V8 control room"),
+    ("menu", "Show V8 tools"),
+    ("status", "Live V8 dashboard"),
+    ("position", "Position and exposure"),
+    ("schedule", "Cycle schedule"),
+    ("safety", "Safety gates and kill switches"),
+    ("funding", "Funding reconciliation"),
+    ("orders", "Open V8 orders"),
+    ("intents", "V8 transition state"),
+    ("pause", "Pause new exposure (confirm)"),
+    ("resume", "Resume after checks (confirm)"),
+    ("flat", "Request controlled flat (confirm)"),
+    ("reconcile", "Request full reconciliation (confirm)"),
+    ("manual_stop", "Latch manual stop (confirm)"),
+    ("help", "All V8 commands and controls"),
+)
 
 
 @dataclass(frozen=True)
@@ -264,6 +283,9 @@ class V8TelegramRouter:
             self.audit.append(chat_id=chat_id, command=command, outcome="blocked")
             return self._reply(f"BLOCKED: {str(exc)[:300]}")
 
+    def startup_report(self) -> str:
+        return self._dashboard(self.gateway.snapshot())
+
     @staticmethod
     def _validate_arguments(command: str, arguments: tuple[str, ...]) -> None:
         expected = 1 if command in {"set_mode", "set_synthetic_anchor"} else 0
@@ -304,20 +326,20 @@ class V8TelegramRouter:
     def _format_read(command: str, value: dict[str, object]) -> str:
         if command == "help":
             return (
-                "V8 X-Perp only. Read: /status /health /version /mode /phase "
-                "/schedule /next_transition /position /orders /intents /funding "
-                "/margin /expiry /canary /kill_switches /reconciliation. "
-                "Confirmed controls: /pause /resume /flat /emergency_flatten "
-                "/reconcile /manual_stop /set_mode /set_synthetic_anchor."
+                "<b>🧭 V8 X-Perp Demo · Command guide</b>\n\n"
+                "<b>Dashboard</b>\n/start  /menu  /status  /report\n\n"
+                "<b>Read-only</b>\n/health  /safety  /position  /schedule  /funding\n"
+                "/orders  /intents  /margin  /expiry  /canary  /kill_switches\n"
+                "/reconciliation  /phase  /mode  /next_transition  /version\n\n"
+                "<b>Confirmed controls</b>\n/pause  /resume  /flat  /reconcile\n"
+                "/manual_stop  /emergency_flatten\n\n"
+                "Schedule changes are intentionally restricted to a stopped, reconciled service: "
+                "/set_mode &lt;mode&gt; and /set_synthetic_anchor &lt;UTC&gt;."
             )
-        if command in {"status", "health"}:
-            keys = (
-                "environment", "schedule_mode", "status", "service_state",
-                "reconciled", "instrument", "current_target", "position_contracts",
-                "position_notional_usd", "canary_cap_usd", "actual_leverage",
-                "liquidation_distance_pct", "rest_fresh", "websocket_fresh",
-                "funding_status", "next_transition", "kill_switches",
-            )
+        if command in {"start", "menu", "status", "report"}:
+            return V8TelegramRouter._dashboard(value)
+        if command in {"health", "safety"}:
+            return V8TelegramRouter._safety(value)
         else:
             groups = {
                 "version": ("version", "environment"),
@@ -336,7 +358,59 @@ class V8TelegramRouter:
                 "reconciliation": ("reconciled", "rest_fresh", "websocket_fresh", "service_state"),
             }
             keys = groups[command]
-        return "\n".join(f"{key}: {value.get(key, 'unknown')}" for key in keys)
+        return "\n".join(
+            f"<b>{html.escape(key.replace('_', ' ').title())}</b>\n"
+            f"<code>{html.escape(str(value.get(key, 'unknown')))}</code>"
+            for key in keys
+        )
+
+    @staticmethod
+    def _dashboard(value: dict[str, object]) -> str:
+        status = str(value.get("status", "UNKNOWN"))
+        service = str(value.get("service_state", "UNKNOWN"))
+        status_icon = "🟢" if status == "HEALTHY" else "🟡" if status == "DEGRADED" else "🔴"
+        service_icon = "🟢" if service == "RUNNING" else "🟡" if service == "STOPPED" else "🔴"
+        reconciliation = "✅ Reconciled" if value.get("reconciled") else "⚠️ Attention needed"
+        rest = "✅" if value.get("rest_fresh") else "⚠️"
+        websocket = "✅" if value.get("websocket_fresh") else "⚠️"
+        return "\n".join((
+            "<b>🧭 V8 X-Perp Demo · Control Room</b>",
+            f"<i>{html.escape(str(value.get('environment', 'unknown')))} · "
+            f"{html.escape(str(value.get('schedule_mode', 'unknown')))}</i>",
+            "",
+            "<b>Execution</b>",
+            f"{status_icon} Status: <b>{html.escape(status)}</b>   "
+            f"{service_icon} Service: <b>{html.escape(service)}</b>",
+            f"🎯 Target: <b>{html.escape(str(value.get('current_target', 'unknown')))}</b>",
+            f"📍 Position: <code>{html.escape(str(value.get('position_contracts', 'unknown')))}</code> contracts · "
+            f"<b>${html.escape(str(value.get('position_notional_usd', 'unknown')))}</b>",
+            f"⚖️ Exposure: <code>{html.escape(str(value.get('actual_leverage', 'unknown')))}x</code> · "
+            f"cap <b>${html.escape(str(value.get('canary_cap_usd', 'unknown')))}</b>",
+            "",
+            "<b>Safety & reconciliation</b>",
+            f"{reconciliation} · REST {rest} · WebSocket {websocket}",
+            f"🛡 Liquidation distance: <b>{html.escape(str(value.get('liquidation_distance_pct', 'unknown')))}%</b>",
+            f"💸 Funding: <b>{html.escape(str(value.get('funding_status', 'unknown')))}</b>",
+            "",
+            "<b>Schedule</b>",
+            f"⏭ Next transition: <code>{html.escape(str(value.get('next_transition', 'unknown')))}</code>",
+            f"📄 Instrument: <code>{html.escape(str(value.get('instrument', 'unknown')))}</code>",
+            "",
+            "Use /menu for controls · /help for every V8 command.",
+        ))
+
+    @staticmethod
+    def _safety(value: dict[str, object]) -> str:
+        ok = "✅" if value.get("reconciled") else "⚠️"
+        return "\n".join((
+            "<b>🛡 V8 Safety Report</b>",
+            f"{ok} Reconciliation: <b>{html.escape(str(value.get('reconciled', 'unknown')))}</b>",
+            f"REST fresh: <b>{html.escape(str(value.get('rest_fresh', 'unknown')))}</b>",
+            f"WebSocket fresh: <b>{html.escape(str(value.get('websocket_fresh', 'unknown')))}</b>",
+            f"Open orders: <b>{html.escape(str(value.get('open_orders', 'unknown')))}</b>",
+            f"Non-terminal intents: <b>{html.escape(str(value.get('non_terminal_intents', 'unknown')))}</b>",
+            f"Kill switches: <code>{html.escape(str(value.get('kill_switches', 'unknown')))}</code>",
+        ))
 
     @staticmethod
     def _reply(value: str) -> str:
