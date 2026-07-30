@@ -114,6 +114,33 @@ the period events, and the latest reconciled operational state. A report with
 missing or corrupt evidence must be treated as incomplete, never as a clean
 forward-test period.
 
+## Mandatory evidence review
+
+The Telegram notification is a prompt to review the saved immutable report; it
+is not evidence of a clean period on its own. Review both of the following:
+
+- after every completed synthetic four-day cycle, one cycle report; and
+- after every completed UTC week that contains V8 evidence, one weekly report.
+
+On the VM, list the saved reports without modifying runtime state:
+
+```bash
+find /srv/matibot/data/runtime/v8_xperp_demo -path '*/evidence/reports/*' -type f -print
+```
+
+For each new report, confirm its UTC window is continuous with the preceding
+report, inspect its observation/transition/incident counts, and confirm the
+latest reconciled state is healthy with no unexpected order, position, funding,
+freshness, reconciliation, or delivery issue. Compare the saved report with
+the Telegram notification. A missing expected report, a missing notification,
+an undelivered report, a gap in windows, corrupt evidence, or any incident is
+an operational incident: preserve the files, inspect the service logs, and do
+not count that period as clean toward the October validation or a cap decision.
+
+The first reports after a deployment are produced only when their period ends;
+the system does not fabricate a report for time before evidence collection
+started.
+
 ## Funding reconciliation runbook
 
 Create one expectation per environment/account/instrument/settlement from a known
@@ -178,10 +205,11 @@ zero orders, stop the process, and obtain manual approval before restart. Follow
 ## Canary promotion checklist
 
 Do not increase the cap before at least 30 calendar days, 10 complete controlled
-position cycles, 10 observed funding settlements, no unresolved incidents or
-reconciliation failures, verified loss accounting, stable margin/liquidation
-comparisons, successful restart/reconnect/flatten drills, and independent execution,
-risk, robustness, and code review. A human must approve a new cap and rollback plan.
+position cycles, 10 observed funding settlements, a reviewed cycle and weekly
+evidence record with no missing period, no unresolved incidents or reconciliation
+failures, verified loss accounting, stable margin/liquidation comparisons,
+successful restart/reconnect/flatten drills, and independent execution, risk,
+robustness, and code review. A human must approve a new cap and rollback plan.
 
 ## Demo-to-Live readiness checklist
 

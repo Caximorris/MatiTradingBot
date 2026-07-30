@@ -17,6 +17,13 @@ strategy-specific plans.
   Setup/activation still require explicit approval. This is not a default, Demo, or live promotion.
 - **Live:** not authorized. Any VM, bot start/stop, demo/live order, Telegram mutation, or deployment
   requires explicit current-task approval.
+- **V8 X-Perp Demo:** active as of 2026-07-30 as an isolated, continuous OKX Demo canary only;
+  it remains capped at $1,000 entry notional and is not a default or Live authorization. The Demo
+  and V8 Telegram units are expected to remain active. Review the immutable completed-cycle report
+  after every synthetic four-day cycle and the completed UTC-week report every week. A missing
+  Telegram report, missing saved report, delivery failure, corrupt evidence, or any incident count
+  makes that period incomplete and must be investigated before using it for the October decision.
+  See `docs/ops/v8-xperp-canary.md`.
 
 ## Research facts that remain relevant
 
