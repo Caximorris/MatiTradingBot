@@ -373,7 +373,7 @@ class V8TelegramRouter:
         reconciliation = "✅ Reconciled" if value.get("reconciled") else "⚠️ Attention needed"
         rest = "✅" if value.get("rest_fresh") else "⚠️"
         websocket = "✅" if value.get("websocket_fresh") else "⚠️"
-        return "\n".join((
+        lines = [
             "<b>🧭 V8 X-Perp Demo · Control Room</b>",
             f"<i>{html.escape(str(value.get('environment', 'unknown')))} · "
             f"{html.escape(str(value.get('schedule_mode', 'unknown')))}</i>",
@@ -395,9 +395,16 @@ class V8TelegramRouter:
             "<b>Schedule</b>",
             f"⏭ Next transition: <code>{html.escape(str(value.get('next_transition', 'unknown')))}</code>",
             f"📄 Instrument: <code>{html.escape(str(value.get('instrument', 'unknown')))}</code>",
-            "",
-            "Use /menu for controls · /help for every V8 command.",
-        ))
+        ]
+        reason = value.get("health_reason")
+        if status == "BLOCKED" and reason:
+            lines.extend((
+                "",
+                f"⚠️ Block reason: <code>{html.escape(str(reason))}</code>",
+                "Controls remain read-only until the executor recovers and reconciles.",
+            ))
+        lines.extend(("", "Use /menu for controls · /help for every V8 command."))
+        return "\n".join(lines)
 
     @staticmethod
     def _safety(value: dict[str, object]) -> str:
