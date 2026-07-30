@@ -149,6 +149,28 @@ def test_rate_revision_rebases_then_matches_final_bill(tmp_path: Path) -> None:
     assert result.rate_revision == "0.0001->0.0002"
 
 
+def test_settlement_amount_tolerance_reconciles_retried_mismatch(tmp_path: Path) -> None:
+    ledger, record = created(tmp_path / "amount-tolerance")
+    first = reconcile_funding(
+        ledger=ledger,
+        record=record,
+        official_history=history(),
+        bills=[bill("-0.0010005")],
+        now_ms=SETTLEMENT + 1,
+    )
+    assert first.state == "RECONCILED"
+    assert first.last_result == "exact-once funding reconciled within settlement tolerance"
+
+    retried = reconcile_funding(
+        ledger=ledger,
+        record=replace(first, state="AMOUNT_MISMATCH"),
+        official_history=history(),
+        bills=[bill("-0.0010005")],
+        now_ms=SETTLEMENT + 2,
+    )
+    assert retried.state == "RECONCILED"
+
+
 def test_distinct_duplicate_bill_and_changed_duplicate_conflict(tmp_path: Path) -> None:
     ledger, record = created(tmp_path / "distinct")
     result = reconcile_funding(
