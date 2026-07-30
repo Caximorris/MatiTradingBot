@@ -108,6 +108,11 @@ async def _run_canary(*, one_shot: bool) -> dict[str, object]:
         service = V8XPerpCanaryService(adapter=adapter, config=config)
         try:
             await _wait_stream(stream)
+            # The preflight report is needed to identify the instrument and
+            # recover ownership, but its market snapshot may be older than
+            # the five-second canary freshness limit by the time the private
+            # stream is healthy. Refresh it immediately before startup.
+            report = adapter.operational_report(report.instrument)
             service.start(
                 report=report,
                 tiers=adapter.margin_tiers(report),
