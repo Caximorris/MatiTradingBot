@@ -280,6 +280,10 @@ async def _run_operational(*, execute: bool, one_shot: bool) -> dict[str, object
         last_result: dict[str, object] = {}
         try:
             await _wait_stream(stream)
+            # The report fetched before WebSocket startup can age past the
+            # five-second canary freshness limit while the stream connects.
+            # Refresh it immediately before the operational startup gate.
+            report = adapter.operational_report(instrument)
             server_time, drift = adapter.verified_server_time()
             service.start(
                 report=report,
