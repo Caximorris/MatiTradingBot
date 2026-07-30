@@ -239,6 +239,8 @@ class V8XPerpDemoAdapter:
         safe = {"at": _utc_now().isoformat(), "event": event, "payload": payload}
         with self.journal_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(safe, sort_keys=True, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         logger.bind(execution="v8_xperp_demo").info("recorded {}", event)
 
     @staticmethod

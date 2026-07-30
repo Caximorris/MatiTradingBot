@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+from execution.v8_xperp.evidence import EvidenceStore
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("v8_xperp_demo", ROOT / "tools" / "v8_xperp_demo.py")
@@ -112,3 +114,38 @@ def test_failure_health_preserves_last_verified_operational_context(tmp_path, mo
     assert health["monitoring"]["instrument"] == "BTC-XPERP"
     assert health["phase"]["current_phase"] == "long_phase"
     assert health["funding"]["status"] == "REAL_PARITY_OBSERVED"
+
+
+def test_evidence_delivery_records_receipt_only_after_telegram_ack(tmp_path, monkeypatch):
+    store = EvidenceStore(tmp_path)
+    report_path = store.cycles_dir / "cycle-0000.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(json.dumps({
+        "report_id": "v8-cycle-cycle-0000",
+        "kind": "cycle",
+        "key": "cycle-0000",
+        "window": {"start": "2026-07-29T00:00:00+00:00", "end": "2026-08-02T00:00:00+00:00"},
+        "counts": {"observations": 1, "transitions": 3, "incidents": 0},
+        "current": {"monitoring": {"position_notional_usd": "1000", "position_contracts": "0.0156"}, "funding": {"status": "PASS"}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(demo.TelegramConfig, "from_env", lambda: SimpleNamespace(
+        enabled=True, token="test-token", allowed_chat_ids=frozenset({42}),
+    ))
+    sent = []
+
+    class Response:
+        def read(self):
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(demo.urllib.request, "urlopen", lambda request, timeout: sent.append((request, timeout)) or Response())
+
+    demo._deliver_evidence_reports(store)
+
+    assert len(sent) == 1
+    assert store.pending_reports() == []

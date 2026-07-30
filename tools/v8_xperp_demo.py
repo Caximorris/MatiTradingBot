@@ -8,11 +8,15 @@ import json
 import os
 import signal
 import sys
+import urllib.parse
+import urllib.request
 from contextlib import suppress
 from dataclasses import asdict
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+
+from loguru import logger
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -43,6 +47,8 @@ from execution.v8_xperp.runtime import (  # noqa: E402
     V8OperationalController,
     request_operator_flat,
 )
+from execution.v8_xperp.evidence import EvidenceStore  # noqa: E402
+from execution.v8_xperp.telegram import TelegramConfig  # noqa: E402
 from execution.v8_xperp.schedule import (  # noqa: E402
     REAL_CYCLE,
     SYNTHETIC_DEMO_CYCLE,
@@ -228,6 +234,48 @@ def _write_failure_health(message: str) -> None:
     os.replace(temporary, path)
 
 
+def _record_evidence_failure(message: str, category: str) -> None:
+    with suppress(Exception):
+        EvidenceStore(_runtime_root()).record_incident(
+            message=message,
+            category=category,
+        )
+
+
+def _deliver_evidence_reports(store: EvidenceStore) -> None:
+    config = TelegramConfig.from_env()
+    if not config.enabled:
+        return
+    for report in store.pending_reports():
+        delivered = True
+        for chat_id in sorted(config.allowed_chat_ids):
+            payload = urllib.parse.urlencode({
+                "chat_id": str(chat_id),
+                "text": report.telegram_text(),
+                "parse_mode": "HTML",
+            }).encode()
+            request = urllib.request.Request(
+                f"https://api.telegram.org/bot{config.token}/sendMessage",
+                data=payload,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    value = json.loads(response.read().decode("utf-8"))
+                if not value.get("ok"):
+                    raise SafetyError("Telegram rejected V8 evidence report")
+            except Exception as exc:
+                delivered = False
+                logger.warning(
+                    "unable to deliver V8 evidence report {}: {}",
+                    report.report_id,
+                    type(exc).__name__,
+                )
+                break
+        if delivered:
+            store.mark_delivered(report.report_id, now=datetime.now(UTC))
+
+
 def _safety_exit_code(message: str) -> int:
     manual_markers = (
         "manual emergency stop is latched",
@@ -286,6 +334,7 @@ async def _run_operational(*, execute: bool, one_shot: bool) -> dict[str, object
             bootstrap_config=BootstrapConfig.from_env(),
             schedule_config=schedule_config,
         )
+        evidence = EvidenceStore(adapter.runtime_root)
         last_result: dict[str, object] = {}
         try:
             await _wait_stream(stream)
@@ -313,6 +362,14 @@ async def _run_operational(*, execute: bool, one_shot: bool) -> dict[str, object
                     clock_drift_seconds=drift,
                     execute=execute,
                 )
+                try:
+                    evidence.due_reports(last_result, now=server_time)
+                    _deliver_evidence_reports(evidence)
+                except Exception as exc:
+                    logger.error(
+                        "V8 evidence reporting failed visibly: {}",
+                        type(exc).__name__,
+                    )
                 if one_shot:
                     break
                 try:
@@ -674,5 +731,9 @@ if __name__ == "__main__":
     except SafetyError as exc:
         with suppress(Exception):
             _write_failure_health(str(exc))
+        _record_evidence_failure(str(exc), "safety_error")
         print(f"BLOCKED: {exc}")
         raise SystemExit(_safety_exit_code(str(exc)))
+    except Exception as exc:
+        _record_evidence_failure(str(exc), "unexpected_error")
+        raise
