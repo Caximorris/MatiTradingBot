@@ -65,6 +65,48 @@ def test_read_only_command_is_v8_scoped_and_audited(tmp_path) -> None:
     assert "never-exposed" not in audit
 
 
+def test_dashboard_uses_readable_rounded_risk_labels(tmp_path) -> None:
+    subject = router(tmp_path, Gateway(
+        position_contracts="0.0156",
+        position_notional_usd="1002.68376",
+        actual_leverage="0.01007847295059681758169975278",
+        canary_cap_usd="1000",
+        liquidation_distance_pct="47.60315861881718924536462271",
+        funding_status="REAL_PARITY_OBSERVED",
+        next_transition="2026-07-31T15:53:38+00:00",
+    ))
+
+    dashboard = subject.handle(update_id=1, chat_id=42, text="/status")
+
+    assert "$1,002.68" in dashboard
+    assert "<b>1.01%</b> of equity" in dashboard
+    assert "entry cap <b>$1,000.00" in dashboard
+    assert "Liquidation buffer: <b>47.60%" in dashboard
+    assert "Verified against exchange settlement" in dashboard
+    assert "31 Jul 2026 · 15:53 UTC" in dashboard
+    assert "010078472950" not in dashboard
+
+
+def test_read_reports_summarize_expiry_and_kill_switches(tmp_path) -> None:
+    subject = router(tmp_path, Gateway(
+        expiry={
+            "days_remaining": "1701.976386119375",
+            "expiry": "2031-03-28T08:00:00+00:00",
+            "block_new_exposure": False,
+        },
+        kill_switches={
+            "manual_stop": False,
+            "operator": {"manual_stop": False, "paused": False},
+        },
+    ))
+
+    expiry = subject.handle(update_id=1, chat_id=42, text="/expiry")
+    switches = subject.handle(update_id=2, chat_id=42, text="/kill_switches")
+
+    assert "1,702.0 days left · new exposure allowed" in expiry
+    assert "Manual stop: off · Pause: off" in switches
+
+
 def test_mutation_requires_one_time_confirmation(tmp_path) -> None:
     gateway = Gateway()
     subject = router(tmp_path, gateway)

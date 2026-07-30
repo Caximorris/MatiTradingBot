@@ -12,6 +12,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Mapping, Protocol
 
@@ -209,6 +210,61 @@ class Gateway(Protocol):
     def mutate(self, action: str, arguments: tuple[str, ...]) -> str: ...
 
 
+def _text(value: object) -> str:
+    return "unknown" if value is None else str(value)
+
+
+def _decimal(value: object, places: int) -> str:
+    try:
+        return f"{Decimal(str(value)):,.{places}f}"
+    except (InvalidOperation, ValueError):
+        return _text(value)
+
+
+def _instant(value: object) -> str:
+    if not isinstance(value, str):
+        return _text(value)
+    try:
+        return datetime.fromisoformat(value).astimezone(UTC).strftime("%d %b %Y · %H:%M UTC")
+    except ValueError:
+        return value
+
+
+def _value(key: str, value: object) -> str:
+    if key in {"position_notional_usd", "canary_cap_usd"}:
+        return f"${_decimal(value, 2)}"
+    if key == "position_contracts":
+        return _decimal(value, 4)
+    if key == "actual_leverage":
+        try:
+            return f"{Decimal(str(value)) * 100:.2f}%"
+        except (InvalidOperation, ValueError):
+            return _text(value)
+    if key == "liquidation_distance_pct":
+        return f"{_decimal(value, 2)}%"
+    if key in {"next_transition", "next_day_2", "next_day_3", "next_halving", "synthetic_anchor"}:
+        return _instant(value)
+    if key == "schedule_mode" and value == "synthetic_demo_cycle":
+        return "Synthetic demo cycle"
+    if key == "phase" and isinstance(value, str):
+        return value.replace("_", " ").title()
+    if key == "funding_status" and value == "REAL_PARITY_OBSERVED":
+        return "Verified against exchange settlement"
+    if key == "expiry" and isinstance(value, dict):
+        days = _decimal(value.get("days_remaining"), 1)
+        expiry = _instant(value.get("expiry"))
+        exposure = "blocked" if value.get("block_new_exposure") else "allowed"
+        return f"{days} days left · new exposure {exposure} · {expiry}"
+    if key == "kill_switches" and isinstance(value, dict):
+        operator = value.get("operator") if isinstance(value.get("operator"), dict) else {}
+        manual_stop = bool(value.get("manual_stop")) or bool(operator.get("manual_stop"))
+        paused = bool(operator.get("paused"))
+        return f"Manual stop: {'ON' if manual_stop else 'off'} · Pause: {'ON' if paused else 'off'}"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    return _text(value)
+
+
 class V8TelegramRouter:
     def __init__(
         self,
@@ -360,7 +416,7 @@ class V8TelegramRouter:
             keys = groups[command]
         return "\n".join(
             f"<b>{html.escape(key.replace('_', ' ').title())}</b>\n"
-            f"<code>{html.escape(str(value.get(key, 'unknown')))}</code>"
+            f"<code>{html.escape(_value(key, value.get(key)))}</code>"
             for key in keys
         )
 
@@ -381,20 +437,20 @@ class V8TelegramRouter:
             "<b>Execution</b>",
             f"{status_icon} Status: <b>{html.escape(status)}</b>   "
             f"{service_icon} Service: <b>{html.escape(service)}</b>",
-            f"🎯 Target: <b>{html.escape(str(value.get('current_target', 'unknown')))}</b>",
-            f"📍 Position: <code>{html.escape(str(value.get('position_contracts', 'unknown')))}</code> contracts · "
-            f"<b>${html.escape(str(value.get('position_notional_usd', 'unknown')))}</b>",
-            f"⚖️ Exposure: <code>{html.escape(str(value.get('actual_leverage', 'unknown')))}x</code> · "
-            f"cap <b>${html.escape(str(value.get('canary_cap_usd', 'unknown')))}</b>",
+            f"🎯 Target: <b>{html.escape(_text(value.get('current_target')))}</b>",
+            f"📍 Position: <code>{html.escape(_value('position_contracts', value.get('position_contracts')))}</code> contracts · "
+            f"<b>{html.escape(_value('position_notional_usd', value.get('position_notional_usd')))}</b>",
+            f"⚖️ Account use: <b>{html.escape(_value('actual_leverage', value.get('actual_leverage')))}</b> of equity · "
+            f"entry cap <b>{html.escape(_value('canary_cap_usd', value.get('canary_cap_usd')))}</b>",
             "",
             "<b>Safety & reconciliation</b>",
             f"{reconciliation} · REST {rest} · WebSocket {websocket}",
-            f"🛡 Liquidation distance: <b>{html.escape(str(value.get('liquidation_distance_pct', 'unknown')))}%</b>",
-            f"💸 Funding: <b>{html.escape(str(value.get('funding_status', 'unknown')))}</b>",
+            f"🛡 Liquidation buffer: <b>{html.escape(_value('liquidation_distance_pct', value.get('liquidation_distance_pct')))}</b>",
+            f"💸 Funding: <b>{html.escape(_value('funding_status', value.get('funding_status')))}</b>",
             "",
             "<b>Schedule</b>",
-            f"⏭ Next transition: <code>{html.escape(str(value.get('next_transition', 'unknown')))}</code>",
-            f"📄 Instrument: <code>{html.escape(str(value.get('instrument', 'unknown')))}</code>",
+            f"⏭ Next transition: <code>{html.escape(_value('next_transition', value.get('next_transition')))}</code>",
+            f"📄 Instrument: <code>{html.escape(_text(value.get('instrument')))}</code>",
         ]
         reason = value.get("health_reason")
         if status == "BLOCKED" and reason:
@@ -411,12 +467,12 @@ class V8TelegramRouter:
         ok = "✅" if value.get("reconciled") else "⚠️"
         return "\n".join((
             "<b>🛡 V8 Safety Report</b>",
-            f"{ok} Reconciliation: <b>{html.escape(str(value.get('reconciled', 'unknown')))}</b>",
-            f"REST fresh: <b>{html.escape(str(value.get('rest_fresh', 'unknown')))}</b>",
-            f"WebSocket fresh: <b>{html.escape(str(value.get('websocket_fresh', 'unknown')))}</b>",
-            f"Open orders: <b>{html.escape(str(value.get('open_orders', 'unknown')))}</b>",
-            f"Non-terminal intents: <b>{html.escape(str(value.get('non_terminal_intents', 'unknown')))}</b>",
-            f"Kill switches: <code>{html.escape(str(value.get('kill_switches', 'unknown')))}</code>",
+            f"{ok} Account reconciliation: <b>{html.escape(_value('reconciled', value.get('reconciled')))}</b>",
+            f"REST market check current: <b>{html.escape(_value('rest_fresh', value.get('rest_fresh')))}</b>",
+            f"Private WebSocket current: <b>{html.escape(_value('websocket_fresh', value.get('websocket_fresh')))}</b>",
+            f"Open V8 orders: <b>{html.escape(_value('open_orders', value.get('open_orders')))}</b>",
+            f"Pending transitions: <b>{html.escape(_value('non_terminal_intents', value.get('non_terminal_intents')))}</b>",
+            f"Kill switches: <code>{html.escape(_value('kill_switches', value.get('kill_switches')))}</code>",
         ))
 
     @staticmethod
