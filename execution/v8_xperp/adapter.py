@@ -358,7 +358,15 @@ class V8XPerpDemoAdapter:
         if len(ticker) != 1 or len(book) != 1 or not book[0].get("bids") or not book[0].get("asks"):
             raise SafetyError("missing X-Perp ticker or order book")
         tick = ticker[0]
-        timestamp = datetime.fromtimestamp(int(tick["ts"]) / 1000, UTC)
+        try:
+            ticker_timestamp = datetime.fromtimestamp(int(tick["ts"]) / 1000, UTC)
+            book_timestamp = datetime.fromtimestamp(int(book[0]["ts"]) / 1000, UTC)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SafetyError("X-Perp market timestamp is invalid") from exc
+        # A ticker's timestamp records the last trade and can remain unchanged
+        # while the validated order book is actively refreshing.  Market
+        # freshness therefore uses the newest exchange-supplied price component.
+        timestamp = max(ticker_timestamp, book_timestamp)
         if _utc_now() - timestamp > MAX_TICKER_AGE:
             raise SafetyError("X-Perp market data is stale")
         bid, ask, last = _decimal(book[0]["bids"][0][0]), _decimal(book[0]["asks"][0][0]), _decimal(tick["last"])

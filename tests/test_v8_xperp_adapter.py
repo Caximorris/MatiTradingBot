@@ -41,6 +41,33 @@ def test_target_quantizes_down_and_never_exceeds_requested_leverage() -> None:
     assert result.remaining_available_margin > 0
 
 
+def test_market_uses_the_freshest_validated_exchange_timestamp() -> None:
+    adapter = object.__new__(V8XPerpDemoAdapter)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+
+    class MarketApi:
+        @staticmethod
+        def get_ticker(_instrument_id):
+            return {"data": [{"ts": str(now_ms - 8_000), "last": "100"}]}
+
+        @staticmethod
+        def get_orderbook(_instrument_id, *, sz):
+            assert sz == "5"
+            return {
+                "data": [{
+                    "ts": str(now_ms),
+                    "bids": [["99.99", "1"]],
+                    "asks": [["100.01", "1"]],
+                }]
+            }
+
+    adapter.market_api = MarketApi()
+    adapter._ok = lambda value, _context: value["data"]
+    market = adapter._market(_report().instrument)
+
+    assert market.timestamp == datetime.fromtimestamp(now_ms / 1000, UTC)
+
+
 def test_unknown_target_is_rejected() -> None:
     adapter = object.__new__(V8XPerpDemoAdapter)
     with pytest.raises(ValueError, match="target must"):
