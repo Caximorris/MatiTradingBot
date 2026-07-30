@@ -96,6 +96,24 @@ process remains.
 - Funding expectations due/delayed/missing and consumed bill IDs.
 - Maximum observed notional and any kill-switch/incident records.
 
+## Forward-test evidence reports
+
+The executor writes a durable V8 evidence ledger under its isolated runtime root:
+
+- `evidence/events.jsonl`: append-only, fsynced observations, transition events,
+  safety failures, unexpected failures, and report creation records.
+- `evidence/reports/cycles/cycle-####.json`: one immutable report after each
+  completed synthetic four-day cycle.
+- `evidence/reports/weeks/YYYY-W##.json`: one immutable report for each completed
+  UTC week that has V8 evidence.
+- `evidence/delivery.json`: idempotent Telegram delivery receipts. Saved reports
+  remain authoritative; an undelivered report is retried after restart.
+
+Each report includes its UTC window, observation/transition/incident counts,
+the period events, and the latest reconciled operational state. A report with
+missing or corrupt evidence must be treated as incomplete, never as a clean
+forward-test period.
+
 ## Funding reconciliation runbook
 
 Create one expectation per environment/account/instrument/settlement from a known
