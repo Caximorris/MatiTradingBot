@@ -125,10 +125,28 @@ def test_sign_amount_timestamp_and_rate_changes_fail_closed(tmp_path: Path) -> N
     ).state == "TIMESTAMP_MISMATCH"
 
     ledger, record = created(tmp_path / "rate")
-    assert reconcile_funding(
+    rebased = reconcile_funding(
         ledger=ledger, record=record, official_history=history(rate="0.0002"),
         bills=[], now_ms=SETTLEMENT + 1,
-    ).state == "CONFLICT"
+    )
+    assert rebased.state == "DELAYED"
+    assert rebased.signed_rate == "0.0002"
+    assert rebased.expected_amount == "-0.0020"
+    assert rebased.rate_revision == "0.0001->0.0002"
+
+
+def test_rate_revision_rebases_then_matches_final_bill(tmp_path: Path) -> None:
+    ledger, record = created(tmp_path / "rate-bill")
+    result = reconcile_funding(
+        ledger=ledger,
+        record=record,
+        official_history=history(rate="0.0002"),
+        bills=[bill("-0.0020")],
+        now_ms=SETTLEMENT + 1,
+    )
+    assert result.state == "RECONCILED"
+    assert result.signed_rate == "0.0002"
+    assert result.rate_revision == "0.0001->0.0002"
 
 
 def test_distinct_duplicate_bill_and_changed_duplicate_conflict(tmp_path: Path) -> None:

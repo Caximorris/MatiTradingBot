@@ -50,6 +50,7 @@ class FundingExpectation:
     bill_hash: str | None = None
     actual_amount: str | None = None
     last_result: str | None = None
+    rate_revision: str | None = None
     schema: int = FUNDING_SCHEMA
 
     @property
@@ -156,6 +157,20 @@ def _amount_tolerance(expected: Decimal) -> Decimal:
     )
 
 
+def _expected_amount(record: FundingExpectation, signed_rate: Decimal) -> Decimal:
+    direction = Decimal("1") if record.side == "long" else Decimal("-1")
+    return -direction * _decimal(record.position_notional) * signed_rate
+
+
+def _unsettled_state(*, now_ms: int, settlement_ms: int) -> str:
+    return (
+        "EXPECTED" if now_ms < settlement_ms
+        else "DUE" if now_ms < settlement_ms + DELAY_AFTER_MS
+        else "DELAYED" if now_ms < settlement_ms + MISSING_AFTER_MS
+        else "MISSING"
+    )
+
+
 def reconcile_funding(
     *,
     ledger: FundingLedger,
@@ -181,16 +196,22 @@ def reconcile_funding(
                 state="TIMESTAMP_MISMATCH",
                 last_result="official settlement timestamp changed",
             )
-        state = (
-            "EXPECTED" if now_ms < record.settlement_ms
-            else "DUE" if now_ms < record.settlement_ms + DELAY_AFTER_MS
-            else "DELAYED" if now_ms < record.settlement_ms + MISSING_AFTER_MS
-            else "MISSING"
-        )
+        state = _unsettled_state(now_ms=now_ms, settlement_ms=record.settlement_ms)
         return ledger.update(record.identity, state=state, last_result="official settlement not available")
     official_rate = _decimal(history[0].get("realizedRate") or history[0].get("fundingRate"))
     if official_rate != _decimal(record.signed_rate):
-        return ledger.update(record.identity, state="CONFLICT", last_result="official funding rate changed")
+        if record.bill_id is not None:
+            return ledger.update(record.identity, state="CONFLICT", last_result="official funding rate changed after bill match")
+        revision = f"{record.signed_rate}->{official_rate}"
+        record = ledger.update(
+            record.identity,
+            signed_rate=str(official_rate),
+            expected_amount=str(_expected_amount(record, official_rate)),
+            rate_source_hash=source_hash(history[0]),
+            state=_unsettled_state(now_ms=now_ms, settlement_ms=record.settlement_ms),
+            rate_revision=record.rate_revision or revision,
+            last_result=f"official funding rate rebased: {revision}",
+        )
 
     candidates = [
         bill for bill in bills

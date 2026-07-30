@@ -101,10 +101,14 @@ process remains.
 Create one expectation per environment/account/instrument/settlement from a known
 position that actually spans settlement. Persist side, contracts, notional, signed
 rate, expected signed amount, and source hashes before settlement. Reconcile OKX
-type `8`, subtype `173/174`, USDC bills by unique `billId`; changed content, sign,
-timestamp, or amount blocks reconciliation. At 2 minutes mark delayed; at 15 minutes
-mark missing. Restarting must reload the same identity and never consume a bill twice.
-Report `UNOBSERVED` until an actual known-position Demo settlement occurs.
+type `8`, subtype `173/174`, USDC bills by unique `billId`. If OKX finalizes a
+different rate before a bill is matched, rebase the expectation to the official
+settlement rate and retain the old-to-new rate revision in the ledger; the actual
+bill must still match the rebased amount. Changed bill content, sign, timestamp,
+amount, duplicate bills, or a rate change after bill match blocks reconciliation.
+At 2 minutes mark delayed; at 15 minutes mark missing. Restarting must reload the
+same identity and never consume a bill twice. Report `UNOBSERVED` until an actual
+known-position Demo settlement occurs.
 
 ## Margin and liquidation runbook
 
