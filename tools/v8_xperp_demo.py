@@ -25,7 +25,11 @@ if str(ROOT) not in sys.path:
 from execution.v8_xperp import SafetyError, V8XPerpDemoAdapter  # noqa: E402
 from execution.v8_xperp.intents import IntentLedger, TERMINAL  # noqa: E402
 from execution.v8_xperp.canary import CanaryConfig  # noqa: E402
-from execution.v8_xperp.funding import FundingLedger  # noqa: E402
+from execution.v8_xperp.funding import (  # noqa: E402
+    FUNDING_FAILURE_STATES,
+    FundingLedger,
+    acknowledge_failed_funding,
+)
 from execution.v8_xperp.bootstrap import BootstrapConfig  # noqa: E402
 from execution.v8_xperp.index_source import OKXIndexPriceSource  # noqa: E402
 from execution.v8_xperp.private_stream import PrivateStreamSupervisor  # noqa: E402
@@ -221,12 +225,31 @@ def _write_failure_health(message: str) -> None:
             # A failure record must still be persisted even when the prior artifact
             # is unavailable or corrupt. Do not carry corrupt state forward.
             previous = {}
+    funding: dict[str, object] | None = None
+    if message.startswith("funding reconciliation failed closed: "):
+        state = message.rsplit(": ", 1)[-1]
+        funding = {"status": f"FAILED_{state}"}
+        try:
+            records = FundingLedger(_runtime_root() / "funding.json").load()
+            failed = [item for item in records if item.state == state]
+            if failed:
+                record = failed[-1]
+                funding.update({
+                    "settlement_ms": record.settlement_ms,
+                    "expected_amount": record.expected_amount,
+                    "actual_amount": record.actual_amount,
+                    "bill_id": record.bill_id,
+                })
+        except SafetyError:
+            pass
     failure = {
         **previous,
         "status": "BLOCKED",
         "checked_at": datetime.now(UTC).isoformat(),
         "reason": message,
     }
+    if funding is not None:
+        failure["funding"] = funding
     temporary.write_text(
         json.dumps(failure, sort_keys=True),
         encoding="utf-8",
@@ -427,6 +450,13 @@ def main() -> int:
         "manual-recovery", help="clear a manual stop only after flat reconciliation"
     )
     recovery.add_argument("--confirm-v8-manual-recovery", action="store_true")
+    funding_recovery = sub.add_parser(
+        "acknowledge-funding-incident",
+        help="preserve a failed funding incident after authenticated flat reconciliation",
+    )
+    funding_recovery.add_argument(
+        "--confirm-v8-funding-incident-acknowledgment", action="store_true"
+    )
     sub.add_parser("validate-journal", help="validate the atomic intent journal")
     sub.add_parser("list-intents", help="list non-terminal persisted intents")
     sub.add_parser("startup-recovery", help="lock and run read-only startup recovery")
@@ -673,6 +703,36 @@ def main() -> int:
             ))
             OperatorControlStore(adapter.runtime_root).update("manual_recovery")
             _json(state_store.load())
+        return 0
+    if args.command == "acknowledge-funding-incident":
+        if not args.confirm_v8_funding_incident_acknowledgment:
+            raise SafetyError("funding incident acknowledgment requires explicit confirmation")
+        with adapter.locked():
+            instrument = adapter._discover()
+            adapter.startup_recovery(instrument)
+            if adapter._position(instrument) != 0:
+                raise SafetyError("funding incident acknowledgment requires a flat V8 position")
+            orders = adapter._ok(
+                adapter.trade.get_order_list(instType="FUTURES", state="live"),
+                "funding incident recovery open orders",
+            )
+            if orders:
+                raise SafetyError("funding incident acknowledgment requires zero FUTURES open orders")
+            ledger = FundingLedger(adapter.runtime_root / "funding.json")
+            failed = [item for item in ledger.load() if item.state in FUNDING_FAILURE_STATES]
+            if not failed:
+                raise SafetyError("no terminal failed V8 funding incident requires acknowledgment")
+            acknowledged = [acknowledge_failed_funding(ledger, item) for item in failed]
+            adapter._append("funding_incident_acknowledged", {
+                "records": [
+                    {"settlement_ms": item.settlement_ms, "state": item.last_result}
+                    for item in acknowledged
+                ],
+            })
+            _json({
+                "status": "ACKNOWLEDGED_AFTER_FLAT_RECONCILIATION",
+                "records": len(acknowledged),
+            })
         return 0
     if args.command == "graceful-shutdown":
         with adapter.locked():

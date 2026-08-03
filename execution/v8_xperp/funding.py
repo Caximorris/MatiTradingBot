@@ -17,6 +17,10 @@ FUNDING_SCHEMA = 1
 FUNDING_STATES = {
     "EXPECTED", "DUE", "DELAYED", "MATCHED", "RECONCILED", "MISSING",
     "SIGN_MISMATCH", "AMOUNT_MISMATCH", "TIMESTAMP_MISMATCH", "CONFLICT",
+    "ACKNOWLEDGED",
+}
+FUNDING_FAILURE_STATES = {
+    "SIGN_MISMATCH", "AMOUNT_MISMATCH", "TIMESTAMP_MISMATCH", "CONFLICT", "MISSING",
 }
 DELAY_AFTER_MS = 120_000
 MISSING_AFTER_MS = 900_000
@@ -289,4 +293,21 @@ def reconcile_funding(
             if matched.last_result == "exact funding bill matched"
             else "exact-once funding reconciled within settlement tolerance"
         ),
+    )
+
+
+def acknowledge_failed_funding(
+    ledger: FundingLedger, record: FundingExpectation
+) -> FundingExpectation:
+    """Preserve a terminal funding incident after an operator proves the account is flat.
+
+    This does not reconcile the bill or alter its amounts. It only prevents a previously
+    recorded, failed settlement from blocking a new flat-account canary session forever.
+    """
+    if record.state not in FUNDING_FAILURE_STATES:
+        raise SafetyError("only terminal failed funding records may be acknowledged")
+    return ledger.update(
+        record.identity,
+        state="ACKNOWLEDGED",
+        last_result=f"manual flat-account acknowledgment of {record.state}",
     )
