@@ -11,7 +11,7 @@ import sys
 import urllib.parse
 import urllib.request
 from contextlib import suppress
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -62,7 +62,10 @@ from execution.v8_xperp.schedule import (  # noqa: E402
     synthetic_event,
     synthetic_preview,
 )
-from execution.v8_xperp.target_transport import TransportStateStore  # noqa: E402
+from execution.v8_xperp.target_transport import (  # noqa: E402
+    OperationalTargetLedger,
+    TransportStateStore,
+)
 from execution.v8_xperp.operator import OperatorControlStore  # noqa: E402
 
 
@@ -263,6 +266,21 @@ def _record_evidence_failure(message: str, category: str) -> None:
             message=message,
             category=category,
         )
+
+
+def _supersede_flattened_target(runtime_root: Path) -> None:
+    """Prevent a manual emergency flatten from being restored on next startup."""
+    targets = OperationalTargetLedger(runtime_root / "operational_targets.json")
+    active = targets.active()
+    if active is not None and active.direction != "flat":
+        targets.update(active.transition_id, "SUPERSEDED")
+    state_store = TransportStateStore(runtime_root / "target_transport_state.json")
+    state = state_store.load()
+    state_store.write(replace(
+        state,
+        active_transition_id=None,
+        explicit_flat_requested=False,
+    ))
 
 
 def _deliver_evidence_reports(store: EvidenceStore) -> None:
@@ -667,6 +685,7 @@ def main() -> int:
             result = adapter.emergency_flatten(report)
             state_store = CanaryStateStore(adapter.runtime_root / "canary_state.json")
             state = state_store.load()
+            _supersede_flattened_target(adapter.runtime_root)
             state_store.write(type(state)(
                 **{
                     **asdict(state),

@@ -7,6 +7,12 @@ from types import SimpleNamespace
 
 from execution.v8_xperp.evidence import EvidenceStore
 from execution.v8_xperp.funding import FundingLedger, make_expectation
+from execution.v8_xperp.target_transport import (
+    OperationalTarget,
+    OperationalTargetLedger,
+    TransportState,
+    TransportStateStore,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -151,6 +157,24 @@ def test_funding_failure_health_overrides_historical_parity(tmp_path, monkeypatc
         "actual_amount": "-0.2",
         "bill_id": "bill-1",
     }
+
+
+def test_emergency_flatten_supersedes_active_target_and_transport_state(tmp_path):
+    targets = OperationalTargetLedger(tmp_path / "operational_targets.json")
+    targets.create(OperationalTarget(
+        "transition-1", "synthetic_halving", "long", "2", "0.01", "1000", "0.01",
+        "2026-08-03T16:00:00+00:00", "synthetic-cycle-0",
+    ))
+    TransportStateStore(tmp_path / "target_transport_state.json").write(
+        TransportState(active_transition_id="transition-1", explicit_flat_requested=True)
+    )
+
+    demo._supersede_flattened_target(tmp_path)
+
+    assert targets.load()[0].state == "SUPERSEDED"
+    state = TransportStateStore(tmp_path / "target_transport_state.json").load()
+    assert state.active_transition_id is None
+    assert state.explicit_flat_requested is False
 
 
 def test_evidence_delivery_records_receipt_only_after_telegram_ack(tmp_path, monkeypatch):
