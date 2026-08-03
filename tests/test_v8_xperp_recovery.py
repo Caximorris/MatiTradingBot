@@ -322,6 +322,53 @@ def test_process_restart_adopts_existing_position_without_submission(tmp_path: P
     assert ledger.load()[0].state == "RECONCILED"
 
 
+def test_startup_accepts_matching_terminal_history_after_fill_expiry(tmp_path: Path) -> None:
+    exchange = Exchange()
+    exchange.order = {
+        "clOrdId": CLIENT_ID,
+        "ordId": "remote-1",
+        "state": "filled",
+        "accFillSz": "1",
+    }
+    exchange.position = Decimal("1")
+    ledger = IntentLedger(tmp_path / "intents.json")
+    intent = ledger.create(_intent())
+    ledger.transition(
+        intent.client_order_id,
+        "RECONCILED",
+        filled_contracts="1",
+        last_result="filled",
+    )
+
+    report = StartupRecovery(adapter=Adapter(exchange), ledger=ledger).run(_instrument())
+
+    assert report["position"] == "1"
+    assert report["recent_v8_fills"] == 0
+    assert report["terminal_history_proofs"] == 1
+
+
+def test_startup_rejects_terminal_history_with_wrong_filled_size(tmp_path: Path) -> None:
+    exchange = Exchange()
+    exchange.order = {
+        "clOrdId": CLIENT_ID,
+        "ordId": "remote-1",
+        "state": "filled",
+        "accFillSz": "0.5",
+    }
+    exchange.position = Decimal("1")
+    ledger = IntentLedger(tmp_path / "intents.json")
+    intent = ledger.create(_intent())
+    ledger.transition(
+        intent.client_order_id,
+        "RECONCILED",
+        filled_contracts="1",
+        last_result="filled",
+    )
+
+    with pytest.raises(SafetyError, match="ownership is not proven"):
+        StartupRecovery(adapter=Adapter(exchange), ledger=ledger).run(_instrument())
+
+
 def test_startup_blocks_changed_metadata_unknown_order_and_unknown_position(tmp_path: Path) -> None:
     exchange = Exchange()
     adapter = Adapter(exchange)

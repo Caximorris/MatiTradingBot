@@ -431,6 +431,12 @@ class StartupRecovery:
             self.adapter.trade.get_fills(instType="FUTURES", instId=instrument.inst_id),
             "startup fill reconciliation",
         )
+        history = self.adapter._ok(
+            self.adapter.trade.get_orders_history(
+                instType="FUTURES", instId=instrument.inst_id
+            ),
+            "startup order-history reconciliation",
+        )
         positions = self.adapter._ok(
             self.adapter.account.get_positions(instType="FUTURES"),
             "startup FUTURES position reconciliation",
@@ -441,21 +447,13 @@ class StartupRecovery:
         if nonzero and str(nonzero[0].get("instId")) != instrument.inst_id:
             raise SafetyError("unknown exchange position; startup recovery blocked")
         position = _decimal(nonzero[0].get("pos")) if nonzero else Decimal("0")
-        own_fills = [
-            row for row in fills
-            if str(row.get("clOrdId", "")).startswith(CLIENT_PREFIX)
-            and any(item.client_order_id == row.get("clOrdId") for item in intents)
-        ]
-        if position != 0 and not own_fills:
-            raise SafetyError("exchange position ownership is not proven by V8 fills")
         position_intents = sorted(
             (item for item in intents if item.order_type != "cancel"),
             key=lambda item: (item.created_at, item.client_order_id),
         )
-        if position != 0 and (
-            not position_intents
-            or position_intents[-1].target == "flat"
-        ):
+        if position != 0 and not position_intents:
+            raise SafetyError("exchange position ownership is not proven by V8 fills or terminal order history")
+        if position != 0 and position_intents[-1].target == "flat":
             raise SafetyError("journal says flat but exchange has a known V8 position")
         if position != 0:
             latest = position_intents[-1]
@@ -468,6 +466,20 @@ class StartupRecovery:
             )
             if signed_local != position:
                 raise SafetyError("V8 intent lineage does not reconcile to the current position")
+            own_fills = [
+                row for row in fills
+                if row.get("clOrdId") == latest.client_order_id
+            ]
+            terminal_history = [
+                row for row in history
+                if row.get("clOrdId") == latest.client_order_id
+                and row.get("state") == "filled"
+                and _decimal(row.get("accFillSz")) == abs(position)
+            ]
+            if not own_fills and not terminal_history:
+                raise SafetyError(
+                    "exchange position ownership is not proven by V8 fills or terminal order history"
+                )
             try:
                 opened_ms = int(datetime.fromisoformat(latest.created_at).timestamp() * 1000)
             except Exception as exc:
@@ -479,12 +491,16 @@ class StartupRecovery:
             ]
             if recent_unknown:
                 raise SafetyError("unknown fill exists in the current V8 position lineage window")
+        else:
+            own_fills = []
+            terminal_history = []
         report = {
             "active_intents": len(active),
             "recovered": len(results),
             "position": str(position),
             "open_v8_orders": len(open_rows),
             "recent_v8_fills": len(own_fills),
+            "terminal_history_proofs": len(terminal_history),
             "status": "reconciled",
         }
         self.adapter._append("startup_recovery_pass", report)
