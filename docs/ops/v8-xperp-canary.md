@@ -157,6 +157,22 @@ At 2 minutes mark delayed; at 15 minutes mark missing. Restarting must reload th
 same identity and never consume a bill twice. Report `UNOBSERVED` until an actual
 known-position Demo settlement occurs.
 
+An amount, sign, timestamp, conflict, or missing failure is an incident and
+blocks execution even if earlier settlements reconciled. Do not edit or delete
+the ledger. After the approved incident-response flatten has proven zero V8
+position and zero FUTURES orders, an operator may preserve the failure as a
+manual acknowledgment before a new flat-account session:
+
+```powershell
+python tools/v8_xperp_demo.py acknowledge-funding-incident `
+  --confirm-v8-funding-incident-acknowledgment
+```
+
+This does not reconcile the failed bill, remove its amounts, or make the failed
+period clean. It only prevents the recorded historical incident from blocking a
+new session indefinitely; `manual-recovery` and all normal startup gates still
+apply separately.
+
 ## Margin and liquidation runbook
 
 Fetch current metadata, all isolated position tiers, selected leverage, position risk,

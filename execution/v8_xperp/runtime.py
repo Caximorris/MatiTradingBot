@@ -492,7 +492,7 @@ class V8OperationalController:
                 "operational funding bills",
             )
             for record in records:
-                if record.state != "RECONCILED":
+                if record.state not in {"RECONCILED", "ACKNOWLEDGED"}:
                     reconciled = reconcile_funding(
                         ledger=self.funding_ledger,
                         record=record,
@@ -533,7 +533,13 @@ class V8OperationalController:
         settlement = int(rate["fundingTime"])
         signed_rate = _decimal(rate["fundingRate"])
         contracts = abs(_decimal(position["pos"]))
-        notional = abs(_decimal(position["notionalUsd"]))
+        # OKX settles funding from the marked contract value. ``notionalUsd``
+        # is an account-reporting field and can diverge materially at settlement,
+        # so it must not define the exact-once funding expectation.
+        mark_price = _decimal(position.get("markPx"))
+        if mark_price <= 0:
+            raise SafetyError("operational funding mark price is missing or nonpositive")
+        notional = contracts * report.instrument.ct_val * mark_price
         expectation = make_expectation(
             environment=report.environment,
             account_hash=self.adapter.account_hash,

@@ -39,7 +39,7 @@ class Account:
             return {"code": "0", "data": []}
         return {"code": "0", "data": [{
             "pos": str(self.adapter.position),
-            "notionalUsd": str(abs(self.adapter.position) * Decimal("65000")),
+            "notionalUsd": str(abs(self.adapter.position) * Decimal("64000")),
             "markPx": "65000",
         }]}
 
@@ -183,6 +183,8 @@ def test_execute_bootstrap_once_then_restart_adopts_without_recalculation(tmp_pa
     assert len(service.executions) == 1
     assert abs(adapter.position) * Decimal("65000") <= 1000
     assert first["funding"]["status"] == "PENDING_REAL_PARITY"
+    expectation = controller.funding_ledger.load()[0]
+    assert expectation.position_notional == str(abs(adapter.position) * Decimal("65000"))
 
     class NoRecalculate(Source):
         def reference_after(self, *_args, **_kwargs):

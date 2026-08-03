@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from execution.v8_xperp.evidence import EvidenceStore
+from execution.v8_xperp.funding import FundingLedger, make_expectation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,6 +115,42 @@ def test_failure_health_preserves_last_verified_operational_context(tmp_path, mo
     assert health["monitoring"]["instrument"] == "BTC-XPERP"
     assert health["phase"]["current_phase"] == "long_phase"
     assert health["funding"]["status"] == "REAL_PARITY_OBSERVED"
+
+
+def test_funding_failure_health_overrides_historical_parity(tmp_path, monkeypatch):
+    monkeypatch.setattr(demo, "_runtime_root", lambda: tmp_path)
+    ledger = FundingLedger(tmp_path / "funding.json")
+    record = ledger.create(make_expectation(
+        environment="okx_demo",
+        account_hash="account",
+        instrument_id="BTC-XPERP",
+        settlement_ms=1_800_000_000_000,
+        side="long",
+        contracts=demo.Decimal("0.01"),
+        position_notional=demo.Decimal("1000"),
+        signed_rate=demo.Decimal("0.0001"),
+        metadata_hash="metadata",
+        rate_source_hash="rate",
+        position_source_hash="position",
+        mark_source_hash="mark",
+    ))
+    ledger.update(
+        record.identity,
+        state="AMOUNT_MISMATCH",
+        actual_amount="-0.2",
+        bill_id="bill-1",
+    )
+
+    demo._write_failure_health("funding reconciliation failed closed: AMOUNT_MISMATCH")
+
+    health = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+    assert health["funding"] == {
+        "status": "FAILED_AMOUNT_MISMATCH",
+        "settlement_ms": 1_800_000_000_000,
+        "expected_amount": "-0.1000",
+        "actual_amount": "-0.2",
+        "bill_id": "bill-1",
+    }
 
 
 def test_evidence_delivery_records_receipt_only_after_telegram_ack(tmp_path, monkeypatch):

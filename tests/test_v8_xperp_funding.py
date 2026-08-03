@@ -7,6 +7,7 @@ import pytest
 from execution.v8_xperp.adapter import SafetyError
 from execution.v8_xperp.funding import (
     FundingLedger,
+    acknowledge_failed_funding,
     make_expectation,
     reconcile_funding,
     source_hash,
@@ -169,6 +170,22 @@ def test_settlement_amount_tolerance_reconciles_retried_mismatch(tmp_path: Path)
         now_ms=SETTLEMENT + 2,
     )
     assert retried.state == "RECONCILED"
+
+
+def test_manual_acknowledgment_preserves_terminal_funding_failure(tmp_path: Path) -> None:
+    ledger, record = created(tmp_path)
+    failed = reconcile_funding(
+        ledger=ledger, record=record, official_history=history(),
+        bills=[bill("-0.002")], now_ms=SETTLEMENT + 1,
+    )
+
+    acknowledged = acknowledge_failed_funding(ledger, failed)
+
+    assert acknowledged.state == "ACKNOWLEDGED"
+    assert acknowledged.actual_amount == "-0.002"
+    assert "AMOUNT_MISMATCH" in str(acknowledged.last_result)
+    with pytest.raises(SafetyError, match="only terminal failed"):
+        acknowledge_failed_funding(ledger, acknowledged)
 
 
 def test_distinct_duplicate_bill_and_changed_duplicate_conflict(tmp_path: Path) -> None:
