@@ -26,6 +26,7 @@ from execution.v8_xperp.operator import OperatorControlStore  # noqa: E402
 from execution.v8_xperp.schedule import (  # noqa: E402
     ScheduleConfig,
     ScheduleModeStore,
+    parse_utc,
     runtime_namespace,
 )
 from execution.v8_xperp.service import CanaryStateStore  # noqa: E402
@@ -49,7 +50,11 @@ def schedule_config() -> ScheduleConfig:
             raise SafetyError("persisted and configured V8 schedule modes disagree")
         if (
             persisted.synthetic_anchor_utc
-            and persisted.synthetic_anchor_utc != configured.synthetic_anchor_utc
+            and (
+                configured.synthetic_anchor_utc is None
+                or parse_utc(configured.synthetic_anchor_utc)
+                != parse_utc(persisted.synthetic_anchor_utc)
+            )
         ):
             raise SafetyError("persisted and configured synthetic anchors disagree")
     return configured
