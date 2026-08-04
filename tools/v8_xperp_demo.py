@@ -58,6 +58,7 @@ from execution.v8_xperp.schedule import (  # noqa: E402
     SYNTHETIC_DEMO_CYCLE,
     ScheduleConfig,
     ScheduleModeStore,
+    parse_utc,
     runtime_namespace,
     synthetic_event,
     synthetic_preview,
@@ -172,7 +173,11 @@ def _schedule_config() -> ScheduleConfig:
             raise SafetyError("persisted and configured V8 schedule modes disagree")
         if (
             persisted.synthetic_anchor_utc
-            and configured.synthetic_anchor_utc != persisted.synthetic_anchor_utc
+            and (
+                configured.synthetic_anchor_utc is None
+                or parse_utc(configured.synthetic_anchor_utc)
+                != parse_utc(persisted.synthetic_anchor_utc)
+            )
         ):
             raise SafetyError("persisted and configured synthetic anchors disagree")
     return configured

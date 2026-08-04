@@ -99,6 +99,21 @@ def test_canary_refreshes_market_report_after_stream_is_healthy(monkeypatch):
     assert FakeService.started_report is adapter.operational_report_value
 
 
+def test_schedule_config_accepts_equivalent_utc_anchor_notation(tmp_path, monkeypatch):
+    monkeypatch.setattr(demo, "_base_runtime_root", lambda: tmp_path)
+    monkeypatch.setenv("V8_SCHEDULE_MODE", "synthetic_demo_cycle")
+    monkeypatch.setenv("V8_SYNTHETIC_DEMO_CYCLE_ENABLED", "true")
+    monkeypatch.setenv("V8_SYNTHETIC_CYCLE_ANCHOR_UTC", "2026-08-04T07:02:00Z")
+    (tmp_path / "schedule_mode.json").write_text(json.dumps({
+        "mode": "synthetic_demo_cycle",
+        "synthetic_anchor_utc": "2026-08-04T07:02:00+00:00",
+        "updated_at": "2026-08-04T06:47:34+00:00",
+        "operator_acknowledgement": "test",
+    }), encoding="utf-8")
+
+    assert demo._schedule_config().synthetic_anchor_utc == "2026-08-04T07:02:00Z"
+
+
 def test_failure_health_preserves_last_verified_operational_context(tmp_path, monkeypatch):
     monkeypatch.setattr(demo, "_runtime_root", lambda: tmp_path)
     (tmp_path / "health.json").write_text(
