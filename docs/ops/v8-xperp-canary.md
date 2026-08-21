@@ -78,6 +78,41 @@ exercise injects targets directly through the same service boundary.
 4. Run the one-shot startup. Only then may a human start the continuous observer.
 5. Keep the `$1,000` cap and do not attach a full-exposure strategy.
 
+## Diagnosis and safe code refresh
+
+`doctor` reads only local V8 runtime artifacts: canonicalized schedule anchors,
+health-record age, persisted canary/operator state, and non-terminal intents. It
+does not instantiate an exchange client, send an order, or modify state.
+
+```bash
+.venv/bin/python tools/v8_xperp_demo.py doctor
+```
+
+The V8 Telegram companion runs the same local check every minute and notifies only
+when its diagnosis changes. A `STALE`, `STOPPED`, or `BLOCKED` notification is an
+incident prompt, not permission to restart or resume the Demo executor.
+
+After an approved code update, use the dedicated updater rather than the legacy
+fleet `/update` path. It performs a fast-forward pull and reloads only the V8
+Telegram companion when V8 runtime code changed. It refuses a dirty worktree or a
+dependency reload without an explicit environment-synchronization acknowledgement,
+and it never starts, restarts, enables, resumes, or flattens the Demo unit.
+
+```bash
+sudo bash deploy/v8_xperp_safe_update.sh /srv/matibot --confirm-v8-telegram-reload
+```
+
+If the pull changes Python dependencies, the updater exits after the pull without
+reloading Telegram. Synchronize the virtual environment under the approved
+maintenance procedure, then explicitly acknowledge that completed prerequisite:
+
+```bash
+sudo bash deploy/v8_xperp_safe_update.sh /srv/matibot --confirm-v8-telegram-reload --dependencies-synced
+```
+
+Rollback: check out the preceding approved commit, run the same command, and keep
+`matibot-v8-xperp-demo.service` stopped until a new human-approved reconciliation.
+
 ## Shutdown runbook
 
 Inject `flat` through the controlled service path, verify the reduce-only terminal

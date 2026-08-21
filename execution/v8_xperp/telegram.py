@@ -21,7 +21,7 @@ from .adapter import SafetyError
 READ_ONLY = {
     "start", "menu", "help", "status", "report", "health", "safety", "version", "mode", "phase", "schedule",
     "next_transition", "position", "orders", "intents", "funding", "margin",
-    "expiry", "canary", "kill_switches", "reconciliation",
+    "expiry", "canary", "kill_switches", "reconciliation", "doctor",
 }
 MUTATIONS = {
     "pause", "resume", "flat", "emergency_flatten", "reconcile", "manual_stop",
@@ -40,6 +40,7 @@ COMMAND_MENU = (
     ("funding", "Funding reconciliation"),
     ("orders", "Open V8 orders"),
     ("intents", "V8 transition state"),
+    ("doctor", "Read-only deployment and runtime diagnosis"),
     ("pause", "Pause new exposure (confirm)"),
     ("resume", "Resume after checks (confirm)"),
     ("flat", "Request controlled flat (confirm)"),
@@ -207,6 +208,7 @@ class UpdateGate:
 
 class Gateway(Protocol):
     def snapshot(self) -> dict[str, object]: ...
+    def doctor(self) -> dict[str, object]: ...
     def mutate(self, action: str, arguments: tuple[str, ...]) -> str: ...
 
 
@@ -312,7 +314,7 @@ class V8TelegramRouter:
                 )
                 return self._reply(f"CONFIRMED: {result}")
             if command in READ_ONLY:
-                snapshot = self.gateway.snapshot()
+                snapshot = self.gateway.doctor() if command == "doctor" else self.gateway.snapshot()
                 result = self._format_read(command, snapshot)
                 self.audit.append(chat_id=chat_id, command=command, outcome="read")
                 return self._reply(result)
@@ -386,7 +388,7 @@ class V8TelegramRouter:
                 "<b>Dashboard</b>\n/start  /menu  /status  /report\n\n"
                 "<b>Read-only</b>\n/health  /safety  /position  /schedule  /funding\n"
                 "/orders  /intents  /margin  /expiry  /canary  /kill_switches\n"
-                "/reconciliation  /phase  /mode  /next_transition  /version\n\n"
+                "/reconciliation  /phase  /mode  /next_transition  /version  /doctor\n\n"
                 "<b>Confirmed controls</b>\n/pause  /resume  /flat  /reconcile\n"
                 "/manual_stop  /emergency_flatten\n\n"
                 "Schedule changes are intentionally restricted to a stopped, reconciled service: "
@@ -396,6 +398,21 @@ class V8TelegramRouter:
             return V8TelegramRouter._dashboard(value)
         if command in {"health", "safety"}:
             return V8TelegramRouter._safety(value)
+        if command == "doctor":
+            findings = value.get("findings") or ("none",)
+            return "\n".join((
+                "<b>🩺 V8 Doctor · local read-only diagnosis</b>",
+                f"Status: <b>{html.escape(_text(value.get('status')))}</b>",
+                f"Reason: <code>{html.escape(_text(value.get('reason')))}</code>",
+                f"Health: <b>{html.escape(_text(value.get('health_status')))}</b> · "
+                f"fresh <b>{html.escape(_text(value.get('health_fresh')))}</b> · "
+                f"age <code>{html.escape(_text(value.get('health_age_seconds')))}s</code>",
+                f"Executor: <b>{html.escape(_text(value.get('canary_state')))}</b> · "
+                f"paused <b>{html.escape(_text(value.get('paused')))}</b>",
+                f"Anchors match: <b>{html.escape(_text(value.get('anchors_match')))}</b>",
+                f"Findings: <code>{html.escape('; '.join(str(item) for item in findings))}</code>",
+                "This command never contacts OKX or changes V8 state.",
+            ))
         else:
             groups = {
                 "version": ("version", "environment"),

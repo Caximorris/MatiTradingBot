@@ -30,3 +30,12 @@ def test_example_environment_contains_fail_closed_v8_controls() -> None:
         "V8_TELEGRAM_CONFIRMATION_SECONDS=120",
     }
     assert required <= set(value.splitlines())
+
+
+def test_v8_safe_update_only_reloads_telegram_and_requires_confirmation() -> None:
+    value = (ROOT / "deploy" / "v8_xperp_safe_update.sh").read_text()
+    assert "--confirm-v8-telegram-reload" in value
+    assert "--dependencies-synced" in value
+    assert 'systemctl restart "$TELEGRAM_UNIT"' in value
+    assert 'systemctl restart "$DEMO_UNIT"' not in value
+    assert 'systemctl start "$DEMO_UNIT"' not in value

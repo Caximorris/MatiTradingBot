@@ -6,6 +6,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import asyncio
+import html
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -23,6 +25,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filte
 from execution.v8_xperp.adapter import SafetyError, V8XPerpDemoAdapter  # noqa: E402
 from execution.v8_xperp.intents import IntentLedger, TERMINAL  # noqa: E402
 from execution.v8_xperp.operator import OperatorControlStore  # noqa: E402
+from execution.v8_xperp.doctor import alert_transition, inspect_runtime  # noqa: E402
 from execution.v8_xperp.schedule import (  # noqa: E402
     ScheduleConfig,
     ScheduleModeStore,
@@ -79,6 +82,40 @@ def command_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
+def _atomic_json(path: Path, value: object) -> None:
+    temporary = path.with_suffix(".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+async def doctor_monitor(application, config: TelegramConfig, gateway: "LocalGateway", root: Path) -> None:
+    """Notify only on local-doctor state transitions; never contacts OKX."""
+    path = root / "telegram" / "doctor_monitor.json"
+    previous: str | None = None
+    if path.exists():
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            previous = value.get("fingerprint") if isinstance(value, dict) else None
+        except Exception:
+            previous = None
+    while True:
+        try:
+            report = gateway.doctor()
+            fingerprint, message = alert_transition(report, previous)
+            if message:
+                formatted = html.escape(message)
+                for chat_id in sorted(config.allowed_chat_ids):
+                    await application.bot.send_message(
+                        chat_id=chat_id, text=f"⚠️ <b>V8 Doctor</b>\n{formatted}", parse_mode="HTML"
+                    )
+            previous = fingerprint
+            _atomic_json(path, {"fingerprint": fingerprint, "checked_at": datetime.now(UTC).isoformat()})
+        except Exception as exc:
+            logger.warning("V8 doctor monitor failed visibly: {}", type(exc).__name__)
+        await asyncio.sleep(60)
+
+
 @contextmanager
 def telegram_process_lock() -> Iterator[None]:
     path = base_root() / "telegram.lock"
@@ -115,6 +152,9 @@ def telegram_process_lock() -> Iterator[None]:
 
 
 class LocalGateway:
+    def doctor(self) -> dict[str, object]:
+        return inspect_runtime(base_root(), schedule_config()).as_dict()
+
     def snapshot(self) -> dict[str, object]:
         root = active_root()
         health_path = root / "health.json"
@@ -221,6 +261,7 @@ class LocalGateway:
             "non_terminal_intents": non_terminal,
             "margin_tier_count": monitoring.get("margin_tier_count"),
             "expiry": monitoring.get("expiry"),
+            "doctor": self.doctor(),
         }
 
     def mutate(self, action: str, arguments: tuple[str, ...]) -> str:
@@ -317,6 +358,7 @@ def main() -> int:
                 )
             except Exception as exc:
                 logger.warning("unable to send V8 Telegram startup report: {}", type(exc).__name__)
+        application.create_task(doctor_monitor(application, config, router.gateway, active_root()))
 
     application = ApplicationBuilder().token(config.token).post_init(post_init).build()
 

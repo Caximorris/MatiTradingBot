@@ -5,6 +5,7 @@ from execution.v8_xperp.telegram import (
     TelegramConfig,
     V8TelegramRouter,
 )
+from execution.v8_xperp.doctor import alert_transition
 
 
 class Gateway:
@@ -29,6 +30,19 @@ class Gateway:
 
     def snapshot(self):
         return self.value
+
+    def doctor(self):
+        return {
+            "status": "STALE",
+            "reason": "V8 health record is stale",
+            "health_status": "HEALTHY",
+            "health_fresh": False,
+            "health_age_seconds": 121,
+            "canary_state": "STOPPED",
+            "paused": True,
+            "anchors_match": True,
+            "findings": ("V8 health record is stale",),
+        }
 
     def mutate(self, action, arguments):
         self.calls.append((action, arguments))
@@ -190,10 +204,32 @@ def test_every_documented_read_command_routes_without_mutation(tmp_path) -> None
     commands = (
         "help", "status", "health", "version", "mode", "phase", "schedule",
         "next_transition", "position", "orders", "intents", "funding", "margin",
-        "expiry", "canary", "kill_switches", "reconciliation",
+        "expiry", "canary", "kill_switches", "reconciliation", "doctor",
     )
     for update_id, command in enumerate(commands, start=1):
         assert subject.handle(
             update_id=update_id, chat_id=42, text=f"/{command}"
         )
     assert gateway.calls == []
+
+
+def test_doctor_is_local_read_only_diagnosis(tmp_path) -> None:
+    gateway = Gateway()
+
+    response = router(tmp_path, gateway).handle(
+        update_id=1, chat_id=42, text="/doctor"
+    )
+
+    assert "V8 Doctor" in response
+    assert "V8 health record is stale" in response
+    assert gateway.calls == []
+
+
+def test_doctor_alert_is_idempotent_and_never_implies_execution() -> None:
+    report = {"status": "STALE", "reason": "V8 health record is stale"}
+
+    fingerprint, first = alert_transition(report, None)
+    _, repeated = alert_transition(report, fingerprint)
+
+    assert "did not start, resume, flatten" in first
+    assert repeated is None

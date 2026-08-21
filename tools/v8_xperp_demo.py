@@ -68,6 +68,7 @@ from execution.v8_xperp.target_transport import (  # noqa: E402
     TransportStateStore,
 )
 from execution.v8_xperp.operator import OperatorControlStore  # noqa: E402
+from execution.v8_xperp.doctor import inspect_runtime  # noqa: E402
 
 
 def _json(value: object) -> None:
@@ -185,6 +186,11 @@ def _schedule_config() -> ScheduleConfig:
 
 def _runtime_root() -> Path:
     return runtime_namespace(_base_runtime_root(), _schedule_config())
+
+
+def _doctor_report() -> dict[str, object]:
+    """Inspect only durable local V8 state; do not contact or mutate OKX."""
+    return inspect_runtime(_base_runtime_root(), _schedule_config()).as_dict()
 
 
 def _read_health() -> dict[str, object]:
@@ -444,6 +450,7 @@ def main() -> int:
     sub.add_parser("canary-config", help="validate hard canary configuration")
     sub.add_parser("canary-status", help="read local canary lifecycle state")
     sub.add_parser("health", help="read machine-readable unattended health state")
+    sub.add_parser("doctor", help="read-only local V8 deployment and runtime diagnosis")
     sub.add_parser("operational-status", help="read human-readable unattended status")
     sub.add_parser("schedule-mode-status", help="read persisted/configured schedule mode")
     sub.add_parser("schedule-preview", help="read-only current schedule preview")
@@ -499,6 +506,9 @@ def main() -> int:
     start = sub.add_parser("canary-start", help="start, validate, and stop a one-shot canary")
     start.add_argument("--enable-continuous-demo", action="store_true")
     args = parser.parse_args()
+    if args.command == "doctor":
+        _json(_doctor_report())
+        return 0
     if args.command == "schedule-mode-status":
         _json({
             "configured": _schedule_config(),
